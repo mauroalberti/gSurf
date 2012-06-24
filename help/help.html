@@ -1,0 +1,94 @@
+<html>
+<head>
+	<title>gSurf help</title>
+	<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+	<link href="style.css" rel="stylesheet" type="text/css" />
+</head>
+<body>
+	<h1>gSurf vers. 0.1.1</h1>
+	<p>
+		Beta release, January, 30, 2012<br />M. Alberti - <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a>
+		<br />License: GPL v. 3.0
+		<br />Created with Python 2.7, Eclipse + PyDev and Qt Designer.
+		<br />Tested in Windows Vista (Python 2.7.2) and Ubuntu Lucid Lynx (Python 2.6.5).
+		<br />File to run the application: <b>gSurf.pyw</b>		
+	</p>
+	It requires a working Python installation, with the following modules:
+	<ul>
+		<li>numpy</li>
+		<li>PyQt4</li>
+		<li>matplotlib</li>
+		<li>gdal</li>
+	</ul>
+	<br />
+	<h2>Aim</h2>
+	<p>
+		This Python program allows to calculate the intersection points between a plane and a DEM.
+	</p>
+
+	<p>A presentation in Italian of the algorithm theoretical bases is in <i>
+	<a href="http://gisoftw.blogspot.com/2011/12/intersezioni-tra-dem-e-superfici.html">
+	Intersezioni tra DEM e superfici planari, un tema di interesse in geologia</a></i>.
+	An example of application is described in <i><a href="http://gisoftw.blogspot.com/2012/01/gsurf-una-applicazione-python-per.html">
+	gSurf: una applicazione Python per calcolare interattivamente l'intersezione fra piani e DEM</a></i>. 
+	</p>
+	<br />
+	<h2>GUI summary</h2>
+	<p>
+		The application functionalities, grouped by subject, are described. See the figure below for number references.
+	</p>
+	<b>1</b>
+	<br />Commands for reading the input DEM (<i>crtl+D</i>) and an optional linear shapefile
+	(<i>ctrl+P</i>), for instance of fault traces. It is also possible to save the intersections
+	as a point shapefile (<i>ctrl+S</i>).
+	<br /><br /><b>2</b>
+	<br />Listing of input DEM and shapefile; control of their visibility and of the DEM colomap.			
+	<br /><br /><b>3</b>
+	<br />Numerical tuning of the location of the "source point" (i.e., a point that lies in the plane to be created).
+	In (6) there is also a button (symbol: <i>red circle</i>) that allows to locate the source point in the map.
+	The elevation can be set to be equal to the local DEM elevation (option: <i>'fix to DEM'</i>). 
+	<br /><br /><b>4</b>
+	<br />Regulation of the plane orientation, expressed by its dip direction and dip angle.
+	<br /><br /><b>5</b>
+	<br />Regulation of the visibility and the color of the plane intersections.
+	When interactive calculations of intersections are slow, it is possible to stop (and then to resume) them so that 
+	plane orientation values or source point locations can be modified without the calculation-related delays.
+	<br /><br /><b>6</b>
+	<br />Navigation toolbar that allows to zoom, pan, save the map as an image, and also to set the source point location 
+	in the map (red circle).
+	<br /><br /><b>7</b>
+	<br />The map visualization area. 
+	<br /><br />
+	<img width="600px" src="ims/ill_screenshot_lin.png" />
+
+	<br /><br /><br />
+	
+<h2>Input</h2>
+
+<p>
+	A DEM can be read through the File menu (1, <i>ctrl + D</i>).
+	An additional line shapefile, representing fault traces or tectonic lineaments,
+	can be also imported and visualised (1, <i>ctrl + P</i>).
+</p>
+
+<p>Map can be zoomed, panned, etc. with the navigation toolbar buttons (6).</p>
+
+<p>
+	A plane position and orientation is defined through its "source point" coordinates (3, 6), i.e., a point contained by the plane,
+	and its dip direction and dip angle, following the geological convention (4).
+	The source point position can be directly set in the map using an ad-hoc button (red circle in 6). Alternatively, 
+	it can be set or fine-tuned using the numeric spinboxes for x, y and z values (3). 
+	Elevation values can be constrained to DEM elevation, by checking the "fix to DEM" checkbox (3).
+</p>
+	<br />
+<h2>Output</h2>
+<p>
+	Point intersections can be saved in a shapefile (1, <i>ctrl + S</i>), to be used for further analyses and visualizations.
+	Each point stores the original (x,y,z) values and the plane dip direction and angle, so that different solution for different
+	fault segments can be merged without losing the original information.
+</p>
+<p>
+	Map images in many formats (PDF, png, etc.) can be created using the navigation toolbar "Save" function (6, right).
+</p>
+</body>
+</html>
