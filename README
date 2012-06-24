@@ -1,5 +1,5 @@
 gSurf is a Python application for the geological analysis of structural surfaces.
-In the current version 0.1.2 it calculates the intersections between a DEM and a geological plane, 
+In the current 0.1.2 version it calculates the intersections between a DEM and a geological plane, 
 expressed through its dip direction, dip angle and 'source point' (i.e., a point located on the geological plane
 and corresponding for instance to an outcrop of this plane).
 The resulting intersections can be saved as a point shapefile or as a line shapefile (experimental code).
