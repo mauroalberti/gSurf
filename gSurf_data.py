@@ -296,20 +296,17 @@ class GeoData(object):
         links = np.zeros( ( num_intersections ), dtype=dt )
         
         # filling array with values
-        
-        print 'links'
+
         curr_ndx = 0
         for i in xrange(self.inters.xcoords_x.shape[0]):
             for j in xrange(self.inters.xcoords_x.shape[1]): 
-                if not isnan(self.inters.xcoords_x[i, j]):
-                    print curr_ndx+1, i, j, 'x'               
+                if not isnan(self.inters.xcoords_x[i, j]):              
                     links[curr_ndx] = (curr_ndx+1, i, j, 'x', 0, 0, False)                
                     curr_ndx += 1
     
         for i in xrange(self.inters.ycoords_y.shape[0]):
             for j in xrange(self.inters.ycoords_y.shape[1]): 
-                if not isnan(self.inters.ycoords_y[i, j]):
-                    print curr_ndx+1, i, j, 'y'                                     
+                if not isnan(self.inters.ycoords_y[i, j]):                                    
                     links[curr_ndx] = (curr_ndx+1, i, j, 'y', 0, 0, False)                
                     curr_ndx += 1
         
