@@ -694,7 +694,7 @@ class MainWindow(QtGui.QMainWindow):
         """
         QtGui.QMessageBox.about(self, "About gSurf", 
         """
-            <p>gSurf version 0.1.2<br />2012-03-10</p>
+            <p>gSurf version 0.1.2<br />2012-06-24</p>
             <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
             <p>This program calculates the intersection between a plane and a DEM in an interactive way.
             The result can be saved as a point/linear shapefile.</p>            
