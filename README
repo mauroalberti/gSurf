@@ -4,3 +4,7 @@ expressed through its dip direction, dip angle and 'source point' (i.e., a point
 and corresponding for instance to an outcrop of this plane).
 The resulting intersections can be saved as a point shapefile or as a line shapefile (experimental code).
 These shapefiles can be viewed and further processed in GIS software such as Quantum GIS or Saga.
+
+Update 2015-03-11: this project is superseded by qgSurf, available at:
+https://bitbucket.org/mauroalberti/qgsurf
+qgSurf is a Python plugin for QGIS
