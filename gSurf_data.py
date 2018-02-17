@@ -22,24 +22,18 @@
  ***************************************************************************/
 """
 
-from __future__  import division
-
-from math import *
-
-from osgeo import gdal
-from osgeo.gdalconst import *
+from __future__ import division
 
 try:
-    from osgeo import ogr
+    from osgeo import ogr, gdal
 except: 
     import ogr
+    import gdal
 
-from gSurf_errors import Raster_Parameters_Errors
 from gSurf_spatial import *
-   
 
 
-def read_raster_band( raster_name ):
+def read_raster_band(raster_name):
     """
     Read an input raster band, based on GDAL module.
     
@@ -53,12 +47,12 @@ def read_raster_band( raster_name ):
     """
             
     # GDAL register
-    gdal.AllRegister
+    # gdal.AllRegister
     
     # open raster file and check operation success 
-    raster_data = gdal.Open( str( raster_name ), GA_ReadOnly )    
+    raster_data = gdal.Open(str(raster_name), gdal.GA_ReadOnly)
     if raster_data is None:
-        raise IOError, 'Unable to open raster band' 
+        raise IOError('Unable to open raster band') 
 
     # initialize DEM parameters
     raster_params = GDALParameters()
@@ -76,7 +70,7 @@ def read_raster_band( raster_name ):
     # get and check number of raster bands - it must be one
     raster_bands = raster_data.RasterCount
     if raster_bands > 1:
-        raise TypeError, 'More than one raster band in raster' 
+        raise TypeError('More than one raster band in raster') 
     
     # set critical grid values from geotransform array
     raster_params.topLeftX = raster_data.GetGeoTransform()[0]
@@ -95,42 +89,41 @@ def read_raster_band( raster_name ):
     except:
         pass
     # read data from band 
-    grid_values = band.ReadAsArray( 0,0, raster_params.cols, raster_params.rows )
+    grid_values = band.ReadAsArray(0,0, raster_params.cols, raster_params.rows)
     if grid_values is None:
-        raise IOError, 'Unable to read data from raster'
+        raise IOError('Unable to read data from raster')
      
     # transform data into numpy array
-    data = np.asarray( grid_values ) 
+    data = np.asarray(grid_values) 
 
     # if nodatavalue exists, set null values to NaN in numpy array
     if raster_params.noDataValue is not None:
-        data = np.where( abs( data - raster_params.noDataValue ) > 1e-05, data, np.NaN ) 
+        data = np.where(abs(data - raster_params.noDataValue) > 1e-05, data, np.NaN) 
 
     return raster_params, data
-    
 
 
-class Intersection_Parameters(object):
+class IntersectionParameters(object):
     """
-    Intersection_Parameters class.
+    IntersectionParameters class.
     Manages the metadata for spdata results (DEM source filename, source point, plane attitude.
     
     """
     
-    def __init__( self, sourcename, srcPt, srcPlaneAttitude ): 
+    def __init__(self, sourcename, src_pt, src_plane_attitude):
         """
         Class constructor.
         
         @param sourcename: name of the DEM used to create the grid.
         @type sourcename: String.
-        @param srcPlaneAttitude: orientation of the plane used to calculate the spdata.
-        @type srcPlaneAttitude: class StructPlane.
+        @param src_plane_attitude: orientation of the plane used to calculate the spdata.
+        @type src_plane_attitude: class StructPlane.
         
         @return: self
         """
         self._sourcename = sourcename
-        self._srcPt = srcPt
-        self._srcPlaneAttitude = srcPlaneAttitude
+        self._srcPt = src_pt
+        self._srcPlaneAttitude = src_plane_attitude
                             
 
 class Traces(object):
@@ -157,53 +150,46 @@ class Intersections(object):
       
                 
 class GeoData(object):
-   
-    
+       
     def set_dem_default(self):
         
-        self.dem = None 
-               
+        self.dem = None                
         
     def set_vector_default(self):
+
         # Fault traces data
         self.traces = Traces()
-
 
     def set_intersections_default(self):
         """
         Set result values to null.
         """
-        self.inters = Intersections()
-        
+        self.inters = Intersections()        
                    
     def __init__(self):
         
         self.set_dem_default()
         self.set_vector_default()
-        self.set_intersections_default()
-       
+        self.set_intersections_default()       
 
-    def read_dem( self, in_dem_fn ):
+    def read_dem(self, in_dem_fn):
         """
         Read input DEM file.
     
         @param  in_dem_fn: name of file to be read.
-        @type  in_dem_fn:  string
-        
-        """
-                
+        @type  in_dem_fn:  string        
+        """                
         # try reading DEM data
         try:
-            dem_params, dem_array = read_raster_band( in_dem_fn )
+            dem_params, dem_array = read_raster_band(in_dem_fn)
             dem_params.check_params()
-        except ( IOError, TypeError, Raster_Parameters_Errors ), e:                    
-            raise IOError, 'Unable to read data from raster'
+        except (IOError, TypeError, RasterParametersErrors) as e:
+            raise IOError('Unable to read data from raster')
                
         # create current grid
         return Grid(in_dem_fn, dem_params, dem_array)
-        
-                
-    def read_traces( self, in_traces_shp ):
+                        
+    def read_traces(self, in_traces_shp):
         """
         Read line shapefile.
     
@@ -253,7 +239,7 @@ class GeoData(object):
                 in_shape.Destroy()           
                 return 
 
-            for i in range( line_geom.GetPointCount() ):
+            for i in range(line_geom.GetPointCount()):
                                 
                 x, y = line_geom.GetX(i), line_geom.GetY(i)
                             
@@ -265,57 +251,49 @@ class GeoData(object):
                         
             curr_line = lnLayer.GetNextFeature()
 
-        in_shape.Destroy()
+        in_shape.Destroy()    
     
-    
-    def get_intersections( self ):
+    def get_intersections(self):
         """
         Initialize a structured array of the possible and found links for each intersection.
         It will store a list of the possible connections for each intersection,
         together with the found connections.
-        
-        
         """
                 
         # data type for structured array storing intersection parameters
-        dt = np.dtype([ ('id', np.uint16),
-                        ('i', np.uint16),
-                        ('j', np.uint16),
-                        ('pi_dir', np.str_,  1 ),                     
-                        ('conn_from', np.uint16),
-                        ('conn_to', np.uint16),
-                        ('start', np.bool_)                            
-                      ])
+        dt = np.dtype([('id', np.uint16),
+                       ('i', np.uint16),
+                       ('j', np.uint16),
+                       ('pi_dir', np.str_,  1),
+                       ('conn_from', np.uint16),
+                       ('conn_to', np.uint16),
+                       ('start', np.bool_)])
                  
         # number of valid intersections
-        num_intersections = len( list( self.inters.xcoords_x[ np.logical_not( np.isnan(self.inters.xcoords_x)) ] )) + \
-                            len( list( self.inters.ycoords_y[ np.logical_not( np.isnan(self.inters.ycoords_y)) ] ))
-        
-        
+        num_intersections = len(list(self.inters.xcoords_x[np.logical_not(np.isnan(self.inters.xcoords_x))])) + \
+                            len(list(self.inters.ycoords_y[np.logical_not(np.isnan(self.inters.ycoords_y))]))
+                
         # creation and initialization of structured array of valid intersections in the x-direction 
-        links = np.zeros( ( num_intersections ), dtype=dt )
+        links = np.zeros((num_intersections), dtype=dt)
         
         # filling array with values
 
         curr_ndx = 0
-        for i in xrange(self.inters.xcoords_x.shape[0]):
-            for j in xrange(self.inters.xcoords_x.shape[1]): 
+        for i in range(self.inters.xcoords_x.shape[0]):
+            for j in range(self.inters.xcoords_x.shape[1]):
                 if not isnan(self.inters.xcoords_x[i, j]):              
                     links[curr_ndx] = (curr_ndx+1, i, j, 'x', 0, 0, False)                
                     curr_ndx += 1
     
-        for i in xrange(self.inters.ycoords_y.shape[0]):
-            for j in xrange(self.inters.ycoords_y.shape[1]): 
+        for i in range(self.inters.ycoords_y.shape[0]):
+            for j in range(self.inters.ycoords_y.shape[1]):
                 if not isnan(self.inters.ycoords_y[i, j]):                                    
                     links[curr_ndx] = (curr_ndx+1, i, j, 'y', 0, 0, False)                
                     curr_ndx += 1
         
-
-        
         return links                                     
 
-
-    def set_neighbours( self ):
+    def set_neighbours(self):
         
         # shape of input arrays (equal shapes)
         num_rows, num_cols = self.inters.xcoords_x.shape
@@ -324,7 +302,7 @@ class GeoData(object):
         neighbours = {}
         
         # search and connect intersection points   
-        for curr_ndx in xrange( self.inters.links.shape[0] ):            
+        for curr_ndx in range(self.inters.links.shape[0]):
             
             # get current point location (i, j) and direction type (pi_dir)
             curr_id = self.inters.links[curr_ndx]['id']
@@ -342,7 +320,7 @@ class GeoData(object):
                     try: # -- A
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i+1) & \
                                                          (self.inters.links['j'] == curr_j+1) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -350,7 +328,7 @@ class GeoData(object):
                     try: # -- B
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i+1) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -358,7 +336,7 @@ class GeoData(object):
                     try: # -- C
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i+1) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -369,7 +347,7 @@ class GeoData(object):
                     try: # -- E
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -377,7 +355,7 @@ class GeoData(object):
                     try: # -- F
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i-1) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -385,12 +363,11 @@ class GeoData(object):
                     try: # -- G
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j+1) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
-                        pass 
-                            
+                        pass                             
                 
             if curr_dir == 'y':
                 
@@ -399,7 +376,7 @@ class GeoData(object):
                     try: # -- D
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -407,7 +384,7 @@ class GeoData(object):
                     try: # -- F
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i-1) & \
                                                          (self.inters.links['j'] == curr_j) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -415,7 +392,7 @@ class GeoData(object):
                     try: # -- G
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j+1) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -426,7 +403,7 @@ class GeoData(object):
                     try: # -- H
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j-1) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -434,7 +411,7 @@ class GeoData(object):
                     try: # -- I
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
                                                          (self.inters.links['j'] == curr_j-1) & \
-                                                         (self.inters.links['pi_dir'] == 'y') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'y')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
@@ -442,19 +419,17 @@ class GeoData(object):
                     try: # -- L
                         id_link = self.inters.links[(self.inters.links['i'] == curr_i-1) & \
                                                          (self.inters.links['j'] == curr_j-1) & \
-                                                         (self.inters.links['pi_dir'] == 'x') ] ['id']
+                                                         (self.inters.links['pi_dir'] == 'x')] ['id']
                         if len(list(id_link)) == 1:
                             near_intersections.append(id_link[0])
                     except:
-                        pass 
-                  
+                        pass                   
             
             neighbours[curr_id] = near_intersections
         
-        return neighbours
-    
+        return neighbours    
         
-    def follow_path( self, start_id ):
+    def follow_path(self, start_id):
         """
         Creates a path of connected intersections from a given start intersection.
         
@@ -466,31 +441,30 @@ class GeoData(object):
             conns = self.inters.neighbours[from_id]
             num_conn = len(conns)
             if num_conn == 0:
-                raise ConnectionError, 'no connected intersection'  
+                raise ConnectionError('no connected intersection')  
             elif num_conn == 1:
                 if self.inters.links[conns[0]-1]['conn_from'] == 0 and self.inters.links[conns[0]-1]['conn_to'] != from_id:
                     to_id = conns[0]
                 else:
-                    raise ConnectionError, 'no free connection'
+                    raise ConnectionError('no free connection')
             elif num_conn == 2:
                 if self.inters.links[conns[0]-1]['conn_from'] == 0 and self.inters.links[conns[0]-1]['conn_to'] != from_id:
                     to_id = conns[0]
                 elif self.inters.links[conns[1]-1]['conn_from'] == 0 and self.inters.links[conns[1]-1]['conn_to'] != from_id:
                     to_id = conns[1]
                 else:
-                    raise ConnectionError, 'no free connection' 
+                    raise ConnectionError('no free connection')
             else:
-                raise ConnectionError, 'multiple connection'
+                raise ConnectionError('multiple connection')
             
             # set connection
             self.inters.links[to_id-1]['conn_from'] = from_id
             self.inters.links[from_id-1]['conn_to'] = to_id
                         
             # prepare for next step
-            from_id = to_id
-            
+            from_id = to_id            
 
-    def path_closed( self, start_id ):
+    def path_closed(self, start_id):
         
         from_id = start_id
         
@@ -502,10 +476,9 @@ class GeoData(object):
             
             from_id = to_id
             
-        return False
-        
+        return False        
 
-    def invert_path( self, start_id ):
+    def invert_path(self, start_id):
         
         self.inters.links[start_id-1]['start'] = False
         
@@ -524,15 +497,12 @@ class GeoData(object):
                 
             curr_id = prev_to_id
          
-        return
+        return        
         
+    def patch_path(self, start_id):
         
-    def patch_path( self, start_id ):
-        """
-        
-        """
-        
-        if self.path_closed( start_id ) : return
+        if self.path_closed(start_id): 
+            return
         
         from_id = start_id
         
@@ -552,17 +522,16 @@ class GeoData(object):
            and self.inters.links[new_toid]['conn_to'] != from_id \
            and self.inters.links[new_toid]['conn_from'] == 0:            
             
-            if self.path_closed( new_toid ): return
-            self.invert_path( from_id )
+            if self.path_closed(new_toid): return
+            self.invert_path(from_id)
             self.self.inters.links[from_id-1]['conn_to'] = new_toid
             self.self.inters.links[new_toid-1]['conn_from'] = from_id            
-            self.self.inters.links[new_toid-1]['start'] = False            
-              
+            self.self.inters.links[new_toid-1]['start'] = False  
         
-    def define_paths( self ):
+    def define_paths(self):
         
         # simple networks starting from border
-        for ndx in xrange(self.inters.links.shape[0]):
+        for ndx in range(self.inters.links.shape[0]):
             
             if len(self.inters.neighbours[ndx+1]) != 1 or \
                self.inters.links[ndx]['conn_from'] > 0 or \
@@ -570,14 +539,13 @@ class GeoData(object):
                 continue
             
             try:
-                self.follow_path( ndx+1 )
+                self.follow_path(ndx+1)
             except:
                 continue
-            
-        
+                    
         # inner, simple networks
         
-        for ndx in xrange(self.inters.links.shape[0]):
+        for ndx in range(self.inters.links.shape[0]):
 
             if len(self.inters.neighbours[ndx+1]) != 2 or \
                self.inters.links[ndx]['conn_to'] > 0 or \
@@ -586,37 +554,32 @@ class GeoData(object):
                         
             try:
                 self.inters.links[ndx]['start'] = True                
-                self.follow_path( ndx+1 )
+                self.follow_path(ndx+1)
             except:
                 continue
     
-
         # inner, simple networks, connection of FROM
         
-        for ndx in xrange(self.inters.links.shape[0]):
+        for ndx in range(self.inters.links.shape[0]):
 
             if len(self.inters.neighbours[ndx+1]) == 2 and \
                self.inters.links[ndx]['conn_from'] == 0:                        
                 try:                
-                    self.patch_path( ndx+1 )
+                    self.patch_path(ndx+1)
                 except:
                     continue
-                
-                     
    
-    def define_networks( self ):
+    def define_networks(self):
         """
         Creates list of connected intersections,
-        to output as line shapefile
-        
-        
+        to output as line shapefile.
         """
     
         pid = 0
         networks = {}
         
         # open, simple networks
-        for ndx in xrange( self.inters.links.shape[0] ):
+        for ndx in range(self.inters.links.shape[0]):
             
             if len(self.inters.neighbours[ndx+1]) != 1: continue       
             
@@ -628,17 +591,16 @@ class GeoData(object):
                                         
                 network_list.append(to_ndx)
                 
-                to_ndx = self.inters.links[ to_ndx-1 ][ 'conn_to' ]
+                to_ndx = self.inters.links[to_ndx-1]['conn_to']
                 
             if len(network_list) > 1:
                 
                 pid += 1
                  
-                networks[pid] = network_list
-    
+                networks[pid] = network_list    
             
         # closed, simple networks
-        for ndx in xrange( self.inters.links.shape[0] ):
+        for ndx in range(self.inters.links.shape[0]):
 
             if len(self.inters.neighbours[ndx+1]) != 2 or \
                self.inters.links[ndx]['start'] == False: 
@@ -654,9 +616,9 @@ class GeoData(object):
                                         
                 network_list.append(to_ndx)
                 
-                to_ndx = self.inters.links[ to_ndx-1 ][ 'conn_to' ]
+                to_ndx = self.inters.links[to_ndx-1]['conn_to']
                 
-                if  to_ndx == start_id:
+                if to_ndx == start_id:
                     network_list.append(to_ndx)
                     break                
                 
@@ -664,10 +626,7 @@ class GeoData(object):
                 
                 pid += 1
                  
-                networks[pid] = network_list
-                
+                networks[pid] = network_list                
         
         return networks        
-    
-                           
-    
+

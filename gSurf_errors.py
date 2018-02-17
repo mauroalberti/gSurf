@@ -1,22 +1,26 @@
-class Raster_Parameters_Errors(Exception):
+
+
+class RasterParametersErrors(Exception):
     """
     Exception for raster parameters.
     """
     pass  
 
 
-class FunInp_Err(Exception):
+class FunInpErr(Exception):
     """
     Exception for function input errors.
     """
     pass
     
 
-class Output_Errors(Exception):
+class OutputErrors(Exception):
     """
     Exception for output errors.
     """
     pass
-    
+
+
 class ConnectionError:
+
     pass

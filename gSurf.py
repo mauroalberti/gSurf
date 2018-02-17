@@ -22,28 +22,21 @@
  ***************************************************************************/
 """
 
-
 import os
-import sys
 
 import webbrowser
 
-from PyQt4 import QtCore, QtGui
+from PyQt5 import QtCore, QtGui
+from PyQt5.QtWidgets import QMainWindow, QApplication
+
 
 from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
-    
+
 from gSurf_ui import Ui_MainWindow
-
-
 from gSurf_data import *
 
 
-__version__ = "0.1.2"
-
-
-        
-        
-class MainWindow(QtGui.QMainWindow):
+class MainWindow(QMainWindow):
     """
     Principal GUI class
     
@@ -67,58 +60,56 @@ class MainWindow(QtGui.QMainWindow):
         self.spdata = GeoData()        
         
         # DEM
-        QtCore.QObject.connect( self.ui.actionInput_DEM, QtCore.SIGNAL( " triggered() " ), self.select_dem_file )
-        QtCore.QObject.connect( self.ui.DEM_lineEdit, QtCore.SIGNAL( " textChanged (QString) " ), self.selected_dem ) 
+        QtCore.QObject.connect(self.ui.actionInput_DEM, QtCore.SIGNAL(" triggered() "), self.select_dem_file)
+        QtCore.QObject.connect(self.ui.DEM_lineEdit, QtCore.SIGNAL(" textChanged (QString) "), self.selected_dem) 
                        
-        QtCore.QObject.connect( self.ui.show_DEM_checkBox, QtCore.SIGNAL( " stateChanged (int) " ), self.redraw_map )
-        QtCore.QObject.connect( self.ui.DEM_cmap_comboBox, QtCore.SIGNAL( " currentIndexChanged (QString) " ), self.redraw_map )
+        QtCore.QObject.connect(self.ui.show_DEM_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.DEM_cmap_comboBox, QtCore.SIGNAL(" currentIndexChanged (QString) "), self.redraw_map)
                 
         # Fault traces
-        QtCore.QObject.connect( self.ui.actionInput_line_shapefile, QtCore.SIGNAL( " triggered() " ), self.select_traces_file )
-        QtCore.QObject.connect( self.ui.Trace_lineEdit, QtCore.SIGNAL( " textChanged (QString) " ), self.reading_traces ) 
+        QtCore.QObject.connect(self.ui.actionInput_line_shapefile, QtCore.SIGNAL(" triggered() "), self.select_traces_file)
+        QtCore.QObject.connect(self.ui.Trace_lineEdit, QtCore.SIGNAL(" textChanged (QString) "), self.reading_traces) 
                        
-        QtCore.QObject.connect( self.ui.show_Fault_checkBox, QtCore.SIGNAL( " stateChanged (int) " ), self.redraw_map )
+        QtCore.QObject.connect(self.ui.show_Fault_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
         
         # Full zoom
-        QtCore.QObject.connect( self.ui.mplwidget.canvas, QtCore.SIGNAL( " zoom_to_full_view " ), self.zoom_to_full_view )
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_to_full_view "), self.zoom_to_full_view)
  
         # Source point
-        QtCore.QObject.connect( self.ui.mplwidget.canvas, QtCore.SIGNAL( " map_press " ), self.update_srcpt ) # event from matplotlib widget
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "), self.update_srcpt) # event from matplotlib widget
                 
-        QtCore.QObject.connect( self.ui.Pt_spinBox_x, QtCore.SIGNAL( " valueChanged (int) " ), self.set_z )
-        QtCore.QObject.connect( self.ui.Pt_spinBox_y, QtCore.SIGNAL( " valueChanged (int) " ), self.set_z )
-        QtCore.QObject.connect( self.ui.Z_fix2DEM_checkBox_z, QtCore.SIGNAL( " stateChanged (int) " ), self.set_z )         
-        QtCore.QObject.connect( self.ui.Pt_spinBox_z, QtCore.SIGNAL( " valueChanged (int) " ), self.set_z )
+        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
+        QtCore.QObject.connect(self.ui.Z_fix2DEM_checkBox_z, QtCore.SIGNAL(" stateChanged (int) "), self.set_z)         
+        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
                                            
-        QtCore.QObject.connect( self.ui.Pt_spinBox_x, QtCore.SIGNAL( " valueChanged (int) " ), self.redraw_map )
-        QtCore.QObject.connect( self.ui.Pt_spinBox_y, QtCore.SIGNAL( " valueChanged (int) " ), self.redraw_map ) 
-        QtCore.QObject.connect( self.ui.Pt_spinBox_z, QtCore.SIGNAL( " valueChanged (int) " ), self.redraw_map ) 
-        QtCore.QObject.connect( self.ui.show_SrcPt_checkBox, QtCore.SIGNAL( " stateChanged (int) " ), self.redraw_map )
+        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map) 
+        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map) 
+        QtCore.QObject.connect(self.ui.show_SrcPt_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
  
         # Plane orientation      
-        QtCore.QObject.connect( self.ui.DDirection_dial, QtCore.SIGNAL( " valueChanged (int) " ), self.update_dipdir_spinbox )
-        QtCore.QObject.connect( self.ui.DDirection_spinBox, QtCore.SIGNAL( " valueChanged (int) " ), self.update_dipdir_slider )
+        QtCore.QObject.connect(self.ui.DDirection_dial, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipdir_spinbox)
+        QtCore.QObject.connect(self.ui.DDirection_spinBox, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipdir_slider)
                
-        QtCore.QObject.connect( self.ui.DAngle_verticalSlider, QtCore.SIGNAL( " valueChanged (int) " ), self.update_dipang_spinbox )
-        QtCore.QObject.connect( self.ui.DAngle_spinBox, QtCore.SIGNAL( " valueChanged (int) " ), self.update_dipang_slider )
+        QtCore.QObject.connect(self.ui.DAngle_verticalSlider, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipang_spinbox)
+        QtCore.QObject.connect(self.ui.DAngle_spinBox, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipang_slider)
 
         # Intersections        
-        QtCore.QObject.connect( self.ui.Intersection_calculate_pushButton, QtCore.SIGNAL( " clicked( bool ) " ), self.calc_intersections ) 
-        QtCore.QObject.connect( self.ui.Intersection_show_checkBox, QtCore.SIGNAL( " stateChanged (int) " ), self.redraw_map )
-        QtCore.QObject.connect( self.ui.Intersection_color_comboBox, QtCore.SIGNAL( " currentIndexChanged (QString) " ), self.redraw_map )     
-     
+        QtCore.QObject.connect(self.ui.Intersection_calculate_pushButton, QtCore.SIGNAL(" clicked(bool) "), self.calc_intersections) 
+        QtCore.QObject.connect(self.ui.Intersection_show_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.Intersection_color_comboBox, QtCore.SIGNAL(" currentIndexChanged (QString) "), self.redraw_map)     
 
         # Write result
-        QtCore.QObject.connect( self.ui.actionPoints, QtCore.SIGNAL( " triggered() " ), self.write_intersections_as_points )
-        QtCore.QObject.connect( self.ui.actionLines, QtCore.SIGNAL( " triggered() " ), self.write_intersections_as_lines )
+        QtCore.QObject.connect(self.ui.actionPoints, QtCore.SIGNAL(" triggered() "), self.write_intersections_as_points)
+        QtCore.QObject.connect(self.ui.actionLines, QtCore.SIGNAL(" triggered() "), self.write_intersections_as_lines)
 
         # Other actions
         QtCore.QObject.connect(self.ui.actionHelp, QtCore.SIGNAL(" triggered() "), self.openHelp)           
-        QtCore.QObject.connect( self.ui.actionAbout, QtCore.SIGNAL( " triggered() " ), self.helpAbout )          
-        QtCore.QObject.connect( self.ui.actionQuit, QtCore.SIGNAL( " triggered() " ), sys.exit )        
+        QtCore.QObject.connect(self.ui.actionAbout, QtCore.SIGNAL(" triggered() "), self.helpAbout)          
+        QtCore.QObject.connect(self.ui.actionQuit, QtCore.SIGNAL(" triggered() "), sys.exit)        
 
- 
-    def draw_map(self, map_extent_x, map_extent_y ):            
+    def draw_map(self, map_extent_x, map_extent_y):            
         """
         Draw the map content.
     
@@ -133,50 +124,47 @@ class MainWindow(QtGui.QMainWindow):
         # DEM processing
         if self.spdata.dem is not None:
                            
-            geo_extent = [ self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x, \
-                           self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y ]
+            geo_extent = [self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x, \
+                           self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
             
             if self.ui.show_DEM_checkBox.isChecked(): # DEM check is on
                 
-                curr_colormap = str( self.ui.DEM_cmap_comboBox.currentText() )
+                curr_colormap = str(self.ui.DEM_cmap_comboBox.currentText())
                      
                 self.ui.mplwidget.canvas.ax.imshow(self.spdata.dem.data, extent = geo_extent,  cmap= curr_colormap)
-   
-        
+
         # Fault traces proc.
         if self.spdata.traces.lines_x is not None and self.spdata.traces.lines_y is not None \
            and self.ui.show_Fault_checkBox.isChecked(): # Fault check is on 
  
             for currLine_x, currLine_y  in zip(self.spdata.traces.lines_x, self.spdata.traces.lines_y):                
                     self.ui.mplwidget.canvas.ax.plot(currLine_x, currLine_y,'-')
-                                             
 
-        
         # Intersections proc.
         if self.ui.Intersection_show_checkBox.isChecked() and self.valid_intersections == True:
             
-            curr_color = str( self.ui.Intersection_color_comboBox.currentText() )
+            curr_color = str(self.ui.Intersection_color_comboBox.currentText())
                         
-            intersections_x = list( self.spdata.inters.xcoords_x[ np.logical_not(np.isnan(self.spdata.inters.xcoords_x)) ] ) + \
-                              list( self.spdata.inters.ycoords_x[ np.logical_not(np.isnan(self.spdata.inters.ycoords_y)) ] )
+            intersections_x = list(self.spdata.inters.xcoords_x[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]) + \
+                              list(self.spdata.inters.ycoords_x[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))])
         
-            intersections_y = list( self.spdata.inters.xcoords_y[ np.logical_not(np.isnan(self.spdata.inters.xcoords_x)) ] ) + \
-                              list( self.spdata.inters.ycoords_y[ np.logical_not(np.isnan(self.spdata.inters.ycoords_y)) ] )
+            intersections_y = list(self.spdata.inters.xcoords_y[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]) + \
+                              list(self.spdata.inters.ycoords_y[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))])
 
-                        
-            self.ui.mplwidget.canvas.ax.plot( intersections_x, intersections_y,  "w+",  ms=2,  mec=curr_color,  mew=2 )
+            self.ui.mplwidget.canvas.ax.plot(intersections_x, intersections_y,  "w+",  ms=2,  mec=curr_color,  mew=2)
                                 
             legend_text = "Plane dip dir., angle: (%d, %d)\nSource point x, y, z: (%d, %d, %d)" % \
                 (self.spdata.inters.parameters._srcPlaneAttitude._dipdir, self.spdata.inters.parameters._srcPlaneAttitude._dipangle, \
                  self.spdata.inters.parameters._srcPt.x, self.spdata.inters.parameters._srcPt.y, self.spdata.inters.parameters._srcPt.z) 
                                              
-            at = AnchoredText(legend_text,
-                          loc=2, frameon=True)  
+            at = AnchoredText(
+                legend_text,
+                loc=2,
+                frameon=True)
             
             at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
             at.patch.set_alpha(0.5)
             self.ui.mplwidget.canvas.ax.add_artist(at)    
- 
 
         # Source point proc.         
         curr_x = self.ui.Pt_spinBox_x.value()
@@ -185,15 +173,13 @@ class MainWindow(QtGui.QMainWindow):
         if self.ui.show_SrcPt_checkBox.isChecked():                  
 
             self.ui.mplwidget.canvas.ax.plot(curr_x, curr_y, "ro")
-                              
           
         self.ui.mplwidget.canvas.draw()           
           
-        self.ui.mplwidget.canvas.ax.set_xlim( map_extent_x ) 
-        self.ui.mplwidget.canvas.ax.set_ylim( map_extent_y ) 
-     
-           
-    def refresh_map(self, map_extent_x = None, map_extent_y = None ):
+        self.ui.mplwidget.canvas.ax.set_xlim(map_extent_x) 
+        self.ui.mplwidget.canvas.ax.set_ylim(map_extent_y) 
+
+    def refresh_map(self, map_extent_x=None, map_extent_y=None):
         """
         Update map.
     
@@ -209,8 +195,7 @@ class MainWindow(QtGui.QMainWindow):
         if map_extent_y == None:            
             map_extent_y = self.ui.mplwidget.canvas.ax.get_ylim()
                 
-        self.draw_map( map_extent_x, map_extent_y )
-        
+        self.draw_map(map_extent_x, map_extent_y)
 
     def redraw_map(self):
         """
@@ -219,9 +204,8 @@ class MainWindow(QtGui.QMainWindow):
         """
                       
         self.refresh_map()
-        
                 
-    def zoom_to_full_view( self, map_extent_x = [0, 100], map_extent_y = [0, 100] ):
+    def zoom_to_full_view(self, map_extent_x=[0, 100], map_extent_y=[0, 100]):
         """
         Update map view to the DEM extent or otherwise, if available, to the shapefile extent.
     
@@ -233,69 +217,63 @@ class MainWindow(QtGui.QMainWindow):
         """      
        
         if self.spdata.dem is not None:
-            map_extent_x = [ self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x ]
-            map_extent_y = [ self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y ]
+            map_extent_x = [self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x]
+            map_extent_y = [self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
             
         elif self.spdata.traces.extent_x != [] and self.spdata.traces.extent_y != []:
             map_extent_x = self.spdata.traces.extent_x
             map_extent_y = self.spdata.traces.extent_y                 
                                 
-        self.refresh_map( map_extent_x, map_extent_y )
+        self.refresh_map(map_extent_x, map_extent_y)
         
-        
-    def select_dem_file( self ):
+    def select_dem_file(self):
         """
         Select input DEM file
         
         """            
-        fileName = QtGui.QFileDialog.getOpenFileName( self, self.tr( "Open DEM file (using GDAL)" ), '', "*.*" )
+        fileName = QtGui.QFileDialog.getOpenFileName(self, self.tr("Open DEM file (using GDAL)"), '', "*.*")
         if fileName.isEmpty():
             return          
 
-        self.ui.DEM_lineEdit.setText( fileName )
+        self.ui.DEM_lineEdit.setText(fileName)
 
-
-    def selected_dem( self, in_dem_fn ):        
+    def selected_dem(self, in_dem_fn):        
 
         try:
             self.spdata.dem = self.spdata.read_dem(in_dem_fn)
         except:
             self.ui.DEM_lineEdit.clear()
-            QtGui.QMessageBox.critical( self, "DEM", "Unable to read file" )
+            QtGui.QMessageBox.critical(self, "DEM", "Unable to read file")
             return
         
         # set map limits
-        self.ui.mplwidget.canvas.ax.set_xlim( self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x )
-        self.ui.mplwidget.canvas.ax.set_ylim( self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y ) 
+        self.ui.mplwidget.canvas.ax.set_xlim(self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x)
+        self.ui.mplwidget.canvas.ax.set_ylim(self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y) 
 
         # fix z to DEM if required
-        self.ui.Z_fix2DEM_checkBox_z.emit( QtCore.SIGNAL( " stateChanged (int) " ), 1 )
+        self.ui.Z_fix2DEM_checkBox_z.emit(QtCore.SIGNAL(" stateChanged (int) "), 1)
              
         # set DEM visibility on
-        self.ui.show_DEM_checkBox.setCheckState( 2 )
+        self.ui.show_DEM_checkBox.setCheckState(2)
         
         # set intersection validity to False
         self.valid_intersections = False
         
         # zoom to full view        
         self.zoom_to_full_view()
-        
-        
-        
 
-    def select_traces_file( self ):        
+    def select_traces_file(self):        
         """
         Selection of the linear shapefile to be opened.
         
         """            
-        fileName = QtGui.QFileDialog.getOpenFileName( self, self.tr( "Open shapefile" ), '', "shp (*.shp *.SHP)" )
+        fileName = QtGui.QFileDialog.getOpenFileName(self, self.tr("Open shapefile"), '', "shp (*.shp *.SHP)")
         if fileName.isEmpty():
             return          
 
-        self.ui.Trace_lineEdit.setText( fileName )
-
+        self.ui.Trace_lineEdit.setText(fileName)
                 
-    def reading_traces( self, in_traces_shp ):
+    def reading_traces(self, in_traces_shp):
         """
         Read line shapefile.
     
@@ -307,20 +285,19 @@ class MainWindow(QtGui.QMainWindow):
         try:
             self.spdata.read_traces(in_traces_shp)
         except:
-            QtGui.QMessageBox.critical( self, "Traces", "Unable to read shapefile" )
+            QtGui.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
             return
         else:
             if self.spdata.traces.lines_x is None or self.spdata.traces.lines_y is None:
-                self.ui.Trace_lineEdit.setText( '' )
-                QtGui.QMessageBox.critical( self, "Traces", "Unable to read shapefile" )
+                self.ui.Trace_lineEdit.setText('')
+                QtGui.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
                 return           
                       
         # set layer visibility on
-        self.ui.show_Fault_checkBox.setCheckState( 2 ) 
+        self.ui.show_Fault_checkBox.setCheckState(2) 
         
         # zoom to full view
         self.zoom_to_full_view()
-        
 
     def update_srcpt (self, pos_values):
         """
@@ -337,9 +314,8 @@ class MainWindow(QtGui.QMainWindow):
         
         # set intersection validity to False
         self.valid_intersections = False
-                                        
 
-    def set_z (self):
+    def set_z(self):
         """
         Update z value.
         
@@ -359,15 +335,13 @@ class MainWindow(QtGui.QMainWindow):
                curr_y <= self.spdata.dem.domain.g_llcorner().y or curr_y >= self.spdata.dem.domain.g_trcorner().y:
                 return
            
-            curr_point = Point( curr_x, curr_y )
+            curr_point = Point(curr_x, curr_y)
             currArrCoord = self.spdata.dem.geog2array_coord(curr_point)
     
             z = floor(self.spdata.dem.interpolate_bilinear(currArrCoord))
     
-            self.ui.Pt_spinBox_z.setValue(int(z))        
+            self.ui.Pt_spinBox_z.setValue(int(z))
 
-                    
-                        
     def update_dipdir_slider(self):
         """
         Update the value of the dip direction in the slider.
@@ -379,11 +353,10 @@ class MainWindow(QtGui.QMainWindow):
         if transformed_dipdirection > 360.0:
             transformed_dipdirection = transformed_dipdirection - 360 
                        
-        self.ui.DDirection_dial.setValue( transformed_dipdirection ) 
+        self.ui.DDirection_dial.setValue(transformed_dipdirection) 
            
         # set intersection validity to False
         self.valid_intersections = False
-                 
          
     def update_dipdir_spinbox(self):            
         """
@@ -395,33 +368,30 @@ class MainWindow(QtGui.QMainWindow):
         if real_dipdirection < 0.0:
             real_dipdirection = real_dipdirection + 360.0
             
-        self.ui.DDirection_spinBox.setValue( real_dipdirection ) 
+        self.ui.DDirection_spinBox.setValue(real_dipdirection) 
 
         # set intersection validity to False
         self.valid_intersections = False
-                
          
     def update_dipang_slider(self):
         """
         Update the value of the dip angle in the slider.
         """
-        self.ui.DAngle_verticalSlider.setValue( self.ui.DAngle_spinBox.value() )    
+        self.ui.DAngle_verticalSlider.setValue(self.ui.DAngle_spinBox.value())    
                   
         # set intersection validity to False
         self.valid_intersections = False
-        
                 
     def update_dipang_spinbox(self):            
         """
         Update the value of the dip angle in the spinbox.
         """        
-        self.ui.DAngle_spinBox.setValue( self.ui.DAngle_verticalSlider.value() ) 
+        self.ui.DAngle_spinBox.setValue(self.ui.DAngle_verticalSlider.value()) 
 
         # set intersection validity to False
         self.valid_intersections = False
         
-        
-    def calc_intersections( self ):
+    def calc_intersections(self):
         """
         Calculate intersection points.
         """                
@@ -435,26 +405,24 @@ class MainWindow(QtGui.QMainWindow):
         srcDipDir = self.ui.DDirection_spinBox.value()
         srcDipAngle = self.ui.DAngle_verticalSlider.value()
 
-        srcPlaneAttitude = StructPlane( srcDipDir, srcDipAngle )
+        srcPlaneAttitude = StructPlane(srcDipDir, srcDipAngle)
 
         # intersection arrays
         self.spdata.set_intersections_default()
         
-        intersection_results = self.spdata.dem.intersection_with_surface('plane', srcPt, srcPlaneAttitude )
+        intersection_results = self.spdata.dem.intersection_with_surface('plane', srcPt, srcPlaneAttitude)
         
         self.spdata.inters.xcoords_x = intersection_results[0]
         self.spdata.inters.xcoords_y = intersection_results[1]
         self.spdata.inters.ycoords_x = intersection_results[2]
         self.spdata.inters.ycoords_y = intersection_results[3]
             
-        self.spdata.inters.parameters = Intersection_Parameters(self.spdata.dem._sourcename, srcPt, srcPlaneAttitude)
+        self.spdata.inters.parameters = IntersectionParameters(self.spdata.dem._sourcename, srcPt, srcPlaneAttitude)
         
         self.valid_intersections = True
 
-        self.refresh_map( )
-        
-                         
-        
+        self.refresh_map()
+
     def write_intersections_as_points(self):
         """
         Write intersection results in the output shapefile.
@@ -467,24 +435,23 @@ class MainWindow(QtGui.QMainWindow):
         srcPt = self.spdata.inters.parameters._srcPt
         srcPlaneAttitude = self.spdata.inters.parameters._srcPlaneAttitude     
                 
-        plane_z = plane_from_geo( srcPt, srcPlaneAttitude )   
+        plane_z = plane_from_geo(srcPt, srcPlaneAttitude)   
                                 
-        x_filtered_coord_x = self.spdata.inters.xcoords_x[ np.logical_not(np.isnan(self.spdata.inters.xcoords_x)) ] 
-        x_filtered_coord_y = self.spdata.inters.xcoords_y[ np.logical_not(np.isnan(self.spdata.inters.xcoords_x)) ]            
-        x_filtered_coord_z = plane_z( x_filtered_coord_x, x_filtered_coord_y )
+        x_filtered_coord_x = self.spdata.inters.xcoords_x[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))] 
+        x_filtered_coord_y = self.spdata.inters.xcoords_y[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]            
+        x_filtered_coord_z = plane_z(x_filtered_coord_x, x_filtered_coord_y)
 
-        y_filtered_coord_x = self.spdata.inters.ycoords_x[ np.logical_not(np.isnan(self.spdata.inters.ycoords_y)) ] 
-        y_filtered_coord_y = self.spdata.inters.ycoords_y[ np.logical_not(np.isnan(self.spdata.inters.ycoords_y)) ]             
-        y_filtered_coord_z = plane_z( y_filtered_coord_x, y_filtered_coord_y )        
+        y_filtered_coord_x = self.spdata.inters.ycoords_x[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))] 
+        y_filtered_coord_y = self.spdata.inters.ycoords_y[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))]             
+        y_filtered_coord_z = plane_z(y_filtered_coord_x, y_filtered_coord_y)        
         
-        intersections_x = list( x_filtered_coord_x ) + list( y_filtered_coord_x )    
-        intersections_y = list( x_filtered_coord_y ) + list( y_filtered_coord_y )                                           
-        intersections_z = list( x_filtered_coord_z ) + list( y_filtered_coord_z )       
-                       
-                         
+        intersections_x = list(x_filtered_coord_x) + list(y_filtered_coord_x)    
+        intersections_y = list(x_filtered_coord_y) + list(y_filtered_coord_y)                                           
+        intersections_z = list(x_filtered_coord_z) + list(y_filtered_coord_z)       
+
         # creation of output shapefile
 
-        fileName = QtGui.QFileDialog.getSaveFileName( self, self.tr( "Save as shapefile" ), 'points.shp', "shp (*.shp *.SHP)" )
+        fileName = QtGui.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'points.shp', "shp (*.shp *.SHP)")
         if fileName.isEmpty():
             return  
 
@@ -514,8 +481,7 @@ class MainWindow(QtGui.QMainWindow):
 
         z_fieldDef = ogr.FieldDefn('z', ogr.OFTReal)
         out_layer.CreateField(z_fieldDef)
-        
-        
+
         srcPt_x_fieldDef = ogr.FieldDefn('srcPt_x', ogr.OFTReal)
         out_layer.CreateField(srcPt_x_fieldDef)
 
@@ -571,7 +537,6 @@ class MainWindow(QtGui.QMainWindow):
         
         QtGui.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
 
-
     def write_intersections_as_lines(self):
         """
         Write intersection results in a line shapefile.
@@ -584,30 +549,28 @@ class MainWindow(QtGui.QMainWindow):
         srcPt = self.spdata.inters.parameters._srcPt
         srcPlaneAttitude = self.spdata.inters.parameters._srcPlaneAttitude     
 
-        plane_z = plane_from_geo( srcPt, srcPlaneAttitude ) 
+        plane_z = plane_from_geo(srcPt, srcPlaneAttitude) 
                 
         # create dictionary of cell with intersection points
         
         self.spdata.inters.links = self.spdata.get_intersections() 
             
-        self.spdata.inters.neighbours = self.spdata.set_neighbours( )        
+        self.spdata.inters.neighbours = self.spdata.set_neighbours()        
                 
-        self.spdata.define_paths( )  
+        self.spdata.define_paths()  
         
         # networks of connected intersections
         self.spdata.inters.networks = self.spdata.define_networks()        
 
-                   
-        
         # creation of output shapefile
 
-        fileName = QtGui.QFileDialog.getSaveFileName( self, self.tr( "Save as shapefile" ), 'lines.shp', "shp (*.shp *.SHP)" )
+        fileName = QtGui.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'lines.shp', "shp (*.shp *.SHP)")
         if fileName.isEmpty():
             return  
 
-        fileName = str( fileName )
+        fileName = str(fileName)
                
-        shape_driver = ogr.GetDriverByName( "ESRI Shapefile" )
+        shape_driver = ogr.GetDriverByName("ESRI Shapefile")
               
         out_shape = shape_driver.CreateDataSource(fileName)
         if out_shape is None:
@@ -641,7 +604,6 @@ class MainWindow(QtGui.QMainWindow):
         # get the layer definition of the output shapefile
         outshape_featdef = out_layer.GetLayerDefn()  
 
-        
         for curr_path_id, curr_path_points in self.spdata.inters.networks.iteritems():
                                     
             line = ogr.Geometry(ogr.wkbLineString)
@@ -652,18 +614,18 @@ class MainWindow(QtGui.QMainWindow):
                            
                 i, j, direct = curr_intersection['i'], curr_intersection['j'], curr_intersection['pi_dir']
                 
-                if direct == 'x': x, y = self.spdata.inters.xcoords_x[i,j], self.spdata.inters.xcoords_y[i,j]
-                if direct == 'y': x, y = self.spdata.inters.ycoords_x[i,j], self.spdata.inters.ycoords_y[i,j] 
+                if direct == 'x':
+                    x, y = self.spdata.inters.xcoords_x[i, j], self.spdata.inters.xcoords_y[i, j]
+                if direct == 'y':
+                    x, y = self.spdata.inters.ycoords_x[i, j], self.spdata.inters.ycoords_y[i, j]
                                        
-                z = plane_z(x,y)
+                z = plane_z(x, y)
  
-                line.AddPoint(x,y,z)
-            
-                                       
+                line.AddPoint(x, y, z)
+
             # create a new feature
             line_shape = ogr.Feature(outshape_featdef)
             line_shape.SetGeometry(line)                           
-
 
             line_shape.SetField('id', curr_path_id)
             line_shape.SetField('srcPt_x', srcPt.x)
@@ -682,11 +644,8 @@ class MainWindow(QtGui.QMainWindow):
                             
         # destroy output geometry
         out_shape.Destroy() 
-            
-                    
-        QtGui.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
-        
 
+        QtGui.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
 
     def helpAbout(self):
         """
@@ -694,7 +653,7 @@ class MainWindow(QtGui.QMainWindow):
         """
         QtGui.QMessageBox.about(self, "About gSurf", 
         """
-            <p>gSurf version 0.1.2<br />2012-06-24</p>
+            <p>gSurf version 0.2.0</p>
             <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
             <p>This program calculates the intersection between a plane and a DEM in an interactive way.
             The result can be saved as a point/linear shapefile.</p>            
@@ -703,7 +662,6 @@ class MainWindow(QtGui.QMainWindow):
              <p>Tested in Windows Vista (Python 2.7.2) and Ubuntu Lucid Lynx (Python 2.6.5)</p>
              <p>Report any bug to <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a></p>
         """)        
-  
 
     def openHelp(self):
         """
@@ -711,8 +669,7 @@ class MainWindow(QtGui.QMainWindow):
         from CADTOOLS module in QGIS
         """
         help_path = os.path.join(os.path.dirname(__file__), 'help', 'help.html')         
-        webbrowser.open(help_path) 
-        
+        webbrowser.open(help_path)
  
  
 class AnchoredText(AnchoredOffsetbox):
@@ -722,7 +679,7 @@ class AnchoredText(AnchoredOffsetbox):
     """
     def __init__(self, s, loc, pad=0.4, borderpad=0.5, prop=None, frameon=True):
 
-        self.txt = TextArea( s, minimumdescent=False )
+        self.txt = TextArea(s, minimumdescent=False)
 
         super(AnchoredText, self).__init__(loc, pad=pad, borderpad=borderpad,
                                            child=self.txt,
@@ -730,19 +687,13 @@ class AnchoredText(AnchoredOffsetbox):
                                            frameon=frameon)
 
 
-                
-def main():
-    """
-    Main of the module.
-    """    
-    app = QtGui.QApplication(sys.argv)
-    
+if __name__ == '__main__':
+
+    app = QApplication(sys.argv)
+
     form = MainWindow()
-    form.show()
-    app.exec_()
-
-
-main()
+    # form.show()
+    sys.exit(app.exec_())
 
 
 

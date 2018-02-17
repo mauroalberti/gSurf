@@ -586,17 +586,17 @@ class GDALParameters( object ):
         @param  tolerance:  the maximum threshold for both pixel N-S and E-W difference, or axis rotations.
         @type  tolerance:  float.
                 
-        @return:  None when successful, Raster_Parameters_Errors when pixel differences or axis rotations.
+        @return:  None when successful, RasterParametersErrors when pixel differences or axis rotations.
         
-        @raise: Raster_Parameters_Errors - raster geometry incompatible with this module (i.e. different cell sizes or axis rotations).          
+        @raise: RasterParametersErrors - raster geometry incompatible with this module (i.e. different cell sizes or axis rotations).
         """        
         # check if pixel size can be considered the same in the two axis directions
         if abs( abs( self._pixsizeEW ) - abs( self._pixsizeNS ) ) / abs( self._pixsizeNS ) > tolerance:
-            raise Raster_Parameters_Errors, 'Pixel sizes in x and y directions are different in raster' 
+            raise RasterParametersErrors, 'Pixel sizes in x and y directions are different in raster'
             
         # check for the absence of axis rotations
         if abs( self._rotation_GT_2 ) > tolerance or abs( self._rotation_GT_4 ) > tolerance:
-            raise Raster_Parameters_Errors, 'There should be no axis rotation in raster' 
+            raise RasterParametersErrors, 'There should be no axis rotation in raster'
         
         return
 

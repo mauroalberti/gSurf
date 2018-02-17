@@ -34,8 +34,8 @@
 import os
 import webbrowser
 
-# Python Qt4 bindings for GUI objects
-from PyQt4 import QtCore, QtGui
+# Python Qt5 bindings for GUI objects
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 from matplotlib import rcParams
 
@@ -45,7 +45,7 @@ from matplotlib import rcParams
 from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
 
 # import the NavigationToolbar Qt4Agg widget
-from matplotlib.backends.backend_qt4agg import NavigationToolbar2QTAgg as NavigationToolbar
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
 # Matplotlib Figure object
 from matplotlib.figure import Figure
@@ -75,9 +75,7 @@ class MplCanvas(FigureCanvas):
         rcParams["figure.subplot.wspace"] = 0.1  
         rcParams["figure.subplot.hspace"] = 0.1  
         
-        rcParams["figure.facecolor"] = 'white'  
-
-        
+        rcParams["figure.facecolor"] = 'white'
         
         # setup Matplotlib Figure and Axis
         self.fig = Figure()
@@ -85,28 +83,28 @@ class MplCanvas(FigureCanvas):
         
         self.ax.set_aspect(1.)
 
-        self.ax.set_xlim(x_min_init,x_max_init)
-        self.ax.set_ylim(y_min_init,y_max_init)    
-        
+        self.ax.set_xlim(x_min_init, x_max_init)
+        self.ax.set_ylim(y_min_init, y_max_init)
         
         # initialization of the canvas
         FigureCanvas.__init__(self, self.fig)
         # we define the widget as expandable
-        FigureCanvas.setSizePolicy(self,
-                                   QtGui.QSizePolicy.Expanding,
-                                   QtGui.QSizePolicy.Expanding)
+        FigureCanvas.setSizePolicy(
+            self,
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Expanding)
         # notify the system of updated policy
         FigureCanvas.updateGeometry(self) 
         
 
-
-class MplWidget(QtGui.QWidget):
+class MplWidget(QtWidgets.QWidget):
     """
     Widget defined in Qt Designer.
     """
+    
     def __init__(self, parent = None):
         # initialization of Qt MainWindow widget
-        QtGui.QWidget.__init__(self, parent)
+        QtWidgets.QWidget.__init__(self, parent)
         
         # set the canvas to the Matplotlib widget
         self.canvas = MplCanvas()
@@ -115,8 +113,7 @@ class MplWidget(QtGui.QWidget):
         #self.ntb.removeAction(self.ntb.buttons[0])
         self.ntb.clear()
         
-        
-        program_folder = os.path.join(os.path.dirname(__file__), "ims" )
+        program_folder = os.path.join(os.path.dirname(__file__), "ims")
 
         a = self.ntb.addAction(self.ntb._icon(os.path.join(program_folder, "world.png")), 'Home', self.zoom2fullextent)
         a.setToolTip('Reset original view')
@@ -143,19 +140,17 @@ class MplWidget(QtGui.QWidget):
         
         a = self.ntb.addAction(self.ntb._icon(os.path.join(program_folder, "information.png")), 'About',
                 self.helpAbout)
-        a.setToolTip('About')
-        
+        a.setToolTip('About')        
                                             
         # create a vertical box layout
-        self.vbl = QtGui.QVBoxLayout()
+        self.vbl = QtWidgets.QVBoxLayout()
         
         # add widgets to the vertical box
         self.vbl.addWidget(self.canvas)
         self.vbl.addWidget(self.ntb)
                                                              
         # set the layout to the vertical box
-        self.setLayout(self.vbl)
-        
+        self.setLayout(self.vbl)        
         
     def onclick(self, event): 
         """
@@ -169,11 +164,9 @@ class MplWidget(QtGui.QWidget):
         set_srcpt_count += 1
         
         if set_srcpt_count == 1:             
-            self.canvas.emit( QtCore.SIGNAL("map_press"), (event.xdata, event.ydata) )
+            self.canvas.emit(QtCore.SIGNAL("map_press"), (event.xdata, event.ydata))
             
         self.canvas.fig.canvas.mpl_disconnect(cid)
- 
-        
                 
     def pt_map(self):
         """
@@ -184,8 +177,7 @@ class MplWidget(QtGui.QWidget):
             
         set_srcpt_count = 0
         
-        cid = self.canvas.fig.canvas.mpl_connect('button_press_event', self.onclick)
-    
+        cid = self.canvas.fig.canvas.mpl_connect('button_press_event', self.onclick)    
                 
     def zoom2fullextent(self):
         """
@@ -193,38 +185,28 @@ class MplWidget(QtGui.QWidget):
         the shapefile, or at the standard extent.
         
         """
-        self.canvas.emit( QtCore.SIGNAL("zoom_to_full_view") )
+        self.canvas.emit(QtCore.SIGNAL("zoom_to_full_view"))        
         
-        
-    # after CADTOOLS module in QG     
+    # after CADTOOLS module in QG
     def openHelp(self):
         """
         Open an Help HTML file
         
         """
         help_path = os.path.join(os.path.dirname(__file__), 'help', 'help.html')         
-        webbrowser.open(help_path)          
-
+        webbrowser.open(help_path)
             
     def helpAbout(self):
         """
         Visualize an About window.
         """
-        QtGui.QMessageBox.about(self, "About gSurf", 
+        QtWidgets.QMessageBox.about(self, "About gSurf",
         """
-            <p>gSurf version 0.2.0<br />2012-03-10<br />License: GPL v. 3</p>
-            <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
+            <p>gSurf<br />License: GPL v. 3</p>
             <p>This application calculates the intersection between a plane and a DEM in an interactive way.
-            The result is a set of points/lines that can be saved as shapefiles.
-            
+            The result is a set of points/lines that can be saved as shapefiles.            
             </p>
-             <p>Created with Python 2.7 in Eclipse/PyDev.</p>
-             <p>Tested in QuantumGIS 1.7.3 in Windows Vista (Python 2.7.2) and Ubuntu Lucid Lynx (Python 2.6.5)</p>
              <p>Report any bug to <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a></p>
         """)              
             
-        
-        
-        
-               
-        
+
