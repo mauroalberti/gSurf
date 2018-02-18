@@ -23,12 +23,12 @@
 """
 
 import os
+import sys
 
 import webbrowser
 
-from PyQt5 import QtCore, QtGui
-from PyQt5.QtWidgets import QMainWindow, QApplication
-
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtCore import QObject, pyqtSignal
 
 from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
 
@@ -36,7 +36,10 @@ from gSurf_ui import Ui_MainWindow
 from gSurf_data import *
 
 
-class MainWindow(QMainWindow):
+__version__ = "0.2.0"
+
+
+class MainWindow(QtWidgets.QMainWindow):
     """
     Principal GUI class
     
@@ -58,14 +61,82 @@ class MainWindow(QMainWindow):
         
         # initialize spdata
         self.spdata = GeoData()        
-        
-        # DEM
-        QtCore.QObject.connect(self.ui.actionInput_DEM, QtCore.SIGNAL(" triggered() "), self.select_dem_file)
-        QtCore.QObject.connect(self.ui.DEM_lineEdit, QtCore.SIGNAL(" textChanged (QString) "), self.selected_dem) 
-                       
-        QtCore.QObject.connect(self.ui.show_DEM_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.DEM_cmap_comboBox, QtCore.SIGNAL(" currentIndexChanged (QString) "), self.redraw_map)
-                
+
+        # DEM connections
+
+        self.ui.actionInput_DEM.triggered.connect(self.select_dem_file)
+        self.ui.DEM_lineEdit.textChanged['QString'].connect(self.selected_dem)
+
+        self.ui.show_DEM_checkBox.stateChanged['int'].connect(self.redraw_map)
+        self.ui.DEM_cmap_comboBox.currentIndexChanged['QString'].connect(self.redraw_map)
+
+        # Fault traces connections
+        self.ui.actionInput_line_shapefile.triggered.connect(self.select_traces_file)
+        self.ui.Trace_lineEdit.textChanged['QString'].connect(self.reading_traces)
+        self.ui.show_Fault_checkBox.stateChanged['int'].connect(self.redraw_map)
+
+        # Full zoom
+        #zoom_to_full_view = pyqtSignal()
+        self.ui.mplwidget.zoom_to_full_view.connect(self.zoom_full_view)
+        #QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
+
+        # Source point
+        self.ui.mplwidget.map_press.connect(self.update_srcpt)
+        """
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
+                               self.update_srcpt)  # event from matplotlib widget
+        """
+
+        self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.set_z)
+        self.ui.Pt_spinBox_y.valueChanged['int'].connect(self.set_z)
+        self.ui.Z_fix2DEM_checkBox_z.stateChanged['int'].connect(self.set_z)
+        self.ui.Pt_spinBox_z.valueChanged['int'].connect(self.set_z)
+
+        self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.redraw_map)
+        self.ui.Pt_spinBox_y.valueChanged['int'].connect(self.redraw_map)
+        self.ui.Pt_spinBox_z.valueChanged['int'].connect(self.redraw_map)
+
+        self.ui.show_SrcPt_checkBox.stateChanged['int'].connect(self.redraw_map)
+
+        """
+        # Source point
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
+                               self.update_srcpt)  # event from matplotlib widget
+
+        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
+        QtCore.QObject.connect(self.ui.Z_fix2DEM_checkBox_z, QtCore.SIGNAL(" stateChanged (int) "), self.set_z)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
+
+        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
+        QtCore.QObject.connect(self.ui.show_SrcPt_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
+        """
+
+        # Plane orientation
+        self.ui.DDirection_dial.valueChanged['int'].connect(self.update_dipdir_spinbox)
+        self.ui.DDirection_spinBox.valueChanged['int'].connect(self.update_dipdir_slider)
+
+        self.ui.DAngle_verticalSlider.valueChanged['int'].connect(self.update_dipang_spinbox)
+        self.ui.DAngle_spinBox.valueChanged['int'].connect(self.update_dipang_slider)
+
+        # Intersections
+        self.ui.Intersection_calculate_pushButton.clicked['bool'].connect(self.calc_intersections)
+        self.ui.Intersection_show_checkBox.stateChanged['int'].connect(self.redraw_map)
+        self.ui.Intersection_color_comboBox.currentIndexChanged['QString'].connect(self.redraw_map)
+
+        # Write result
+        self.ui.actionPoints.triggered.connect(self.write_intersections_as_points)
+        self.ui.actionLines.triggered.connect(self.write_intersections_as_lines)
+
+        # Other actions
+        self.ui.actionHelp.triggered.connect(self.openHelp)
+        self.ui.actionAbout.triggered.connect(self.helpAbout)
+        self.ui.actionQuit.triggered.connect(sys.exit)
+
+        """
+  
         # Fault traces
         QtCore.QObject.connect(self.ui.actionInput_line_shapefile, QtCore.SIGNAL(" triggered() "), self.select_traces_file)
         QtCore.QObject.connect(self.ui.Trace_lineEdit, QtCore.SIGNAL(" textChanged (QString) "), self.reading_traces) 
@@ -73,7 +144,7 @@ class MainWindow(QMainWindow):
         QtCore.QObject.connect(self.ui.show_Fault_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
         
         # Full zoom
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_to_full_view "), self.zoom_to_full_view)
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
  
         # Source point
         QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "), self.update_srcpt) # event from matplotlib widget
@@ -107,7 +178,8 @@ class MainWindow(QMainWindow):
         # Other actions
         QtCore.QObject.connect(self.ui.actionHelp, QtCore.SIGNAL(" triggered() "), self.openHelp)           
         QtCore.QObject.connect(self.ui.actionAbout, QtCore.SIGNAL(" triggered() "), self.helpAbout)          
-        QtCore.QObject.connect(self.ui.actionQuit, QtCore.SIGNAL(" triggered() "), sys.exit)        
+        QtCore.QObject.connect(self.ui.actionQuit, QtCore.SIGNAL(" triggered() "), sys.exit)  
+        """
 
     def draw_map(self, map_extent_x, map_extent_y):            
         """
@@ -205,7 +277,7 @@ class MainWindow(QMainWindow):
                       
         self.refresh_map()
                 
-    def zoom_to_full_view(self, map_extent_x=[0, 100], map_extent_y=[0, 100]):
+    def zoom_full_view(self, map_extent_x=[0, 100], map_extent_y=[0, 100]):
         """
         Update map view to the DEM extent or otherwise, if available, to the shapefile extent.
     
@@ -230,12 +302,14 @@ class MainWindow(QMainWindow):
         """
         Select input DEM file
         
-        """            
-        fileName = QtGui.QFileDialog.getOpenFileName(self, self.tr("Open DEM file (using GDAL)"), '', "*.*")
-        if fileName.isEmpty():
+        """
+
+        fileName = QtWidgets.QFileDialog.getOpenFileName(self, self.tr("Open DEM file (using GDAL)"), '', "*.*")
+        file_path = fileName[0]
+        if not file_path:
             return          
 
-        self.ui.DEM_lineEdit.setText(fileName)
+        self.ui.DEM_lineEdit.setText(file_path)
 
     def selected_dem(self, in_dem_fn):        
 
@@ -243,7 +317,7 @@ class MainWindow(QMainWindow):
             self.spdata.dem = self.spdata.read_dem(in_dem_fn)
         except:
             self.ui.DEM_lineEdit.clear()
-            QtGui.QMessageBox.critical(self, "DEM", "Unable to read file")
+            QtWidgets.QMessageBox.critical(self, "DEM", "Unable to read file")
             return
         
         # set map limits
@@ -251,7 +325,7 @@ class MainWindow(QMainWindow):
         self.ui.mplwidget.canvas.ax.set_ylim(self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y) 
 
         # fix z to DEM if required
-        self.ui.Z_fix2DEM_checkBox_z.emit(QtCore.SIGNAL(" stateChanged (int) "), 1)
+        #self.ui.Z_fix2DEM_checkBox_z.emit(QtCore.SIGNAL(" stateChanged (int) "), 1)
              
         # set DEM visibility on
         self.ui.show_DEM_checkBox.setCheckState(2)
@@ -260,18 +334,19 @@ class MainWindow(QMainWindow):
         self.valid_intersections = False
         
         # zoom to full view        
-        self.zoom_to_full_view()
+        self.zoom_full_view()
 
     def select_traces_file(self):        
         """
         Selection of the linear shapefile to be opened.
         
         """            
-        fileName = QtGui.QFileDialog.getOpenFileName(self, self.tr("Open shapefile"), '', "shp (*.shp *.SHP)")
-        if fileName.isEmpty():
+        fileName = QtWidgets.QFileDialog.getOpenFileName(self, self.tr("Open shapefile"), '', "shp (*.shp *.SHP)")
+        file_path = fileName[0]
+        if not file_path:
             return          
 
-        self.ui.Trace_lineEdit.setText(fileName)
+        self.ui.Trace_lineEdit.setText(file_path)
                 
     def reading_traces(self, in_traces_shp):
         """
@@ -285,19 +360,19 @@ class MainWindow(QMainWindow):
         try:
             self.spdata.read_traces(in_traces_shp)
         except:
-            QtGui.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
+            QtWidgets.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
             return
         else:
             if self.spdata.traces.lines_x is None or self.spdata.traces.lines_y is None:
                 self.ui.Trace_lineEdit.setText('')
-                QtGui.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
+                QtWidgets.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
                 return           
                       
         # set layer visibility on
         self.ui.show_Fault_checkBox.setCheckState(2) 
         
         # zoom to full view
-        self.zoom_to_full_view()
+        self.zoom_full_view()
 
     def update_srcpt (self, pos_values):
         """
@@ -429,7 +504,7 @@ class MainWindow(QMainWindow):
         """
         
         if self.spdata.inters.xcoords_x == []:
-            QtGui.QMessageBox.critical(self, "Save results", "No results available") 
+            QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return
 
         srcPt = self.spdata.inters.parameters._srcPt
@@ -451,7 +526,7 @@ class MainWindow(QMainWindow):
 
         # creation of output shapefile
 
-        fileName = QtGui.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'points.shp', "shp (*.shp *.SHP)")
+        fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'points.shp', "shp (*.shp *.SHP)")
         if fileName.isEmpty():
             return  
 
@@ -461,11 +536,11 @@ class MainWindow(QMainWindow):
               
         out_shape = shape_driver.CreateDataSource(fileName)
         if out_shape is None:
-            QtGui.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
+            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
             return
         out_layer = out_shape.CreateLayer('output_points', geom_type=ogr.wkbPoint)
         if out_layer is None:
-            QtGui.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName) 
+            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
             return        
         
         # add fields to the output shapefile
@@ -533,9 +608,9 @@ class MainWindow(QMainWindow):
             curr_Pt_shape.Destroy()
                             
         # destroy output geometry
-        out_shape.Destroy() 
-        
-        QtGui.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
+        out_shape.Destroy()
+
+        QtWidgets.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
 
     def write_intersections_as_lines(self):
         """
@@ -543,7 +618,7 @@ class MainWindow(QMainWindow):
         """
         
         if self.spdata.inters.xcoords_x == []:
-            QtGui.QMessageBox.critical(self, "Save results", "No results available") 
+            QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return        
 
         srcPt = self.spdata.inters.parameters._srcPt
@@ -564,7 +639,7 @@ class MainWindow(QMainWindow):
 
         # creation of output shapefile
 
-        fileName = QtGui.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'lines.shp', "shp (*.shp *.SHP)")
+        fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'lines.shp', "shp (*.shp *.SHP)")
         if fileName.isEmpty():
             return  
 
@@ -574,11 +649,11 @@ class MainWindow(QMainWindow):
               
         out_shape = shape_driver.CreateDataSource(fileName)
         if out_shape is None:
-            QtGui.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
+            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
             return
         out_layer = out_shape.CreateLayer('output_lines', geom_type=ogr.wkbLineString)
         if out_layer is None:
-            QtGui.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName) 
+            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
             return        
         
         # add fields to the output shapefile      
@@ -643,15 +718,15 @@ class MainWindow(QMainWindow):
             line_shape.Destroy()
                             
         # destroy output geometry
-        out_shape.Destroy() 
+        out_shape.Destroy()
 
-        QtGui.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
+        QtWidgets.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
 
     def helpAbout(self):
         """
         Visualize an About window.
         """
-        QtGui.QMessageBox.about(self, "About gSurf", 
+        QtWidgets.QMessageBox.about(self, "About gSurf",
         """
             <p>gSurf version 0.2.0</p>
             <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
@@ -689,10 +764,10 @@ class AnchoredText(AnchoredOffsetbox):
 
 if __name__ == '__main__':
 
-    app = QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
 
     form = MainWindow()
-    # form.show()
+    form.show()
     sys.exit(app.exec_())
 
 

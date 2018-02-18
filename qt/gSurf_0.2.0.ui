@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>gSurf   -  vers. 0.1.2</string>
+   <string>gSurf   -  vers. 0.2.0</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <widget class="MplWidget" name="mplwidget" native="true">
@@ -94,7 +94,7 @@
         <x>10</x>
         <y>36</y>
         <width>213</width>
-        <height>59</height>
+        <height>64</height>
        </rect>
       </property>
       <property name="font">
@@ -193,7 +193,7 @@
           </font>
          </property>
          <property name="text">
-          <string>DEM</string>
+          <string>DE&amp;M</string>
          </property>
          <property name="buddy">
           <cstring>DEM_lineEdit</cstring>
@@ -357,8 +357,8 @@
        <rect>
         <x>10</x>
         <y>30</y>
-        <width>124</width>
-        <height>74</height>
+        <width>127</width>
+        <height>98</height>
        </rect>
       </property>
       <layout class="QGridLayout" name="gridLayout_2">
@@ -371,7 +371,7 @@
           </font>
          </property>
          <property name="text">
-          <string>X</string>
+          <string>&amp;X</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -447,7 +447,7 @@
           </font>
          </property>
          <property name="text">
-          <string>Z</string>
+          <string>&amp;Z</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -572,7 +572,7 @@
        </font>
       </property>
       <property name="text">
-       <string>0°</string>
+       <string>&amp;0°</string>
       </property>
       <property name="alignment">
        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -645,7 +645,7 @@
        </font>
       </property>
       <property name="text">
-       <string>90°</string>
+       <string>&amp;90°</string>
       </property>
       <property name="buddy">
        <cstring>DDirection_dial</cstring>
@@ -775,7 +775,7 @@
        </font>
       </property>
       <property name="text">
-       <string>180°</string>
+       <string>&amp;180°</string>
       </property>
       <property name="buddy">
        <cstring>DDirection_dial</cstring>
@@ -825,7 +825,7 @@
        </font>
       </property>
       <property name="text">
-       <string>270°</string>
+       <string>&amp;270°</string>
       </property>
       <property name="buddy">
        <cstring>DDirection_dial</cstring>
@@ -866,7 +866,7 @@
        </font>
       </property>
       <property name="text">
-       <string>45°</string>
+       <string>&amp;45°</string>
       </property>
       <property name="buddy">
        <cstring>DAngle_verticalSlider</cstring>
@@ -1019,16 +1019,16 @@
      <x>0</x>
      <y>0</y>
      <width>998</width>
-     <height>21</height>
+     <height>30</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
     <property name="title">
-     <string>File</string>
+     <string>Fi&amp;le</string>
     </property>
     <widget class="QMenu" name="menuSave_solution_as">
      <property name="title">
-      <string>Save solution as ..</string>
+      <string>&amp;Save solution as ..</string>
      </property>
      <addaction name="actionPoints"/>
      <addaction name="actionLines"/>
@@ -1042,7 +1042,7 @@
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
-     <string>Info</string>
+     <string>&amp;Info</string>
     </property>
     <addaction name="actionHelp"/>
     <addaction name="actionAbout"/>
@@ -1061,7 +1061,7 @@
   </action>
   <action name="actionInput_line_shapefile">
    <property name="text">
-    <string>Input line shapefile</string>
+    <string>&amp;Input line shapefile</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+P</string>
@@ -1069,7 +1069,7 @@
   </action>
   <action name="actionQuit">
    <property name="text">
-    <string>Quit</string>
+    <string>&amp;Quit</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+Q</string>
@@ -1077,7 +1077,7 @@
   </action>
   <action name="actionHelp">
    <property name="text">
-    <string>Help</string>
+    <string>&amp;Help</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+H</string>
@@ -1085,7 +1085,7 @@
   </action>
   <action name="actionAbout">
    <property name="text">
-    <string>About</string>
+    <string>&amp;About</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+A</string>
@@ -1093,7 +1093,7 @@
   </action>
   <action name="actionPoints">
    <property name="text">
-    <string>points</string>
+    <string>&amp;points</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+S</string>
@@ -1101,7 +1101,7 @@
   </action>
   <action name="actionLines">
    <property name="text">
-    <string>lines</string>
+    <string>&amp;lines</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+L</string>

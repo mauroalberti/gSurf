@@ -36,6 +36,7 @@ import webbrowser
 
 # Python Qt5 bindings for GUI objects
 from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtCore import QObject, pyqtSignal
 
 from matplotlib import rcParams
 
@@ -88,11 +89,13 @@ class MplCanvas(FigureCanvas):
         
         # initialization of the canvas
         FigureCanvas.__init__(self, self.fig)
+
         # we define the widget as expandable
         FigureCanvas.setSizePolicy(
             self,
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Expanding)
+
         # notify the system of updated policy
         FigureCanvas.updateGeometry(self) 
         
@@ -101,13 +104,17 @@ class MplWidget(QtWidgets.QWidget):
     """
     Widget defined in Qt Designer.
     """
-    
+
+    zoom_to_full_view = pyqtSignal()
+    map_press = pyqtSignal()
+
     def __init__(self, parent = None):
         # initialization of Qt MainWindow widget
         QtWidgets.QWidget.__init__(self, parent)
         
         # set the canvas to the Matplotlib widget
         self.canvas = MplCanvas()
+
         self.ntb = NavigationToolbar(self.canvas, self)
         
         #self.ntb.removeAction(self.ntb.buttons[0])
@@ -163,8 +170,9 @@ class MplWidget(QtWidgets.QWidget):
         
         set_srcpt_count += 1
         
-        if set_srcpt_count == 1:             
-            self.canvas.emit(QtCore.SIGNAL("map_press"), (event.xdata, event.ydata))
+        if set_srcpt_count == 1:
+            self.map_press.emit()
+            #self.canvas.emit(QtCore.SIGNAL("map_press"), (event.xdata, event.ydata))
             
         self.canvas.fig.canvas.mpl_disconnect(cid)
                 
@@ -185,7 +193,7 @@ class MplWidget(QtWidgets.QWidget):
         the shapefile, or at the standard extent.
         
         """
-        self.canvas.emit(QtCore.SIGNAL("zoom_to_full_view"))        
+        self.zoom_to_full_view.emit()
         
     # after CADTOOLS module in QG
     def openHelp(self):

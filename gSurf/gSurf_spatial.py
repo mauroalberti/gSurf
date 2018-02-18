@@ -12,7 +12,7 @@ from gSurf_errors import *
 from gSurf_utils import *
 
         
-def plane_x_coeff( or_plane_attitude ):
+def plane_x_coeff(or_plane_attitude):
     """
     Calculate the slope of a given plane along the x direction.
     The plane orientation  is expressed following the geological convention. 
@@ -22,10 +22,10 @@ def plane_x_coeff( or_plane_attitude ):
            
     @return:  slope - float.    
     """ 
-    return - sin( radians( or_plane_attitude._dipdir ) ) * tan( radians( or_plane_attitude._dipangle ) )
+    return - sin(radians(or_plane_attitude._dipdir)) * tan(radians(or_plane_attitude._dipangle))
 
 
-def plane_y_coeff( or_plane_attitude ):
+def plane_y_coeff(or_plane_attitude):
     """
     Calculate the slope of a given plane along the y direction.
     The plane orientation  is expressed following the geological convention. 
@@ -35,10 +35,10 @@ def plane_y_coeff( or_plane_attitude ):
            
     @return:  slope - float.     
     """ 
-    return - cos( radians( or_plane_attitude._dipdir ) ) * tan( radians( or_plane_attitude._dipangle ) )
+    return - cos(radians(or_plane_attitude._dipdir)) * tan(radians(or_plane_attitude._dipangle))
 
-        
-def plane_from_geo( or_Pt, or_plane_attitude ):
+
+def plane_from_geo(or_Pt, or_plane_attitude):
     """
     Closure that embodies the analytical formula for the given plane.
     This closure is used to calculate the z value from given horizontal coordinates (x, y).
@@ -51,20 +51,20 @@ def plane_from_geo( or_Pt, or_plane_attitude ):
     @return:  lambda (closure) expressing an analytical formula for deriving z given x and y values.    
     """
 
-    x0 =  or_Pt.x     
-    y0 =  or_Pt.y
-    z0 =  or_Pt.z
+    x0 = or_Pt.x
+    y0 = or_Pt.y
+    z0 = or_Pt.z
 
     # slope of the line parallel to the x axis and contained by the plane
-    a = plane_x_coeff( or_plane_attitude ) 
+    a = plane_x_coeff(or_plane_attitude) 
            
     # slope of the line parallel to the y axis and contained by the plane    
-    b = plane_y_coeff( or_plane_attitude )
+    b = plane_y_coeff(or_plane_attitude)
                     
-    return lambda x, y : a * ( x - x0 )  +  b * ( y - y0 )  +  z0
+    return lambda x, y : a * (x - x0) + b * (y - y0) + z0
 
 
-def plane_from_pts( p1, p2, p3 ):
+def plane_from_pts(p1, p2, p3):
     """
     Closure.
     Creates plane equation given three points (p1-p3).
@@ -80,18 +80,17 @@ def plane_from_pts( p1, p2, p3 ):
     c = np.linalg.det(c_arr)
     d = np.linalg.det(d_arr)*(-1.0)
 
-    return lambda x, y, z : a * x  +  b * y  + c * z + d    
+    return lambda x, y, z: a * x + b * y + c * z + d
 
 
-def point_in_plane( pt, plane, tolerance = 1.0e-1 ):
+def point_in_plane(pt, plane, tolerance = 1.0e-1):
     """
     Determines if a point is within a plane.
     """
 
-    if abs( plane (pt.x, pt.y, pt.z) ) < tolerance:
+    if abs(plane (pt.x, pt.y, pt.z)) < tolerance:
         return True
     return False
-    
     
 
 class Point(object):
@@ -101,7 +100,7 @@ class Point(object):
     """
         
     # class constructor
-    def __init__( self, x = 0.0, y = 0.0, z = 0.0 ):
+    def __init__(self, x = 0.0, y = 0.0, z = 0.0):
         """ 
         Point class constructor.
         
@@ -114,21 +113,19 @@ class Point(object):
                    
         @return:  Point instance located at (x,y,z).        
         """        
-        self._x = float( x )
-        self._y = float( y )
-        self._z = float( z )
-
+        self._x = float(x)
+        self._y = float(y)
+        self._z = float(z)
     
-    def g_x( self ):
+    def g_x(self):
         """
         Get point x value.
         
         @return:  x coordinate of Point instance - float.
         """        
         return self._x
-    
 
-    def s_x( self, xval ):
+    def s_x(self, xval):
         """
         Set point x value.
         
@@ -137,23 +134,20 @@ class Point(object):
         
         @return:  self.        
         """                
-        self._x = float( xval )
-        
+        self._x = float(xval)
         
     # property for x
-    x = property( g_x, s_x )
+    x = property(g_x, s_x)
 
-
-    def g_y( self ):
+    def g_y(self):
         """
         Get point y value.
         
         @return:  y coordinate of Point instance - float.
         """
         return self._y
-    
 
-    def s_y( self, yval ):
+    def s_y(self, yval):
         """
         Set point y value.
         
@@ -164,13 +158,11 @@ class Point(object):
         """
         self._y = yval
 
-
     # property for y
-    y = property( g_y, s_y )
-
+    y = property(g_y, s_y)
 
     # z value
-    def g_z( self ):
+    def g_z(self):
         """
         Get point z value.
         
@@ -178,8 +170,7 @@ class Point(object):
         """
         return self._z
 
-
-    def s_z( self, zval ):
+    def s_z(self, zval):
         """
         Set point z value.
         
@@ -190,12 +181,10 @@ class Point(object):
         """
         self._z = zval
 
-
     # property for z
-    z = property( g_z, s_z )
-    
+    z = property(g_z, s_z)
   
-    def distance( self, pt ):
+    def distance(self, pt):
         """
         Calculate Euclidean distance between two points.
 
@@ -204,10 +193,9 @@ class Point(object):
         
         @return:  distance between the two points - float.        
         """
-        return sqrt( ( self.x - pt.x ) ** 2 + ( self.y - pt.y ) ** 2 + ( self.z - pt.z ) ** 2 )
+        return sqrt((self.x - pt.x) ** 2 + (self.y - pt.y) ** 2 + (self.z - pt.z) ** 2)
     
-    
-    def movedby( self, sx = 0.0 , sy = 0.0 , sz = 0.0 ):
+    def movedby(self, sx = 0.0 , sy = 0.0 , sz = 0.0):
         """
         Create a new point shifted by given amount from the self instance.
 
@@ -220,8 +208,7 @@ class Point(object):
                 
         @return:  a new Point instance shifted by the given amounts with respect to the original one.        
         """
-        return Point( self.x + sx , self.y + sy, self.z + sz )
-    
+        return Point(self.x + sx , self.y + sy, self.z + sz)
 
   
 class StructPlane(object):
@@ -230,7 +217,7 @@ class StructPlane(object):
     
     """
     
-    def __init__( self, srcDipDir, srcDipAngle ):
+    def __init__(self, srcDipDir, srcDipAngle):
         """
         Class constructor
         
@@ -243,9 +230,8 @@ class StructPlane(object):
     
         """
         
-        self._dipdir = float( srcDipDir )
-        self._dipangle = float( srcDipAngle )
-  
+        self._dipdir = float(srcDipDir)
+        self._dipangle = float(srcDipAngle)
    
   
 class ArrCoord(object):
@@ -255,7 +241,7 @@ class ArrCoord(object):
     
     """
     
-    def __init__( self, ival = 0.0, jval = 0.0 ):
+    def __init__(self, ival = 0.0, jval = 0.0):
         """
         Class constructor.
 
@@ -266,20 +252,18 @@ class ArrCoord(object):
                
         @return:  self.                
         """
-        self._i = float( ival )
-        self._j = float( jval )
+        self._i = float(ival)
+        self._j = float(jval)
 
-
-    def g_i( self ):
+    def g_i(self):
         """
         Get i (row) coordinate value.
         
         @return:  the i (-y) array coordinate of the point - float.
         """
         return self._i
-    
 
-    def s_i( self, ival ):
+    def s_i(self, ival):
         """
         Set i (row) coordinate value.
         
@@ -288,14 +272,12 @@ class ArrCoord(object):
         
         @return:  self.        
         """
-        self._i = float( ival )
-
+        self._i = float(ival)
 
     # set property for i
-    i = property( g_i, s_i )
+    i = property(g_i, s_i)
      
-     
-    def g_j( self ):
+    def g_j(self):
         """
         Get j (column) coordinate value.
         
@@ -303,8 +285,7 @@ class ArrCoord(object):
         """
         return self._j
 
-
-    def s_j( self, jval ):
+    def s_j(self, jval):
         """
         Set j (column) coordinate value.
         
@@ -315,27 +296,24 @@ class ArrCoord(object):
         """
         self._j = jval
 
-
     # set property for j
-    j = property( g_j, s_j )            
-           
+    j = property(g_j, s_j)
     
-    def grid2geogcoord( self, currGeoGrid ):
+    def grid2geogcoord(self, currGeoGrid):
         
         currPt_geogr_y = currGeoGrid.domain.g_trcorner().y - self.i*currGeoGrid.cellsize_y()
         currPt_geogr_x = currGeoGrid.domain.g_llcorner().x + self.j*currGeoGrid.cellsize_x()
-        return Point( currPt_geogr_x, currPt_geogr_y )
+        return Point(currPt_geogr_x, currPt_geogr_y)
 
 
-
-class GDALParameters( object ):
+class GDALParameters(object):
     """
     Manage GDAL parameters from rasters.
     
     """
 
     # class constructor
-    def __init__( self ): 
+    def __init__(self): 
         """
         Class constructor.
         
@@ -350,9 +328,8 @@ class GDALParameters( object ):
         self._cols = None
         self._rotation_GT_2 = 0.0
         self._rotation_GT_4 = 0.0
-      
     
-    def s_noDataValue( self, nodataval ):
+    def s_noDataValue(self, nodataval):
         """
         Set raster no data value.
         
@@ -361,10 +338,9 @@ class GDALParameters( object ):
                 
         @return:  self.         
         """
-        self._nodatavalue = float( nodataval )
-        
+        self._nodatavalue = float(nodataval)
    
-    def g_noDataValue( self ):
+    def g_noDataValue(self):
         """
         Get raster no-data value.
         
@@ -372,12 +348,10 @@ class GDALParameters( object ):
         """
         return self._nodatavalue
 
-
     # set property for no-data value
-    noDataValue = property( g_noDataValue, s_noDataValue )
-
+    noDataValue = property(g_noDataValue, s_noDataValue)
     
-    def s_topLeftX( self, topleftX ):
+    def s_topLeftX(self, topleftX):
         """
         Set top-left corner x value of the raster.
         
@@ -386,23 +360,20 @@ class GDALParameters( object ):
                 
         @return:  self.
         """
-        self._topleftX = float( topleftX )
-        
+        self._topleftX = float(topleftX)
    
-    def g_topLeftX( self ):
+    def g_topLeftX(self):
         """
         Get top-left corner x value of the raster.
         
         @return:  the top-left corner x value, according to GDAL convention - float.        
         """
         return self._topleftX
-    
 
     # set property for topleftX
-    topLeftX = property( g_topLeftX, s_topLeftX )
-
+    topLeftX = property(g_topLeftX, s_topLeftX)
  
-    def s_topLeftY( self, topleftY ):
+    def s_topLeftY(self, topleftY):
         """
         Set top-left corner y value of the raster.
         
@@ -411,10 +382,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """
-        self._topleftY = float( topleftY )
+        self._topleftY = float(topleftY)
 
-
-    def g_topLeftY( self ):
+    def g_topLeftY(self):
         """
         Get top-left corner y value of the raster.
         
@@ -422,12 +392,10 @@ class GDALParameters( object ):
         """
         return self._topleftY
 
-
     # set property for topleftY
-    topLeftY = property( g_topLeftY, s_topLeftY )
+    topLeftY = property(g_topLeftY, s_topLeftY)
 
-
-    def s_pixSizeEW( self, pixsizeEW ):
+    def s_pixSizeEW(self, pixsizeEW):
         """
         Set East-West size of the raster cell.
         
@@ -436,10 +404,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """
-        self._pixsizeEW = float( pixsizeEW )
+        self._pixsizeEW = float(pixsizeEW)
 
-
-    def g_pixSizeEW( self ):
+    def g_pixSizeEW(self):
         """
         Get East-West size of the raster cell.
         
@@ -447,14 +414,12 @@ class GDALParameters( object ):
         """
         return self._pixsizeEW
 
-
     # set property for topleftY
-    pixSizeEW = property( g_pixSizeEW, s_pixSizeEW )
-
+    pixSizeEW = property(g_pixSizeEW, s_pixSizeEW)
 
     # pixsizeNS 
     
-    def s_pixSizeNS( self, pixsizeNS ):
+    def s_pixSizeNS(self, pixsizeNS):
         """
         Set North-South size of the raster cell.
         
@@ -463,10 +428,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """        
-        self._pixsizeNS = float( pixsizeNS )
+        self._pixsizeNS = float(pixsizeNS)
 
-
-    def g_pixSizeNS( self ):
+    def g_pixSizeNS(self):
         """
         Get North-South size of the raster cell.
         
@@ -474,12 +438,10 @@ class GDALParameters( object ):
         """ 
         return self._pixsizeNS
 
-
     # set property for topleftY
-    pixSizeNS = property( g_pixSizeNS, s_pixSizeNS )
+    pixSizeNS = property(g_pixSizeNS, s_pixSizeNS)
       
-      
-    def s_rows( self, rows ):
+    def s_rows(self, rows):
         """
         Set row number.
         
@@ -488,10 +450,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """ 
-        self._rows = int( rows )
+        self._rows = int(rows)
 
-
-    def g_rows( self ):
+    def g_rows(self):
         """
         Get row number.
         
@@ -499,12 +460,10 @@ class GDALParameters( object ):
         """
         return self._rows
 
-
     # set property for rows
-    rows = property( g_rows, s_rows )
+    rows = property(g_rows, s_rows)
 
-
-    def s_cols( self, cols ):
+    def s_cols(self, cols):
         """
         Set column number.
         
@@ -513,10 +472,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """         
-        self._cols = int( cols )
+        self._cols = int(cols)
         
-        
-    def g_cols( self ):
+    def g_cols(self):
         """
         Get column number.
         
@@ -524,12 +482,10 @@ class GDALParameters( object ):
         """
         return self._cols
 
-
     # set property for cols
-    cols = property( g_cols, s_cols )
+    cols = property(g_cols, s_cols)
 
-
-    def s_rotation_GT_2( self, rotation_GT_2 ):
+    def s_rotation_GT_2(self, rotation_GT_2):
         """
         Set rotation GT(2) (see GDAL documentation).
         
@@ -538,10 +494,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """
-        self._rotation_GT_2 = float( rotation_GT_2 )
+        self._rotation_GT_2 = float(rotation_GT_2)
 
-
-    def g_rotation_GT_2( self ):
+    def g_rotation_GT_2(self):
         """
         Get rotation GT(2) (see GDAL documentation).
         
@@ -549,12 +504,10 @@ class GDALParameters( object ):
         """
         return self._rotation_GT_2
 
-
     # set property for rotation_GT_2
-    rotGT2 = property( g_rotation_GT_2,  s_rotation_GT_2 )
+    rotGT2 = property(g_rotation_GT_2,  s_rotation_GT_2)
         
-        
-    def s_rotation_GT_4( self, rotation_GT_4 ):
+    def s_rotation_GT_4(self, rotation_GT_4):
         """
         Set rotation GT(4) (see GDAL documentation)
         
@@ -563,10 +516,9 @@ class GDALParameters( object ):
                 
         @return:  self.
         """        
-        self._rotation_GT_4 = float( rotation_GT_4 )
+        self._rotation_GT_4 = float(rotation_GT_4)
 
-
-    def g_rotation_GT_4( self ):
+    def g_rotation_GT_4(self):
         """
         Get rotation GT(4) (see GDAL documentation).
 
@@ -574,12 +526,10 @@ class GDALParameters( object ):
         """        
         return self._rotation_GT_4
 
-
     # set property for rotation_GT_4
-    rotGT4 = property( g_rotation_GT_4, s_rotation_GT_4 )
-      
+    rotGT4 = property(g_rotation_GT_4, s_rotation_GT_4)
     
-    def check_params( self, tolerance = 1e-06 ):
+    def check_params(self, tolerance = 1e-06):
         """
         Check absence of axis rotations or pixel size differences in the raster band.
         
@@ -591,35 +541,34 @@ class GDALParameters( object ):
         @raise: RasterParametersErrors - raster geometry incompatible with this module (i.e. different cell sizes or axis rotations).
         """        
         # check if pixel size can be considered the same in the two axis directions
-        if abs( abs( self._pixsizeEW ) - abs( self._pixsizeNS ) ) / abs( self._pixsizeNS ) > tolerance:
-            raise RasterParametersErrors, 'Pixel sizes in x and y directions are different in raster'
+        if abs(abs(self._pixsizeEW) - abs(self._pixsizeNS)) / abs(self._pixsizeNS) > tolerance:
+            raise RasterParametersErrors('Pixel sizes in x and y directions are different in raster')
             
         # check for the absence of axis rotations
-        if abs( self._rotation_GT_2 ) > tolerance or abs( self._rotation_GT_4 ) > tolerance:
-            raise RasterParametersErrors, 'There should be no axis rotation in raster'
+        if abs(self._rotation_GT_2) > tolerance or abs(self._rotation_GT_4) > tolerance:
+            raise RasterParametersErrors('There should be no axis rotation in raster')
         
         return
 
 
-    def llcorner( self ):
+    def llcorner(self):
         """
         Creates a point at the lower-left corner of the raster.
         
         @return:  new Point instance.                        
         """
-        return Point( self.topLeftX, self.topLeftY - abs( self.pixSizeNS ) * self.rows )
+        return Point(self.topLeftX, self.topLeftY - abs(self.pixSizeNS) * self.rows)
 
     
-    def trcorner( self ):
+    def trcorner(self):
         """
         Create a point at the top-right corner of the raster.
 
         @return:  new Point instance.                
         """        
-        return Point( self.topLeftX + abs( self.pixSizeEW ) * self.cols, self.topLeftY )  
+        return Point(self.topLeftX + abs(self.pixSizeEW) * self.cols, self.topLeftY)  
    
-
-    def geo_equiv( self, other, tolerance = 1.0e-6 ): 
+    def geo_equiv(self, other, tolerance = 1.0e-6): 
         """
         Checks if two rasters are geographically equivalent.
 
@@ -630,10 +579,10 @@ class GDALParameters( object ):
                
         @return:  Boolean.        
         """  
-        if 2 * ( self.topLeftX - other.topLeftX ) / ( self.topLeftX + other.topLeftX ) > tolerance or \
-           2 * ( self.topLeftY - other.topLeftY ) / ( self.topLeftY + other.topLeftY ) > tolerance or \
-           2 * ( abs( self.pixSizeEW ) - abs( other.pixSizeEW ) ) / ( abs( self.pixSizeEW ) + abs( other.pixSizeEW ) ) > tolerance or \
-           2 * ( abs( self.pixSizeNS ) - abs( other.pixSizeNS ) ) / ( abs( self.pixSizeNS ) + abs( other.pixSizeNS ) ) > tolerance or \
+        if 2 * (self.topLeftX - other.topLeftX) / (self.topLeftX + other.topLeftX) > tolerance or \
+           2 * (self.topLeftY - other.topLeftY) / (self.topLeftY + other.topLeftY) > tolerance or \
+           2 * (abs(self.pixSizeEW) - abs(other.pixSizeEW)) / (abs(self.pixSizeEW) + abs(other.pixSizeEW)) > tolerance or \
+           2 * (abs(self.pixSizeNS) - abs(other.pixSizeNS)) / (abs(self.pixSizeNS) + abs(other.pixSizeNS)) > tolerance or \
            self.rows != other.rows or self.cols != other.cols or self.projection != other.projection:    
             return False
         else:
@@ -646,7 +595,7 @@ class SpatialDomain(object):
     
     """
     
-    def __init__( self, pt_llc = None, pt_trc = None ): 
+    def __init__(self, pt_llc = None, pt_trc = None): 
         """
         Class constructor.
         
@@ -661,7 +610,7 @@ class SpatialDomain(object):
         self._trcorner = pt_trc 
 
  
-    def g_llcorner( self ):
+    def g_llcorner(self):
         """
         Get lower-left corner of the spatial domain.
         
@@ -670,7 +619,7 @@ class SpatialDomain(object):
         return self._llcorner
 
 
-    def g_trcorner( self ):
+    def g_trcorner(self):
         """
         Get top-right corner of the spatial domain.
         
@@ -679,7 +628,7 @@ class SpatialDomain(object):
         return self._trcorner
     
  
-    def g_xrange( self ):
+    def g_xrange(self):
         """
         Get x range of spatial domain.
         
@@ -688,7 +637,7 @@ class SpatialDomain(object):
         return self._trcorner.x - self._llcorner.x
 
  
-    def g_yrange( self ):
+    def g_yrange(self):
         """
         Get y range of spatial domain.
         
@@ -697,7 +646,7 @@ class SpatialDomain(object):
         return self._trcorner.y - self._llcorner.y
 
 
-    def g_zrange( self ):
+    def g_zrange(self):
         """
         Get z range of spatial domain.
         
@@ -706,7 +655,7 @@ class SpatialDomain(object):
         return self._trcorner.z - self._llcorner.z
 
 
-    def g_horiz_area( self ):
+    def g_horiz_area(self):
         """
         Get horizontal area of spatial domain.
         
@@ -753,7 +702,7 @@ class Grid(object):
             self._grid_data = None 
         
         
-    def s_domain( self, domain ):
+    def s_domain(self, domain):
         """
         Set spatial domain.
         
@@ -766,7 +715,7 @@ class Grid(object):
         self._grid_domain = copy.deepcopy(domain)
         
         
-    def g_domain( self ):
+    def g_domain(self):
         """
         Get spatial domain.
         
@@ -775,7 +724,7 @@ class Grid(object):
         return self._grid_domain
     
         
-    def d_domain( self ):
+    def d_domain(self):
         """
         Delete current spatial domain of the Grid instance.
         
@@ -785,10 +734,10 @@ class Grid(object):
 
 
     # set property for spatial domain        
-    domain = property( g_domain, s_domain, d_domain )
+    domain = property(g_domain, s_domain, d_domain)
 
     
-    def s_grid_data( self, data_array ):
+    def s_grid_data(self, data_array):
         """
         Set grid data array.
         
@@ -803,7 +752,7 @@ class Grid(object):
         self._grid_data = data_array.copy()  
         
             
-    def g_grid_data( self ):
+    def g_grid_data(self):
         """
         Get grid data array.
         
@@ -812,7 +761,7 @@ class Grid(object):
         return self._grid_data
 
 
-    def d_grid_data( self ):
+    def d_grid_data(self):
         """
         Delete grid data array.
         
@@ -820,55 +769,55 @@ class Grid(object):
         """        
         del self._grid_data
             
-    data = property( g_grid_data, s_grid_data, d_grid_data )
+    data = property(g_grid_data, s_grid_data, d_grid_data)
       
 
-    def row_num( self ):
+    def row_num(self):
         """
         Get row number of the grid domain.     
         
         @return: number of rows of data array - int. 
         """        
-        return np.shape( self.data )[0]        
+        return np.shape(self.data)[0]        
 
 
-    def col_num( self ):
+    def col_num(self):
         """
         Get column number of the grid domain.
         
         @return: number of columns of data array - int. 
         """        
-        return np.shape( self.data )[1]        
+        return np.shape(self.data)[1]        
             
  
-    def cellsize_x( self ):
+    def cellsize_x(self):
         """
         Get the cell size of the grid in the x direction.
         
         @return: cell size in the x (j) direction - float.
         """        
-        return self.domain.g_xrange() / float( self.col_num() )
+        return self.domain.g_xrange() / float(self.col_num())
 
   
-    def cellsize_y( self ):
+    def cellsize_y(self):
         """
         Get the cell size of the grid in the y direction.
         
         @return: cell size in the y (-i) direction - float.
         """        
-        return self.domain.g_yrange() / float( self.row_num() )
+        return self.domain.g_yrange() / float(self.row_num())
             
  
-    def cellsize_h( self ):
+    def cellsize_h(self):
         """
         Get the mean horizontal cell size.
         
         @return: mean horizontal cell size - float.
         """        
-        return ( self.cellsize_x() + self.cellsize_y() ) / 2.0
+        return (self.cellsize_x() + self.cellsize_y()) / 2.0
               
    
-    def geog2array_coord( self, curr_Pt ):
+    def geog2array_coord(self, curr_Pt):
         """
         Converts from geographic to raster (array) coordinates.
         
@@ -877,56 +826,56 @@ class Grid(object):
         
         @return: point coordinates in raster (array) frame - class ArrCoord.
         """       
-        currArrCoord_grid_i = ( self.domain.g_trcorner().y - curr_Pt.y ) / self.cellsize_y()
-        currArrCoord_grid_j = ( curr_Pt.x - self.domain.g_llcorner().x ) / self.cellsize_x()
+        currArrCoord_grid_i = (self.domain.g_trcorner().y - curr_Pt.y) / self.cellsize_y()
+        currArrCoord_grid_j = (curr_Pt.x - self.domain.g_llcorner().x) / self.cellsize_x()
         
         return ArrCoord(currArrCoord_grid_i, currArrCoord_grid_j)
 
 
-    def x( self ):
+    def x(self):
         """
         Creates an array storing the geographical coordinates of the cell centers along the x axis.
         Direction is from left to right.
         
         @return: numpy.array, shape: 1 x col_num.
         """        
-        x_values = self.domain.g_llcorner().x + self.cellsize_x() * ( 0.5 + np.arange( self.col_num() ) ) 
+        x_values = self.domain.g_llcorner().x + self.cellsize_x() * (0.5 + np.arange(self.col_num())) 
         return x_values[ np.newaxis, : ]
         
 
-    def y( self ):
+    def y(self):
         """
         Creates an array storing the geographical coordinates of the cell centers along the y axis.
         Direction is from top to bottom.
         
         @return: numpy.array, shape: row_num x 1.
         """        
-        y_values = self.domain.g_trcorner().y - self.cellsize_y() * ( 0.5 + np.arange( self.row_num() ) )
+        y_values = self.domain.g_trcorner().y - self.cellsize_y() * (0.5 + np.arange(self.row_num()))
         return y_values[ : , np.newaxis ]
         
               
-    def grad_forward_y( self ):
+    def grad_forward_y(self):
         """
         Return an array representing the forward gradient in the y direction (top-wards), with values scaled by cell size.
         
         @return: numpy.array, same shape as current Grid instance        
         """        
-        gf = np.zeros( np.shape( self.data ) ) * np.NaN
+        gf = np.zeros(np.shape(self.data)) * np.NaN
         gf[ 1:,:] = self.data[:-1,:] - self.data[1:,:] 
         
-        return gf / float( self.cellsize_y() )
+        return gf / float(self.cellsize_y())
 
               
-    def grad_forward_x( self ):
+    def grad_forward_x(self):
         """
         Return an array representing the forward gradient in the x direction (right-wards), with values scaled by cell size.
 
         @return: numpy.array, same shape as current Grid instance
         """
-        gf = np.zeros( np.shape( self.data ),  ) * np.NaN
+        gf = np.zeros(np.shape(self.data), ) * np.NaN
         gf[:, :-1] = self.data[:, 1:] - self.data[: , :-1] 
         
-        return gf / float( self.cellsize_x() )
+        return gf / float(self.cellsize_x())
            
          
     def interpolate_bilinear(self, curr_Pt_array_coord):
@@ -960,7 +909,7 @@ class Grid(object):
         return grid_val_interp  
              
 
-    def intersection_with_surface( self, surf_type, srcPt, srcPlaneAttitude ):
+    def intersection_with_surface(self, surf_type, srcPt, srcPlaneAttitude):
         """
         Calculates the intersections (as points) between DEM (self) and analytical surface.
         Currently it works only with planes as analytical surface cases.
@@ -978,14 +927,14 @@ class Grid(object):
         if surf_type == 'plane': 
                         
             # lambdas to compute the geographic coordinates (in x- and y-) of a cell center 
-            coord_grid2geog_x = lambda j : self.domain.g_llcorner().x + self.cellsize_x() * ( 0.5 + j )
-            coord_grid2geog_y = lambda i : self.domain.g_trcorner().y - self.cellsize_y() * ( 0.5 + i )
+            coord_grid2geog_x = lambda j : self.domain.g_llcorner().x + self.cellsize_x() * (0.5 + j)
+            coord_grid2geog_y = lambda i : self.domain.g_trcorner().y - self.cellsize_y() * (0.5 + i)
              
             # arrays storing the geographical coordinates of the cell centers along the x- and y- axes    
             x_values = self.x()
             y_values = self.y()      
 
-            ycoords_x, xcoords_y  = np.broadcast_arrays( x_values, y_values )
+            ycoords_x, xcoords_y  = np.broadcast_arrays(x_values, y_values)
                         
             #### x-axis direction intersections
             
@@ -994,19 +943,19 @@ class Grid(object):
             x_dem_q = self.data - x_values * x_dem_m            
             
             # equation for the planar surface that, given (x,y), will be used to derive z  
-            plane_z = plane_from_geo( srcPt, srcPlaneAttitude )
+            plane_z = plane_from_geo(srcPt, srcPlaneAttitude)
             
             # 2D array of plane segment parameters
-            x_plane_m = plane_x_coeff( srcPlaneAttitude )            
-            x_plane_q = array_from_function( self.row_num(), 1, lambda j: 0, coord_grid2geog_y, plane_z )
+            x_plane_m = plane_x_coeff(srcPlaneAttitude)            
+            x_plane_q = array_from_function(self.row_num(), 1, lambda j: 0, coord_grid2geog_y, plane_z)
 
             # 2D array that defines denominator for intersections between local segments
-            x_inters_denomin =  np.where( x_dem_m != x_plane_m, x_dem_m-x_plane_m, np.NaN )            
-            coincident_x = np.where( x_dem_q != x_plane_q, np.NaN, ycoords_x )            
-            xcoords_x = np.where( x_dem_m != x_plane_m , (x_plane_q - x_dem_q ) / x_inters_denomin, coincident_x )
+            x_inters_denomin =  np.where(x_dem_m != x_plane_m, x_dem_m-x_plane_m, np.NaN)            
+            coincident_x = np.where(x_dem_q != x_plane_q, np.NaN, ycoords_x)            
+            xcoords_x = np.where(x_dem_m != x_plane_m , (x_plane_q - x_dem_q) / x_inters_denomin, coincident_x)
             
-            xcoords_x = np.where( xcoords_x < ycoords_x , np.NaN, xcoords_x )           
-            xcoords_x = np.where( xcoords_x >= ycoords_x + self.cellsize_x() , np.NaN, xcoords_x )  
+            xcoords_x = np.where(xcoords_x < ycoords_x , np.NaN, xcoords_x)           
+            xcoords_x = np.where(xcoords_x >= ycoords_x + self.cellsize_x() , np.NaN, xcoords_x)  
                         
             
             #### y-axis direction intersections
@@ -1016,21 +965,21 @@ class Grid(object):
             y_dem_q = self.data - y_values * y_dem_m
  
             # 2D array of plane segment parameters
-            y_plane_m = plane_y_coeff( srcPlaneAttitude )            
-            y_plane_q = array_from_function( 1, self.col_num(), coord_grid2geog_x , lambda i: 0, plane_z )
+            y_plane_m = plane_y_coeff(srcPlaneAttitude)            
+            y_plane_q = array_from_function(1, self.col_num(), coord_grid2geog_x , lambda i: 0, plane_z)
 
             # 2D array that defines denominator for intersections between local segments
-            y_inters_denomin =  np.where( y_dem_m != y_plane_m, y_dem_m - y_plane_m, np.NaN )
-            coincident_y = np.where( y_dem_q != y_plane_q, np.NaN, xcoords_y )
+            y_inters_denomin =  np.where(y_dem_m != y_plane_m, y_dem_m - y_plane_m, np.NaN)
+            coincident_y = np.where(y_dem_q != y_plane_q, np.NaN, xcoords_y)
                         
-            ycoords_y = np.where( y_dem_m != y_plane_m, (y_plane_q - y_dem_q ) / y_inters_denomin, coincident_y )            
+            ycoords_y = np.where(y_dem_m != y_plane_m, (y_plane_q - y_dem_q) / y_inters_denomin, coincident_y)            
 
             # filter out cases where intersection is outside cell range
-            ycoords_y = np.where( ycoords_y < xcoords_y , np.NaN, ycoords_y )           
-            ycoords_y = np.where( ycoords_y >= xcoords_y + self.cellsize_y() , np.NaN, ycoords_y )            
+            ycoords_y = np.where(ycoords_y < xcoords_y , np.NaN, ycoords_y)           
+            ycoords_y = np.where(ycoords_y >= xcoords_y + self.cellsize_y() , np.NaN, ycoords_y)            
 
-            for i in xrange(xcoords_x.shape[0]):
-                for j in xrange(xcoords_x.shape[1]):
+            for i in range(xcoords_x.shape[0]):
+                for j in range(xcoords_x.shape[1]):
                     if abs(xcoords_x[i,j]-ycoords_x[i,j])<1.0e-5 and abs(ycoords_y[i,j]-xcoords_y[i,j])<1.0e-5:
                         ycoords_y[i,j] = np.NaN
                                                          
