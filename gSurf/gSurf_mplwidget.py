@@ -56,8 +56,7 @@ x_min_init, y_min_init = 0.0, 0.0
 x_max_init, y_max_init = 100.0, 100.0 
 
 set_srcpt_count = 0
-  
-        
+
 
 class MplCanvas(FigureCanvas):
     """
@@ -79,6 +78,7 @@ class MplCanvas(FigureCanvas):
         rcParams["figure.facecolor"] = 'white'
         
         # setup Matplotlib Figure and Axis
+
         self.fig = Figure()
         self.ax = self.fig.add_subplot(111)
         
@@ -106,9 +106,10 @@ class MplWidget(QtWidgets.QWidget):
     """
 
     zoom_to_full_view = pyqtSignal()
-    map_press = pyqtSignal()
+    map_press = pyqtSignal(float, float)
 
     def __init__(self, parent = None):
+
         # initialization of Qt MainWindow widget
         QtWidgets.QWidget.__init__(self, parent)
         
@@ -171,9 +172,8 @@ class MplWidget(QtWidgets.QWidget):
         set_srcpt_count += 1
         
         if set_srcpt_count == 1:
-            self.map_press.emit()
-            #self.canvas.emit(QtCore.SIGNAL("map_press"), (event.xdata, event.ydata))
-            
+            self.map_press.emit(event.xdata, event.ydata)
+
         self.canvas.fig.canvas.mpl_disconnect(cid)
                 
     def pt_map(self):
@@ -194,12 +194,12 @@ class MplWidget(QtWidgets.QWidget):
         
         """
         self.zoom_to_full_view.emit()
-        
-    # after CADTOOLS module in QG
+
     def openHelp(self):
         """
         Open an Help HTML file
-        
+
+        after CADTOOLS module in QG
         """
         help_path = os.path.join(os.path.dirname(__file__), 'help', 'help.html')         
         webbrowser.open(help_path)

@@ -81,10 +81,10 @@ class MainWindow(QtWidgets.QMainWindow):
         #QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
 
         # Source point
-        self.ui.mplwidget.map_press.connect(self.update_srcpt)
+        self.ui.mplwidget.map_press.connect(self.update_src_pt)
         """
         QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
-                               self.update_srcpt)  # event from matplotlib widget
+                               self.update_src_pt)  # event from matplotlib widget
         """
 
         self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.set_z)
@@ -101,7 +101,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         # Source point
         QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
-                               self.update_srcpt)  # event from matplotlib widget
+                               self.update_src_pt)  # event from matplotlib widget
 
         QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
         QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
@@ -147,7 +147,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
  
         # Source point
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "), self.update_srcpt) # event from matplotlib widget
+        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "), self.update_src_pt) # event from matplotlib widget
                 
         QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
         QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
@@ -374,15 +374,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # zoom to full view
         self.zoom_full_view()
 
-    def update_srcpt (self, pos_values):
+    def update_src_pt (self, x, y):
         """
         Update the source point position from user input (click event in map).
           
-        @param pos_values: location of clicked point.
+        @param x: x coordinate of clicked point.
+        @param y: y coordinate of clicked point.
         @type: list of two float values.      
         """         
-        x = pos_values[0]
-        y = pos_values[1]
         
         self.ui.Pt_spinBox_x.setValue(int(x))
         self.ui.Pt_spinBox_y.setValue(int(y))
