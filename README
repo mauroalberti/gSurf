@@ -1,12 +1,5 @@
-gSurf is a Python application for the geological analysis of structural surfaces.
-In the current 0.1.2 version it calculates the intersections between a DEM and a geological plane, 
-expressed through its dip direction, dip angle and 'source point' (i.e., a point located on the geological plane
+gSurf is a standalone Python3-Qt5 application for the geological analysis of structural surfaces.
+In the current 0.2.0 version it calculates the intersections between a DEM and a geological plane, expressed through its dip direction, dip angle and 'source point' (i.e., a point located on the geological plane
 and corresponding for instance to an outcrop of this plane).
 The resulting intersections can be saved as a point shapefile or as a line shapefile (experimental code).
-These shapefiles can be viewed and further processed in GIS software such as Quantum GIS or Saga.
-
-Update 2015-03-11: this project is superseded by qgSurf, available at:
-https://bitbucket.org/mauroalberti/qgsurf
-qgSurf is a Python plugin for QGIS
-
-Update 2018-02-17: started porting this project to Python 3 and Qt5.
+These shapefiles can be viewed and further processed in GIS software such as QGIS or Saga.
