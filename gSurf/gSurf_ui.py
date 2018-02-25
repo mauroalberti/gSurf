@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'gSurf_0.2.0.1.ui'
+# Form implementation generated from reading ui file 'gSurf_0.2.0.2.ui'
 #
 # Created by: PyQt5 UI code generator 5.9.2
 #
@@ -215,11 +215,12 @@ class Ui_MainWindow(object):
         self.splitter.setOrientation(QtCore.Qt.Vertical)
         self.splitter.setObjectName("splitter")
         self.show_SrcPt_checkBox = QtWidgets.QCheckBox(self.splitter)
+        self.show_SrcPt_checkBox.setEnabled(True)
         font = QtGui.QFont()
         font.setFamily("Verdana")
         font.setPointSize(8)
         self.show_SrcPt_checkBox.setFont(font)
-        self.show_SrcPt_checkBox.setChecked(True)
+        self.show_SrcPt_checkBox.setChecked(False)
         self.show_SrcPt_checkBox.setObjectName("show_SrcPt_checkBox")
         self.Z_fix2DEM_checkBox_z = QtWidgets.QCheckBox(self.splitter)
         font = QtGui.QFont()
@@ -482,7 +483,7 @@ class Ui_MainWindow(object):
         self.show_label.setText(_translate("MainWindow", "show"))
         self.Trace_lineEdit.setPlaceholderText(_translate("MainWindow", "optional"))
         self.DEM_lineEdit.setPlaceholderText(_translate("MainWindow", "required"))
-        self.Fault_label.setText(_translate("MainWindow", "Faults"))
+        self.Fault_label.setText(_translate("MainWindow", "Traces"))
         self.DEM_label.setText(_translate("MainWindow", "DE&M"))
         self.DEM_cmap_label.setText(_translate("MainWindow", "DEM colormap"))
         self.DEM_cmap_comboBox.setItemText(0, _translate("MainWindow", "jet"))

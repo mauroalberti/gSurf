@@ -1,36 +1,32 @@
-
-
-body
-{
-padding: 30px;
-max-width: 650px;
-font:normal 12px/1.8em Arial, Helvetica, sans-serif;
+h1 {
+	font-family: Lucida Bright, Georgia, serif;
+	font-size: 24px;
+	font-style: normal;
+	font-variant: normal;
+	font-weight: 800;
+	line-height: 26.4px;
 }
-
-table
-{
-font-size: 1.0em;
-width: 600px;
-border-collapse: collapse;
+h2, h3 {
+	font-family: Lucida Bright, Georgia, serif;
+	font-size: 20px;
+	font-style: normal;
+	font-variant: normal;
+	font-weight: 800;
+	line-height: 22px;
 }
-
-th, td
-{
-border: none;
+p, ul {
+	font-family: Lucida Bright, Georgia, serif;
+	font-size: 14px;
+	font-style: normal;
+	font-variant: normal;
+	font-weight: 400;
+	line-height: 20px;
 }
-
-th
-{
-background-color: rgb(0,102,51);
-color: #fff;
-}
-
-tr:nth-of-type(even)
-{
-background-color: rgb(240,224,255);
-}
-
-tr:nth-of-type(odd)
-{
-background-color: rgb(224,255,240);
+blockquote {
+	font-family: Lucida Bright, Georgia, serif;
+	font-size: 21px;
+	font-style: normal;
+	font-variant: normal;
+	font-weight: 400;
+	line-height: 30px;
 }

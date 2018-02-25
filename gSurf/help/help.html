@@ -5,23 +5,25 @@
 	<link href="style.css" rel="stylesheet" type="text/css" />
 </head>
 <body>
-	<h1>gSurf vers. 0.2.0</h1>
+	<h1>gSurf vers. 0.2.0 - for Python 3 and Qt5</h1>
 	<p>
-		Release for Python 3 and Qt5<br />M. Alberti - <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a>
-		<br />License: GPL v. 3.0
-		<br />Originally created for Python 2.7 and PyQt4.
-		<br />File to run the application: <b>gSurf.py</b>
-		<br />Example command line in Linux:
-		<br /><i>python3 ./gSurf.py</i>
+		License: GPL v. 3.0
+		<br />by M. Alberti - <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a>
+		<br />
+		<br />Requires a working <b>Python 3</b> installation, with the following modules:
 	</p>
-	It requires a working <b>Python 3</b> installation, together with the following modules:
 	<ul>
 		<li>numpy</li>
 		<li>PyQt5</li>
 		<li>matplotlib</li>
 		<li>gdal</li>
 	</ul>
-	<br />
+	<p>
+		File to run the application: <b>gSurf.py</b>
+		<br />Example launching the app in the Linux shell:
+		<br /><i>python3 ./gSurf.py</i>
+	</p>
+
 	<h2>Aim</h2>
 	<p>
 		This Python program allows to calculate the intersection points between a plane and a DEM.
@@ -33,37 +35,37 @@
 	An example of application is described in <i><a href="http://gisoftw.blogspot.com/2012/01/gsurf-una-applicazione-python-per.html">
 	gSurf: una applicazione Python per calcolare interattivamente l'intersezione fra piani e DEM</a></i>. 
 	</p>
-	<br />
+
 	<h2>GUI summary</h2>
 	<p>
 		The application functionalities, grouped by subject, are described. See the figure below for number references.
+		<br /><br />
+				<img width="650px" src="screenshot.png" />
 	</p>
-	<b>1</b>
-	<br />Commands for reading the input DEM (<i>crtl+D</i>) and an optional linear shapefile
-	(<i>ctrl+P</i>), for instance of fault traces. It is also possible to save the intersections
-	as a point shapefile (<i>ctrl+S</i>).
-	<br /><br /><b>2</b>
-	<br />Listing of input DEM and shapefile; control of their visibility and of the DEM colomap.			
-	<br /><br /><b>3</b>
-	<br />Numerical tuning of the location of the "source point" (i.e., a point that lies in the plane to be created).
-	In (6) there is also a button (symbol: <i>red circle</i>) that allows to locate the source point in the map.
-	The elevation can be set to be equal to the local DEM elevation (option: <i>'fix to DEM'</i>). 
-	<br /><br /><b>4</b>
-	<br />Regulation of the plane orientation, expressed by its dip direction and dip angle.
-	<br /><br /><b>5</b>
-	<br />Regulation of the visibility and the color of the plane intersections.
-	When interactive calculations of intersections are slow, it is possible to stop (and then to resume) them so that 
-	plane orientation values or source point locations can be modified without the calculation-related delays.
-	<br /><br /><b>6</b>
-	<br />Navigation toolbar that allows to zoom, pan, save the map as an image, and also to set the source point location 
-	in the map (red circle).
-	<br /><br /><b>7</b>
-	<br />The map visualization area. 
-	<br /><br />
-	<img width="650px" src="screenshot.png" />
+	<p>
+		<b>1</b>
+		<br />Commands for reading the input DEM (<i>crtl+D</i>) and an optional linear shapefile
+		(<i>ctrl+P</i>), for instance of fault traces. It is also possible to save the intersections
+		as a point shapefile (<i>ctrl+S</i>).
+		<br /><br /><b>2</b>
+		<br />Listing of input DEM and shapefile; control of their visibility and of the DEM colomap.
+		<br /><br /><b>3</b>
+		<br />Numerical tuning of the location of the "source point" (i.e., a point that lies in the plane to be created).
+		In (6) there is also a button (symbol: <i>red circle</i>) that allows to locate the source point in the map.
+		The elevation can be set to be equal to the local DEM elevation (option: <i>'fix to DEM'</i>).
+		<br /><br /><b>4</b>
+		<br />Regulation of the plane orientation, expressed by its dip direction and dip angle.
+		<br /><br /><b>5</b>
+		<br />Regulation of the visibility and the color of the plane intersections.
+		When interactive calculations of intersections are slow, it is possible to stop (and then to resume) them so that
+		plane orientation values or source point locations can be modified without the calculation-related delays.
+		<br /><br /><b>6</b>
+		<br />Navigation toolbar that allows to zoom, pan, save the map as an image, and also to set the source point location
+		in the map (red circle).
+		<br /><br /><b>7</b>
+		<br />The map visualization area (the current interface is unchanged from vers. 0.1.2).
+	</p>
 
-	<br /><br /><br />
-	
 <h2>Input</h2>
 
 <p>
@@ -81,7 +83,7 @@
 	it can be set or fine-tuned using the numeric spinboxes for x, y and z values (3). 
 	Elevation values can be constrained to DEM elevation, by checking the "fix to DEM" checkbox (3).
 </p>
-	<br />
+
 <h2>Output</h2>
 <p>
 	Point intersections can be saved in a shapefile (1, <i>ctrl + S</i>), to be used for further analyses and visualizations.

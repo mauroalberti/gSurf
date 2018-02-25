@@ -22,6 +22,7 @@
  ***************************************************************************/
 """
 
+import os
 import sys
 
 from math import isnan, floor
@@ -29,7 +30,6 @@ from math import isnan, floor
 import webbrowser
 
 from PyQt5 import QtWidgets
-#from PyQt5.QtCore import QObject, pyqtSignal
 
 from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
 
@@ -505,7 +505,8 @@ class GeoData(object):
         # open, simple networks
         for ndx in range(self.inters.links.shape[0]):
 
-            if len(self.inters.neighbours[ndx + 1]) != 1: continue
+            if len(self.inters.neighbours[ndx + 1]) != 1:
+                continue
 
             network_list = []
 
@@ -524,8 +525,7 @@ class GeoData(object):
                 # closed, simple networks
         for ndx in range(self.inters.links.shape[0]):
 
-            if len(self.inters.neighbours[ndx + 1]) != 2 or \
-                    self.inters.links[ndx]['start'] == False:
+            if len(self.inters.neighbours[ndx + 1]) != 2 or not self.inters.links[ndx]['start']:
                 continue
 
             start_id = ndx + 1
@@ -962,7 +962,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Write intersection results in the output shapefile.
         """
         
-        if not self.spdata.inters.xcoords_x:
+        if self.spdata.inters.xcoords_x == []:
             QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return
 
@@ -986,7 +986,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # creation of output shapefile
 
         fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'points.shp', "shp (*.shp *.SHP)")
-        if fileName.isEmpty():
+        fileName = fileName[0]
+        if not fileName:
             return  
 
         fileName = str(fileName)
@@ -1076,7 +1077,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Write intersection results in a line shapefile.
         """
         
-        if not self.spdata.inters.xcoords_x:
+        if self.spdata.inters.xcoords_x == []:
             QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return        
 
@@ -1099,7 +1100,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # creation of output shapefile
 
         fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'lines.shp', "shp (*.shp *.SHP)")
-        if fileName.isEmpty():
+        fileName = fileName[0]
+        if not fileName:
             return  
 
         fileName = str(fileName)
@@ -1138,7 +1140,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # get the layer definition of the output shapefile
         outshape_featdef = out_layer.GetLayerDefn()  
 
-        for curr_path_id, curr_path_points in self.spdata.inters.networks.iteritems():
+        for curr_path_id in sorted(self.spdata.inters.networks.keys()):
+
+            curr_path_points = self.spdata.inters.networks[curr_path_id]
                                     
             line = ogr.Geometry(ogr.wkbLineString)
             
@@ -1187,13 +1191,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         QtWidgets.QMessageBox.about(self, "About gSurf",
         """
-            <p>gSurf version 0.2.0</p>
+            <p>gSurf version 0.2.0 for Python 3 / Qt5</p>
             <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
             <p>This program calculates the intersection between a plane and a DEM in an interactive way.
             The result can be saved as a point/linear shapefile.</p>            
-            
-             <p>Created and tested with Python 2.7 and Eclipse/PyDev.</p>
-             <p>Tested in Windows Vista (Python 2.7.2) and Ubuntu Lucid Lynx (Python 2.6.5)</p>
              <p>Report any bug to <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a></p>
         """)        
 
