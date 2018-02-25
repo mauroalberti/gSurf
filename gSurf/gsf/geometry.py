@@ -3,7 +3,7 @@
 
 from __future__ import division
 
-from math import sqrt, sin, cos, radians, acos, atan, atan2, degrees
+from math import sqrt, sin, cos, tan, radians, acos, atan, atan2, degrees
 import numpy as np
 
 from typing import Dict, Tuple, List
@@ -137,7 +137,7 @@ class Point(object):
 
     def __abs__(self):
         """
-        Point distance from frame origin.
+        Point dist_3d from frame origin.
 
         Example:
           >>> abs(Point(3, 4, 0))
@@ -152,7 +152,7 @@ class Point(object):
 
     def dist_3d(self, another):
         """
-        Calculate Euclidean spatial distance between two points.
+        Calculate Euclidean spatial dist_3d between two points.
 
         Examples:
           >>> Point(1., 1., 1.).dist_3d(Point(4., 5., 1,))
@@ -167,7 +167,7 @@ class Point(object):
 
     def dist_2d(self, another):
         """
-        Calculate horizontal (2D) distance between two points.
+        Calculate horizontal (2D) dist_3d between two points.
 
         Examples:
           >>> Point(1., 1., 1.).dist_2d(Point(4., 5., 7.))
@@ -1874,6 +1874,88 @@ class Plane(object):
         """
 
         return self.angle(another) < angle_tolerance
+
+
+def plane_x_coeff(or_plane_attitude):
+    """
+    Calculate the slope of a given plane along the x direction.
+    The plane orientation  is expressed following the geological convention.
+
+    @param  or_plane_attitude:  orientation of a plane.
+    @type  or_plane_attitude:  StructPlane.
+
+    @return:  slope - float.
+    """
+    return - sin(radians(or_plane_attitude._dipdir)) * tan(radians(or_plane_attitude._dipangle))
+
+
+def plane_y_coeff(or_plane_attitude):
+    """
+    Calculate the slope of a given plane along the y direction.
+    The plane orientation  is expressed following the geological convention.
+
+    @param  or_plane_attitude:  orientation of a plane.
+    @type  or_plane_attitude:  StructPlane.
+
+    @return:  slope - float.
+    """
+    return - cos(radians(or_plane_attitude._dipdir)) * tan(radians(or_plane_attitude._dipangle))
+
+
+def plane_from_geo(or_Pt, or_plane_attitude):
+    """
+    Closure that embodies the analytical formula for the given plane.
+    This closure is used to calculate the z value from given horizontal coordinates (x, y).
+
+    @param  or_Pt:  Point instance expressing a location point contained by the plane.
+    @type  or_Pt:  Point.
+    @param  or_plane_attitude:  orientation of a plane.
+    @type  or_plane_attitude:  StructPlane.
+
+    @return:  lambda (closure) expressing an analytical formula for deriving z given x and y values.
+    """
+
+    x0 = or_Pt.x
+    y0 = or_Pt.y
+    z0 = or_Pt.z
+
+    # slope of the line parallel to the x axis and contained by the plane
+    a = plane_x_coeff(or_plane_attitude)
+
+    # slope of the line parallel to the y axis and contained by the plane
+    b = plane_y_coeff(or_plane_attitude)
+
+    return lambda x, y: a * (x - x0) + b * (y - y0) + z0
+
+
+def plane_from_pts(p1, p2, p3):
+    """
+    Closure.
+    Creates plane equation given three points (p1-p3).
+    """
+
+    a_arr = np.array([[p1.y, p1.z, 1.0], [p2.y, p2.z, 1.0], [p3.y, p3.z, 1.0]])
+    b_arr = np.array([[p1.x, p1.z, 1.0], [p2.x, p2.z, 1.0], [p3.x, p3.z, 1.0]])
+    c_arr = np.array([[p1.x, p1.y, 1.0], [p2.x, p2.y, 1.0], [p3.x, p3.y, 1.0]])
+    d_arr = np.array([[p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z], [p3.x, p3.y, p3.z]])
+
+    a = np.linalg.det(a_arr)
+    b = np.linalg.det(b_arr) * (-1.0)
+    c = np.linalg.det(c_arr)
+    d = np.linalg.det(d_arr) * (-1.0)
+
+    return lambda x, y, z: a * x + b * y + c * z + d
+
+
+def point_in_plane(pt, plane, tolerance=1.0e-1):
+    """
+    Determines if a point is within a plane.
+    """
+
+    if abs(plane(pt.x, pt.y, pt.z)) < tolerance:
+        return True
+    return False
+
 
 class GPlane(object):
     """

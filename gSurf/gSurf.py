@@ -22,21 +22,534 @@
  ***************************************************************************/
 """
 
-import os
 import sys
+
+from math import isnan, floor
 
 import webbrowser
 
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5 import QtWidgets
+#from PyQt5.QtCore import QObject, pyqtSignal
 
 from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
 
 from gSurf_ui import Ui_MainWindow
-from gSurf_data import *
+
+from gis_utils.rasters import *
+from gsf.geometry import *
+from gsf.grids import *
 
 
 __version__ = "0.2.0"
+
+
+class IntersectionParameters(object):
+    """
+    IntersectionParameters class.
+    Manages the metadata for spdata results (DEM source filename, source point, plane attitude.
+
+    """
+
+    def __init__(self, sourcename, src_pt, src_plane_attitude):
+        """
+        Class constructor.
+
+        @param sourcename: name of the DEM used to create the grid.
+        @type sourcename: String.
+        @param src_plane_attitude: orientation of the plane used to calculate the spdata.
+        @type src_plane_attitude: class StructPlane.
+
+        @return: self
+        """
+        self._sourcename = sourcename
+        self._srcPt = src_pt
+        self._srcPlaneAttitude = src_plane_attitude
+
+
+class Traces(object):
+
+    def __init__(self):
+        self.lines_x, self.lines_y = [], []
+        self.extent_x = [0, 100]
+        self.extent_y = [0, 100]
+
+
+class Intersections(object):
+
+    def __init__(self):
+        self.parameters = None
+
+        self.xcoords_x = []
+        self.xcoords_y = []
+        self.ycoords_x = []
+        self.ycoords_y = []
+
+        self.links = None
+        self.networks = {}
+
+
+class GeoData(object):
+
+    def set_dem_default(self):
+
+        self.dem = None
+
+    def set_vector_default(self):
+
+        # Fault traces data
+        self.traces = Traces()
+
+    def set_intersections_default(self):
+        """
+        Set result values to null.
+        """
+        self.inters = Intersections()
+
+    def __init__(self):
+
+        self.set_dem_default()
+        self.set_vector_default()
+        self.set_intersections_default()
+
+    def read_traces(self, in_traces_shp):
+        """
+        Read line shapefile.
+
+        @param  in_traces_shp:  parameter to check.
+        @type  in_traces_shp:  QString or string
+
+        """
+        # reset layer parameters
+
+        self.set_vector_default()
+
+        if in_traces_shp is None or in_traces_shp == '':
+            return
+
+            # open input shapefile
+        shape_driver = ogr.GetDriverByName("ESRI Shapefile")
+
+        in_shape = shape_driver.Open(str(in_traces_shp), 0)
+
+        if in_shape is None:
+            return
+
+        # get internal layer
+        lnLayer = in_shape.GetLayer(0)
+
+        # set vector layer extent
+        self.traces.extent_x[0], self.traces.extent_x[1], \
+        self.traces.extent_y[0], self.traces.extent_y[1] \
+            = lnLayer.GetExtent()
+
+        # start reading layer features
+        curr_line = lnLayer.GetNextFeature()
+
+        # loop in layer features
+        while curr_line:
+
+            line_vert_x, line_vert_y = [], []
+
+            line_geom = curr_line.GetGeometryRef()
+
+            if line_geom is None:
+                in_shape.Destroy()
+                return
+
+            if line_geom.GetGeometryType() != ogr.wkbLineString and \
+                    line_geom.GetGeometryType() != ogr.wkbMultiLineString:
+                in_shape.Destroy()
+                return
+
+            for i in range(line_geom.GetPointCount()):
+                x, y = line_geom.GetX(i), line_geom.GetY(i)
+
+                line_vert_x.append(x)
+                line_vert_y.append(y)
+
+            self.traces.lines_x.append(line_vert_x)
+            self.traces.lines_y.append(line_vert_y)
+
+            curr_line = lnLayer.GetNextFeature()
+
+        in_shape.Destroy()
+
+    def get_intersections(self):
+        """
+        Initialize a structured array of the possible and found links for each intersection.
+        It will store a list of the possible connections for each intersection,
+        together with the found connections.
+        """
+
+        # data type for structured array storing intersection parameters
+        dt = np.dtype([('id', np.uint16),
+                       ('i', np.uint16),
+                       ('j', np.uint16),
+                       ('pi_dir', np.str_, 1),
+                       ('conn_from', np.uint16),
+                       ('conn_to', np.uint16),
+                       ('start', np.bool_)])
+
+        # number of valid intersections
+        num_intersections = len(list(self.inters.xcoords_x[np.logical_not(np.isnan(self.inters.xcoords_x))])) + \
+                            len(list(self.inters.ycoords_y[np.logical_not(np.isnan(self.inters.ycoords_y))]))
+
+        # creation and initialization of structured array of valid intersections in the x-direction
+        links = np.zeros(num_intersections, dtype=dt)
+
+        # filling array with values
+
+        curr_ndx = 0
+        for i in range(self.inters.xcoords_x.shape[0]):
+            for j in range(self.inters.xcoords_x.shape[1]):
+                if not isnan(self.inters.xcoords_x[i, j]):
+                    links[curr_ndx] = (curr_ndx + 1, i, j, 'x', 0, 0, False)
+                    curr_ndx += 1
+
+        for i in range(self.inters.ycoords_y.shape[0]):
+            for j in range(self.inters.ycoords_y.shape[1]):
+                if not isnan(self.inters.ycoords_y[i, j]):
+                    links[curr_ndx] = (curr_ndx + 1, i, j, 'y', 0, 0, False)
+                    curr_ndx += 1
+
+        return links
+
+    def set_neighbours(self):
+
+        # shape of input arrays (equal shapes)
+        num_rows, num_cols = self.inters.xcoords_x.shape
+
+        # dictionary storing intersection links
+        neighbours = {}
+
+        # search and connect intersection points
+        for curr_ndx in range(self.inters.links.shape[0]):
+
+            # get current point location (i, j) and direction type (pi_dir)
+            curr_id = self.inters.links[curr_ndx]['id']
+            curr_i = self.inters.links[curr_ndx]['i']
+            curr_j = self.inters.links[curr_ndx]['j']
+            curr_dir = self.inters.links[curr_ndx]['pi_dir']
+
+            # check possible connected spdata
+            near_intersections = []
+
+            if curr_dir == 'x':
+
+                if curr_i < num_rows - 1 and curr_j < num_cols - 1:
+
+                    try:  # -- A
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
+                                                    (self.inters.links['j'] == curr_j + 1) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- B
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- C
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+
+                if curr_i > 0 and curr_j < num_cols - 1:
+
+                    try:  # -- E
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- F
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- G
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j + 1) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+
+            if curr_dir == 'y':
+
+                if curr_i > 0 and curr_j < num_cols - 1:
+
+                    try:  # -- D
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- F
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
+                                                    (self.inters.links['j'] == curr_j) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- G
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j + 1) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+
+                if curr_i > 0 and curr_j > 0:
+
+                    try:  # -- H
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j - 1) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- I
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
+                                                    (self.inters.links['j'] == curr_j - 1) & \
+                                                    (self.inters.links['pi_dir'] == 'y')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+                    try:  # -- L
+                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
+                                                    (self.inters.links['j'] == curr_j - 1) & \
+                                                    (self.inters.links['pi_dir'] == 'x')]['id']
+                        if len(list(id_link)) == 1:
+                            near_intersections.append(id_link[0])
+                    except:
+                        pass
+
+            neighbours[curr_id] = near_intersections
+
+        return neighbours
+
+    def follow_path(self, start_id):
+        """
+        Creates a path of connected intersections from a given start intersection.
+
+        """
+        from_id = start_id
+
+        while self.inters.links[from_id - 1]['conn_to'] == 0:
+
+            conns = self.inters.neighbours[from_id]
+            num_conn = len(conns)
+            if num_conn == 0:
+                raise ConnectionError('no connected intersection')
+            elif num_conn == 1:
+                if self.inters.links[conns[0] - 1]['conn_from'] == 0 and self.inters.links[conns[0] - 1][
+                    'conn_to'] != from_id:
+                    to_id = conns[0]
+                else:
+                    raise ConnectionError('no free connection')
+            elif num_conn == 2:
+                if self.inters.links[conns[0] - 1]['conn_from'] == 0 and self.inters.links[conns[0] - 1][
+                    'conn_to'] != from_id:
+                    to_id = conns[0]
+                elif self.inters.links[conns[1] - 1]['conn_from'] == 0 and self.inters.links[conns[1] - 1][
+                    'conn_to'] != from_id:
+                    to_id = conns[1]
+                else:
+                    raise ConnectionError('no free connection')
+            else:
+                raise ConnectionError('multiple connection')
+
+            # set connection
+            self.inters.links[to_id - 1]['conn_from'] = from_id
+            self.inters.links[from_id - 1]['conn_to'] = to_id
+
+            # prepare for next step
+            from_id = to_id
+
+    def path_closed(self, start_id):
+
+        from_id = start_id
+
+        while self.inters.links[from_id - 1]['conn_to'] != 0:
+
+            to_id = self.inters.links[from_id - 1]['conn_to']
+
+            if to_id == start_id: return True
+
+            from_id = to_id
+
+        return False
+
+    def invert_path(self, start_id):
+
+        self.inters.links[start_id - 1]['start'] = False
+
+        curr_id = start_id
+
+        while curr_id != 0:
+
+            prev_from_id = self.inters.links[curr_id - 1]['conn_from']
+            prev_to_id = self.inters.links[curr_id - 1]['conn_to']
+
+            self.inters.links[curr_id - 1]['conn_from'] = prev_to_id
+            self.inters.links[curr_id - 1]['conn_to'] = prev_from_id
+
+            if self.inters.links[curr_id - 1]['conn_from'] == 0:
+                self.inters.links[curr_id - 1]['start'] = True
+
+            curr_id = prev_to_id
+
+        return
+
+    def patch_path(self, start_id):
+
+        if self.path_closed(start_id):
+            return
+
+        from_id = start_id
+
+        conns = self.inters.neighbours[from_id]
+        try:
+            conns.remove(self.inters.links[from_id - 1]['conn_to'])
+        except:
+            pass
+
+        num_conn = len(conns)
+
+        if num_conn != 1: return
+
+        new_toid = self.inters.links[conns[0] - 1]
+
+        if self.inters.links[new_toid]['conn_to'] > 0 \
+                and self.inters.links[new_toid]['conn_to'] != from_id \
+                and self.inters.links[new_toid]['conn_from'] == 0:
+
+            if self.path_closed(new_toid): return
+            self.invert_path(from_id)
+            self.self.inters.links[from_id - 1]['conn_to'] = new_toid
+            self.self.inters.links[new_toid - 1]['conn_from'] = from_id
+            self.self.inters.links[new_toid - 1]['start'] = False
+
+    def define_paths(self):
+
+        # simple networks starting from border
+        for ndx in range(self.inters.links.shape[0]):
+
+            if len(self.inters.neighbours[ndx + 1]) != 1 or \
+                    self.inters.links[ndx]['conn_from'] > 0 or \
+                    self.inters.links[ndx]['conn_to'] > 0:
+                continue
+
+            try:
+                self.follow_path(ndx + 1)
+            except:
+                continue
+
+        # inner, simple networks
+
+        for ndx in range(self.inters.links.shape[0]):
+
+            if len(self.inters.neighbours[ndx + 1]) != 2 or \
+                    self.inters.links[ndx]['conn_to'] > 0 or \
+                    self.inters.links[ndx]['start'] == True:
+                continue
+
+            try:
+                self.inters.links[ndx]['start'] = True
+                self.follow_path(ndx + 1)
+            except:
+                continue
+
+        # inner, simple networks, connection of FROM
+
+        for ndx in range(self.inters.links.shape[0]):
+
+            if len(self.inters.neighbours[ndx + 1]) == 2 and \
+                    self.inters.links[ndx]['conn_from'] == 0:
+                try:
+                    self.patch_path(ndx + 1)
+                except:
+                    continue
+
+    def define_networks(self):
+        """
+        Creates list of connected intersections,
+        to output as line shapefile.
+        """
+
+        pid = 0
+        networks = {}
+
+        # open, simple networks
+        for ndx in range(self.inters.links.shape[0]):
+
+            if len(self.inters.neighbours[ndx + 1]) != 1: continue
+
+            network_list = []
+
+            to_ndx = ndx + 1
+
+            while to_ndx != 0:
+                network_list.append(to_ndx)
+
+                to_ndx = self.inters.links[to_ndx - 1]['conn_to']
+
+            if len(network_list) > 1:
+                pid += 1
+
+                networks[pid] = network_list
+
+                # closed, simple networks
+        for ndx in range(self.inters.links.shape[0]):
+
+            if len(self.inters.neighbours[ndx + 1]) != 2 or \
+                    self.inters.links[ndx]['start'] == False:
+                continue
+
+            start_id = ndx + 1
+
+            network_list = []
+
+            to_ndx = ndx + 1
+
+            while to_ndx != 0:
+
+                network_list.append(to_ndx)
+
+                to_ndx = self.inters.links[to_ndx - 1]['conn_to']
+
+                if to_ndx == start_id:
+                    network_list.append(to_ndx)
+                    break
+
+            if len(network_list) > 1:
+                pid += 1
+
+                networks[pid] = network_list
+
+        return networks
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -60,6 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.valid_intersections = False
         
         # initialize spdata
+
         self.spdata = GeoData()        
 
         # DEM connections
@@ -71,21 +585,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ui.DEM_cmap_comboBox.currentIndexChanged['QString'].connect(self.redraw_map)
 
         # Fault traces connections
+
         self.ui.actionInput_line_shapefile.triggered.connect(self.select_traces_file)
         self.ui.Trace_lineEdit.textChanged['QString'].connect(self.reading_traces)
         self.ui.show_Fault_checkBox.stateChanged['int'].connect(self.redraw_map)
 
         # Full zoom
-        #zoom_to_full_view = pyqtSignal()
+
         self.ui.mplwidget.zoom_to_full_view.connect(self.zoom_full_view)
-        #QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
 
         # Source point
+
         self.ui.mplwidget.map_press.connect(self.update_src_pt)
-        """
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
-                               self.update_src_pt)  # event from matplotlib widget
-        """
 
         self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.set_z)
         self.ui.Pt_spinBox_y.valueChanged['int'].connect(self.set_z)
@@ -98,23 +609,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.ui.show_SrcPt_checkBox.stateChanged['int'].connect(self.redraw_map)
 
-        """
-        # Source point
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "),
-                               self.update_src_pt)  # event from matplotlib widget
-
-        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-        QtCore.QObject.connect(self.ui.Z_fix2DEM_checkBox_z, QtCore.SIGNAL(" stateChanged (int) "), self.set_z)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-
-        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.show_SrcPt_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
-        """
-
         # Plane orientation
+
         self.ui.DDirection_dial.valueChanged['int'].connect(self.update_dipdir_spinbox)
         self.ui.DDirection_spinBox.valueChanged['int'].connect(self.update_dipdir_slider)
 
@@ -135,52 +631,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ui.actionAbout.triggered.connect(self.helpAbout)
         self.ui.actionQuit.triggered.connect(sys.exit)
 
-        """
-  
-        # Fault traces
-        QtCore.QObject.connect(self.ui.actionInput_line_shapefile, QtCore.SIGNAL(" triggered() "), self.select_traces_file)
-        QtCore.QObject.connect(self.ui.Trace_lineEdit, QtCore.SIGNAL(" textChanged (QString) "), self.reading_traces) 
-                       
-        QtCore.QObject.connect(self.ui.show_Fault_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
-        
-        # Full zoom
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" zoom_full_view "), self.zoom_full_view)
- 
-        # Source point
-        QtCore.QObject.connect(self.ui.mplwidget.canvas, QtCore.SIGNAL(" map_press "), self.update_src_pt) # event from matplotlib widget
-                
-        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-        QtCore.QObject.connect(self.ui.Z_fix2DEM_checkBox_z, QtCore.SIGNAL(" stateChanged (int) "), self.set_z)         
-        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.set_z)
-                                           
-        QtCore.QObject.connect(self.ui.Pt_spinBox_x, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.Pt_spinBox_y, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map) 
-        QtCore.QObject.connect(self.ui.Pt_spinBox_z, QtCore.SIGNAL(" valueChanged (int) "), self.redraw_map) 
-        QtCore.QObject.connect(self.ui.show_SrcPt_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
- 
-        # Plane orientation      
-        QtCore.QObject.connect(self.ui.DDirection_dial, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipdir_spinbox)
-        QtCore.QObject.connect(self.ui.DDirection_spinBox, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipdir_slider)
-               
-        QtCore.QObject.connect(self.ui.DAngle_verticalSlider, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipang_spinbox)
-        QtCore.QObject.connect(self.ui.DAngle_spinBox, QtCore.SIGNAL(" valueChanged (int) "), self.update_dipang_slider)
-
-        # Intersections        
-        QtCore.QObject.connect(self.ui.Intersection_calculate_pushButton, QtCore.SIGNAL(" clicked(bool) "), self.calc_intersections) 
-        QtCore.QObject.connect(self.ui.Intersection_show_checkBox, QtCore.SIGNAL(" stateChanged (int) "), self.redraw_map)
-        QtCore.QObject.connect(self.ui.Intersection_color_comboBox, QtCore.SIGNAL(" currentIndexChanged (QString) "), self.redraw_map)     
-
-        # Write result
-        QtCore.QObject.connect(self.ui.actionPoints, QtCore.SIGNAL(" triggered() "), self.write_intersections_as_points)
-        QtCore.QObject.connect(self.ui.actionLines, QtCore.SIGNAL(" triggered() "), self.write_intersections_as_lines)
-
-        # Other actions
-        QtCore.QObject.connect(self.ui.actionHelp, QtCore.SIGNAL(" triggered() "), self.openHelp)           
-        QtCore.QObject.connect(self.ui.actionAbout, QtCore.SIGNAL(" triggered() "), self.helpAbout)          
-        QtCore.QObject.connect(self.ui.actionQuit, QtCore.SIGNAL(" triggered() "), sys.exit)  
-        """
-
     def draw_map(self, map_extent_x, map_extent_y):            
         """
         Draw the map content.
@@ -189,15 +639,16 @@ class MainWindow(QtWidgets.QMainWindow):
         @type  map_extent_x:  list of two float values (min x and max x).
         @param  map_extent_y:  map extent along the y axis.
         @type  map_extent_y:  list of two float values (min y and max y).
-                
-        """        
+        """
+
         self.ui.mplwidget.canvas.ax.cla()
         
         # DEM processing
         if self.spdata.dem is not None:
                            
-            geo_extent = [self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x, \
-                           self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
+            geo_extent = [
+                self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x,
+                self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
             
             if self.ui.show_DEM_checkBox.isChecked(): # DEM check is on
                 
@@ -226,7 +677,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ui.mplwidget.canvas.ax.plot(intersections_x, intersections_y,  "w+",  ms=2,  mec=curr_color,  mew=2)
                                 
             legend_text = "Plane dip dir., angle: (%d, %d)\nSource point x, y, z: (%d, %d, %d)" % \
-                (self.spdata.inters.parameters._srcPlaneAttitude._dipdir, self.spdata.inters.parameters._srcPlaneAttitude._dipangle, \
+                (self.spdata.inters.parameters._srcPlaneAttitude._dipdir, self.spdata.inters.parameters._srcPlaneAttitude._dipangle,
                  self.spdata.inters.parameters._srcPt.x, self.spdata.inters.parameters._srcPt.y, self.spdata.inters.parameters._srcPt.z) 
                                              
             at = AnchoredText(
@@ -259,12 +710,12 @@ class MainWindow(QtWidgets.QMainWindow):
         @type  map_extent_x:  list of two float values (min x and max x).
         @param  map_extent_y:  map extent along the y axis.
         @type  map_extent_y:  list of two float values (min y and max y).
-                
-        """ 
-        if map_extent_x == None:
+        """
+
+        if map_extent_x is None:
             map_extent_x = self.ui.mplwidget.canvas.ax.get_xlim()
 
-        if map_extent_y == None:            
+        if map_extent_y is None:
             map_extent_y = self.ui.mplwidget.canvas.ax.get_ylim()
                 
         self.draw_map(map_extent_x, map_extent_y)
@@ -272,21 +723,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def redraw_map(self):
         """
         Convenience function for drawing the map.
-                
         """
                       
         self.refresh_map()
                 
-    def zoom_full_view(self, map_extent_x=[0, 100], map_extent_y=[0, 100]):
+    def zoom_full_view(self):
         """
         Update map view to the DEM extent or otherwise, if available, to the shapefile extent.
-    
-        @param  map_extent_x:  map extent along the x axis.
-        @type  map_extent_x:  list of two float values (min x and max x).
-        @param  map_extent_y:  map extent along the y axis.
-        @type  map_extent_y:  list of two float values (min y and max y).
-                
-        """      
+        """
        
         if self.spdata.dem is not None:
             map_extent_x = [self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x]
@@ -294,7 +738,11 @@ class MainWindow(QtWidgets.QMainWindow):
             
         elif self.spdata.traces.extent_x != [] and self.spdata.traces.extent_y != []:
             map_extent_x = self.spdata.traces.extent_x
-            map_extent_y = self.spdata.traces.extent_y                 
+            map_extent_y = self.spdata.traces.extent_y
+
+        else:
+            map_extent_x = [0, 100]
+            map_extent_y = [0, 100]
                                 
         self.refresh_map(map_extent_x, map_extent_y)
         
@@ -311,29 +759,40 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.ui.DEM_lineEdit.setText(file_path)
 
-    def selected_dem(self, in_dem_fn):        
+    def selected_dem(self):
+
+        in_dem_fn = self.ui.DEM_lineEdit.text()
+
+        if not in_dem_fn:
+            return
 
         try:
-            self.spdata.dem = self.spdata.read_dem(in_dem_fn)
-        except:
+            self.spdata.dem = read_dem(in_dem_fn)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "DEM", "Unable to read file: {}".format(e.message))
             self.ui.DEM_lineEdit.clear()
-            QtWidgets.QMessageBox.critical(self, "DEM", "Unable to read file")
             return
         
         # set map limits
+
         self.ui.mplwidget.canvas.ax.set_xlim(self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x)
         self.ui.mplwidget.canvas.ax.set_ylim(self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y) 
 
         # fix z to DEM if required
+
+        self.set_z()
         #self.ui.Z_fix2DEM_checkBox_z.emit(QtCore.SIGNAL(" stateChanged (int) "), 1)
              
         # set DEM visibility on
+
         self.ui.show_DEM_checkBox.setCheckState(2)
         
         # set intersection validity to False
+
         self.valid_intersections = False
         
-        # zoom to full view        
+        # zoom to full view
+
         self.zoom_full_view()
 
     def select_traces_file(self):        
@@ -398,7 +857,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # set intersection validity to False
         self.valid_intersections = False        
         
-        if self.spdata.dem is None: return
+        if self.spdata.dem is None:
+            return
         
         if self.ui.Z_fix2DEM_checkBox_z.isChecked():    
    
@@ -479,7 +939,7 @@ class MainWindow(QtWidgets.QMainWindow):
         srcDipDir = self.ui.DDirection_spinBox.value()
         srcDipAngle = self.ui.DAngle_verticalSlider.value()
 
-        srcPlaneAttitude = StructPlane(srcDipDir, srcDipAngle)
+        srcPlaneAttitude = GPlane(srcDipDir, srcDipAngle)
 
         # intersection arrays
         self.spdata.set_intersections_default()
@@ -502,7 +962,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Write intersection results in the output shapefile.
         """
         
-        if self.spdata.inters.xcoords_x == []:
+        if not self.spdata.inters.xcoords_x:
             QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return
 
@@ -616,7 +1076,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Write intersection results in a line shapefile.
         """
         
-        if self.spdata.inters.xcoords_x == []:
+        if not self.spdata.inters.xcoords_x:
             QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
             return        
 
