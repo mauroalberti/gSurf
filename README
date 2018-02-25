@@ -3,3 +3,5 @@ In the current 0.2.0 version it calculates the intersections between a DEM and a
 and corresponding for instance to an outcrop of this plane).
 The resulting intersections can be saved as a point shapefile or as a line shapefile (experimental code).
 These shapefiles can be viewed and further processed in GIS software such as QGIS or Saga.
+
+![alt text](/ims/screenshot_example_01.png "gSurf interface")
