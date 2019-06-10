@@ -644,27 +644,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ui.mplwidget.canvas.ax.cla()
         
         # DEM processing
+
         if self.spdata.dem is not None:
                            
             geo_extent = [
                 self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x,
                 self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
             
-            if self.ui.show_DEM_checkBox.isChecked(): # DEM check is on
+            if self.ui.show_DEM_checkBox.isChecked():  # DEM check is on
                 
                 curr_colormap = str(self.ui.DEM_cmap_comboBox.currentText())
                      
-                self.ui.mplwidget.canvas.ax.imshow(self.spdata.dem.data, extent = geo_extent,  cmap= curr_colormap)
+                self.ui.mplwidget.canvas.ax.imshow(self.spdata.dem.data, extent=geo_extent,  cmap=curr_colormap)
 
         # Fault traces proc.
+
         if self.spdata.traces.lines_x is not None and self.spdata.traces.lines_y is not None \
-           and self.ui.show_Fault_checkBox.isChecked(): # Fault check is on 
+           and self.ui.show_Fault_checkBox.isChecked():  # Fault check is on
  
-            for currLine_x, currLine_y  in zip(self.spdata.traces.lines_x, self.spdata.traces.lines_y):                
+            for currLine_x, currLine_y in zip(self.spdata.traces.lines_x, self.spdata.traces.lines_y):
                     self.ui.mplwidget.canvas.ax.plot(currLine_x, currLine_y,'-')
 
         # Intersections proc.
-        if self.ui.Intersection_show_checkBox.isChecked() and self.valid_intersections == True:
+
+        if self.ui.Intersection_show_checkBox.isChecked() and self.valid_intersections:
             
             curr_color = str(self.ui.Intersection_color_comboBox.currentText())
                         
