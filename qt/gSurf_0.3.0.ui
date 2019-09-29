@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>998</width>
+    <height>708</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>gSurf   -  vers. 0.3.0</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QWidget" name="Input_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>6</y>
+      <width>251</width>
+      <height>138</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="SourcePoint_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>148</y>
+      <width>251</width>
+      <height>130</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="Plane_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>285</y>
+      <width>252</width>
+      <height>253</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="Intersection_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>550</y>
+      <width>251</width>
+      <height>111</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>998</width>
+     <height>30</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuFile">
+    <property name="title">
+     <string>Fi&amp;le</string>
+    </property>
+    <addaction name="actLoadDem"/>
+    <addaction name="actLoadVector"/>
+    <addaction name="separator"/>
+    <addaction name="separator"/>
+    <addaction name="actionQuit"/>
+   </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title">
+     <string>&amp;Info</string>
+    </property>
+    <addaction name="actionHelp"/>
+    <addaction name="actionAbout"/>
+   </widget>
+   <widget class="QMenu" name="menuProfiles">
+    <property name="title">
+     <string>Prof&amp;iles</string>
+    </property>
+    <addaction name="actChooseDEMs"/>
+    <addaction name="actDefineLines"/>
+    <addaction name="separator"/>
+    <addaction name="actCalcProfileStats"/>
+    <addaction name="actCreateTopoProfile"/>
+    <addaction name="separator"/>
+    <addaction name="actProjectGeolAttitudes"/>
+    <addaction name="actProjectGeolTraces"/>
+    <addaction name="separator"/>
+    <addaction name="actIntersectLineLayer"/>
+    <addaction name="actIntersectPolygonLayer"/>
+   </widget>
+   <addaction name="menuFile"/>
+   <addaction name="menuProfiles"/>
+   <addaction name="menuHelp"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <action name="actLoadDem">
+   <property name="text">
+    <string>Load &amp;DEM</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+D</string>
+   </property>
+  </action>
+  <action name="actLoadVector">
+   <property name="text">
+    <string>Load &amp;vector</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+P</string>
+   </property>
+  </action>
+  <action name="actionQuit">
+   <property name="text">
+    <string>&amp;Quit</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Q</string>
+   </property>
+  </action>
+  <action name="actionHelp">
+   <property name="text">
+    <string>&amp;Help</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+H</string>
+   </property>
+  </action>
+  <action name="actionAbout">
+   <property name="text">
+    <string>&amp;About</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+A</string>
+   </property>
+  </action>
+  <action name="actionPoints">
+   <property name="text">
+    <string>&amp;points</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
+   </property>
+  </action>
+  <action name="actionLines">
+   <property name="text">
+    <string>&amp;lines</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+L</string>
+   </property>
+  </action>
+  <action name="actChooseDEMs">
+   <property name="text">
+    <string>Choose DEM(s)</string>
+   </property>
+  </action>
+  <action name="actDefineLines">
+   <property name="text">
+    <string>Define line(s)</string>
+   </property>
+  </action>
+  <action name="actCalcProfileStats">
+   <property name="text">
+    <string>Calculate profile statistics</string>
+   </property>
+  </action>
+  <action name="actCreateTopoProfile">
+   <property name="text">
+    <string>Create topographic profile</string>
+   </property>
+  </action>
+  <action name="actProjectGeolAttitudes">
+   <property name="text">
+    <string>Project geological attitudes</string>
+   </property>
+  </action>
+  <action name="actProjectGeolTraces">
+   <property name="text">
+    <string>Project geological traces</string>
+   </property>
+  </action>
+  <action name="actIntersectLineLayer">
+   <property name="text">
+    <string>Intersect line layer</string>
+   </property>
+  </action>
+  <action name="actIntersectPolygonLayer">
+   <property name="text">
+    <string>Intersect polygon layer</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

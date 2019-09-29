@@ -1,0 +1,18 @@
+# -*- coding: utf-8 -*-
+
+
+"""
+MAgnitude parameters
+"""
+
+
+MIN_VECTOR_MAGNITUDE = 1e-9
+MIN_SCALAR_VALUE = 1e-9
+MIN_SEPARATION_THRESHOLD = 1e-6
+MIN_POINT_POS_DIFF = MIN_SEPARATION_THRESHOLD
+MIN_VECTOR_MAGN_DIFF = MIN_SCALAR_VALUE
+MAX_SCALAR_VALUE = 1e9
+
+PRACTICAL_MIN_DIST = 1e-1  # assuming distance is in meters
+
+

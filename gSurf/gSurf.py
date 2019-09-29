@@ -35,9 +35,8 @@ from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
 
 from gSurf_ui import Ui_MainWindow
 
-from gis_utils.rasters import *
-from gsf.geometry import *
-from gsf.grids import *
+from gis_utils_OLD.rasters import *
+from gsf_OLD.grids import *
 
 
 __version__ = "0.2.0"

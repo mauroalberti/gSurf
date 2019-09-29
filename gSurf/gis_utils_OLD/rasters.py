@@ -8,8 +8,7 @@ except ImportError:
     import ogr
     import gdal
 
-from gsf.geometry import *
-from gsf.grids import *
+from gsf_OLD.grids import *
 
 
 class GDALParameters(object):
