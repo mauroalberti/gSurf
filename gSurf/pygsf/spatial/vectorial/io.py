@@ -162,8 +162,6 @@ def try_read_line_shapefile(
 
 def read_linestring_geometries(line_shp_path: str) -> Optional[MultiLine]:
     """
-    Deprecated. Use 'read_lines_geometries'.
-
     Read linestring geometries from a shapefile using ogr.
     The geometry type of the input shapefile must be LineString (MultiLineString is not currently managed).
 
@@ -197,12 +195,15 @@ def read_linestring_geometries(line_shp_path: str) -> Optional[MultiLine]:
 
     # get projection
 
-    srs = layer.GetSpatialRef()
-    srs.AutoIdentifyEPSG()
-    authority = srs.GetAuthorityName(None)
-    if authority == "EPSG":
-        epsg_cd = int(srs.GetAuthorityCode(None))
-    else:
+    try:
+        srs = layer.GetSpatialRef()
+        srs.AutoIdentifyEPSG()
+        authority = srs.GetAuthorityName(None)
+        if authority == "EPSG":
+            epsg_cd = int(srs.GetAuthorityCode(None))
+        else:
+            epsg_cd = -1
+    except:
         epsg_cd = -1
 
     # initialize list storing vertex coordinates of lines

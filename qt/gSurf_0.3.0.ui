@@ -93,7 +93,7 @@
      <string>Fi&amp;le</string>
     </property>
     <addaction name="actLoadDem"/>
-    <addaction name="actLoadVector"/>
+    <addaction name="actLoadLineShapefile"/>
     <addaction name="separator"/>
     <addaction name="separator"/>
     <addaction name="actionQuit"/>
@@ -134,12 +134,12 @@
     <string>Ctrl+D</string>
    </property>
   </action>
-  <action name="actLoadVector">
+  <action name="actLoadLineShapefile">
    <property name="text">
-    <string>Load &amp;vector</string>
+    <string>Load &amp;line shapefile</string>
    </property>
    <property name="shortcut">
-    <string>Ctrl+P</string>
+    <string>Ctrl+L</string>
    </property>
   </action>
   <action name="actionQuit">
@@ -184,42 +184,42 @@
   </action>
   <action name="actChooseDEMs">
    <property name="text">
-    <string>Choose DEM(s)</string>
+    <string>&amp;Choose DEM(s)</string>
    </property>
   </action>
   <action name="actDefineLines">
    <property name="text">
-    <string>Define line(s)</string>
+    <string>&amp;Define line(s)</string>
    </property>
   </action>
   <action name="actCalcProfileStats">
    <property name="text">
-    <string>Calculate profile statistics</string>
+    <string>Calculate profile &amp;statistics</string>
    </property>
   </action>
   <action name="actCreateTopoProfile">
    <property name="text">
-    <string>Create topographic profile</string>
+    <string>C&amp;reate topographic profile</string>
    </property>
   </action>
   <action name="actProjectGeolAttitudes">
    <property name="text">
-    <string>Project geological attitudes</string>
+    <string>&amp;Project geological attitudes</string>
    </property>
   </action>
   <action name="actProjectGeolTraces">
    <property name="text">
-    <string>Project geological traces</string>
+    <string>Project &amp;geological traces</string>
    </property>
   </action>
   <action name="actIntersectLineLayer">
    <property name="text">
-    <string>Intersect line layer</string>
+    <string>&amp;Intersect line layer</string>
    </property>
   </action>
   <action name="actIntersectPolygonLayer">
    <property name="text">
-    <string>Intersect polygon layer</string>
+    <string>Intersect polygon &amp;layer</string>
    </property>
   </action>
  </widget>

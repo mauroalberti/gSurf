@@ -2998,6 +2998,16 @@ class MultiLine(object):
 
         return txt
 
+    def __len__(self):
+        """
+        Return number of lines.
+
+        :return: number of lines
+        :rtype: numbers.Integral
+        """
+
+        return self.num_lines()
+
     def add_line(self, line) -> bool:
         """
         In-place addition of a Line instance (that is not cloned).
