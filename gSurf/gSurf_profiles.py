@@ -1,13 +1,25 @@
 import sys
 
-from PyQt5 import QtCore, QtGui, QtWidgets, uic
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt5 import QtWidgets, uic
 
 
 from pygsf.spatial.rasters.io import read_raster, read_band
 from pygsf.spatial.vectorial.io import read_linestring_geometries
-
 from pygsf.spatial.rasters.geoarray import GeoArray
+from pygsf.utils.qt.tools import *
+
+from gSurf_ui_classes import SourceDEMsDialog
+
+
+def get_selected_dems_params(dialog):
+
+    selected_dems = []
+    for dem_qgis_ndx in range(dialog.listDEMs_treeWidget.topLevelItemCount()):
+        curr_DEM_item = dialog.listDEMs_treeWidget.topLevelItem(dem_qgis_ndx)
+        if curr_DEM_item.checkState(0) == 2:
+            selected_dems.append(dialog.singleband_raster_layers_in_project[dem_qgis_ndx])
+
+    return selected_dems
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -17,6 +29,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         uic.loadUi('gSurf_0.3.0.ui', self)
 
+        self.plugin_name = "gSurf"
+
         # File menu
 
         self.actLoadDem.triggered.connect(self.load_dem)
@@ -24,7 +38,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Profiles menu
 
-        self.actChooseDems.triggered.connect(self.choose_dems)
+        self.actChooseDEMs.triggered.connect(self.choose_dems)
         self.actDefineLines.triggered.connect(self.define_lines)
 
         # data storage
@@ -111,6 +125,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "Shapefile read ({} lines)".format(len(multiline))
         )
 
+
+
     def choose_dems(self):
         """
         Chooses DEM(s) to use for profile creation.
@@ -118,7 +134,15 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        pass
+        dialog = SourceDEMsDialog(self.plugin_name, raster_layers=["dem_01"])
+
+        if dialog.exec_():
+            selected_dems = get_selected_dems_params(dialog)
+        else:
+            warn(self,
+                 self.plugin_name,
+                 "No chosen DEM")
+            return
 
     def define_lines(self):
         """
