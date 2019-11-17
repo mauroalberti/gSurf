@@ -1,5 +1,7 @@
 import sys
 
+from collections import namedtuple
+
 from PyQt5 import QtWidgets, uic
 
 
@@ -11,15 +13,18 @@ from pygsf.utils.qt.tools import *
 from gSurf_ui_classes import SourceDEMsDialog
 
 
+DemParameters = namedtuple("DemParameters", 'filePath, geoarray')
+
+
 def get_selected_dems_params(dialog):
 
-    selected_dems = []
-    for dem_qgis_ndx in range(dialog.listDEMs_treeWidget.topLevelItemCount()):
-        curr_DEM_item = dialog.listDEMs_treeWidget.topLevelItem(dem_qgis_ndx)
+    selected_dems_indices = []
+    for dem_ndx in range(dialog.listDEMs_treeWidget.topLevelItemCount()):
+        curr_DEM_item = dialog.listDEMs_treeWidget.topLevelItem(dem_ndx)
         if curr_DEM_item.checkState(0) == 2:
-            selected_dems.append(dialog.singleband_raster_layers_in_project[dem_qgis_ndx])
+            selected_dems_indices.append(dem_ndx)
 
-    return selected_dems
+    return selected_dems_indices
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -52,17 +57,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_dem(self):
 
-        fileName, _ = QFileDialog.getOpenFileName(
+        filePath, _ = QFileDialog.getOpenFileName(
             self,
             self.tr("Open DEM file (using GDAL)"),
             "",
             "*.*"
         )
 
-        if not fileName:
+        if not filePath:
             return
 
-        dataset, geotransform, num_bands, projection = read_raster(fileName)
+        dataset, geotransform, num_bands, projection = read_raster(filePath)
 
         if num_bands != 1:
             QMessageBox.warning(
@@ -79,12 +84,12 @@ class MainWindow(QtWidgets.QMainWindow):
             inLevels=[data]
         )
 
-        self.dems.append(ga)
+        self.dems.append(DemParameters(filePath, ga))
 
         QMessageBox.information(
             None,
             "Raster loading",
-            "Raster read".format(fileName)
+            "Raster read".format(filePath)
         )
 
     def load_line_shapefile(self):
@@ -125,8 +130,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "Shapefile read ({} lines)".format(len(multiline))
         )
 
-
-
     def choose_dems(self):
         """
         Chooses DEM(s) to use for profile creation.
@@ -134,11 +137,19 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        dialog = SourceDEMsDialog(self.plugin_name, raster_layers=["dem_01"])
+        dialog = SourceDEMsDialog(
+            self.plugin_name,
+            dem_sources_paths=[dem.filePath for dem in self.dems])
 
         if dialog.exec_():
-            selected_dems = get_selected_dems_params(dialog)
+            selected_dems_indices = get_selected_dems_params(dialog)
         else:
+            warn(self,
+                 self.plugin_name,
+                 "No chosen DEM")
+            return
+
+        if not selected_dems_indices:
             warn(self,
                  self.plugin_name,
                  "No chosen DEM")

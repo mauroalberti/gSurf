@@ -3,19 +3,16 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import *
 
-#from .config.settings import *
-
 
 class SourceDEMsDialog(QDialog):
 
-    def __init__(self, plugin_name, raster_layers, parent=None):
+    def __init__(self, plugin_name, dem_sources_paths, parent=None):
 
-        print("Pippo")
         super(SourceDEMsDialog, self).__init__(parent)
 
         self.plugin_name = plugin_name
 
-        self.raster_layers = raster_layers
+        self.raster_layers = dem_sources_paths
 
         self.listDEMs_treeWidget = QTreeWidget()
         self.listDEMs_treeWidget.setColumnCount(2)
