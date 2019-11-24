@@ -1,34 +1,41 @@
 # -*- coding: utf-8 -*-
 
+from typing import List
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import *
 
 
-class SourceDEMsDialog(QDialog):
+class ChooseSourceDataDialog(QDialog):
 
-    def __init__(self, plugin_name, dem_sources_paths, parent=None):
+    def __init__(
+        self,
+        plugin_name: str,
+        data_sources_paths: List[str],
+        parent=None
+    ):
 
-        super(SourceDEMsDialog, self).__init__(parent)
+        super(ChooseSourceDataDialog, self).__init__(parent)
 
         self.plugin_name = plugin_name
 
-        self.raster_layers = dem_sources_paths
+        self.data_layers = data_sources_paths
 
-        self.listDEMs_treeWidget = QTreeWidget()
-        self.listDEMs_treeWidget.setColumnCount(2)
-        self.listDEMs_treeWidget.headerItem().setText(0, "Select")
-        self.listDEMs_treeWidget.headerItem().setText(1, "Name")
-        self.listDEMs_treeWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.listDEMs_treeWidget.setDragEnabled(False)
-        self.listDEMs_treeWidget.setDragDropMode(QAbstractItemView.NoDragDrop)
-        self.listDEMs_treeWidget.setAlternatingRowColors(True)
-        self.listDEMs_treeWidget.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.listDEMs_treeWidget.setTextElideMode(Qt.ElideLeft)
+        self.listData_treeWidget = QTreeWidget()
+        self.listData_treeWidget.setColumnCount(2)
+        self.listData_treeWidget.headerItem().setText(0, "Select")
+        self.listData_treeWidget.headerItem().setText(1, "Name")
+        self.listData_treeWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.listData_treeWidget.setDragEnabled(False)
+        self.listData_treeWidget.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.listData_treeWidget.setAlternatingRowColors(True)
+        self.listData_treeWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.listData_treeWidget.setTextElideMode(Qt.ElideLeft)
 
-        self.populate_raster_layer_treewidget()
+        self.populate_layers_treewidget()
 
-        self.listDEMs_treeWidget.resizeColumnToContents(0)
-        self.listDEMs_treeWidget.resizeColumnToContents(1)
+        self.listData_treeWidget.resizeColumnToContents(0)
+        self.listData_treeWidget.resizeColumnToContents(1)
 
         okButton = QPushButton("&OK")
         cancelButton = QPushButton("Cancel")
@@ -40,7 +47,7 @@ class SourceDEMsDialog(QDialog):
 
         layout = QGridLayout()
 
-        layout.addWidget(self.listDEMs_treeWidget, 0, 0, 1, 3)
+        layout.addWidget(self.listData_treeWidget, 0, 0, 1, 3)
         layout.addLayout(buttonLayout, 1, 0, 1, 3)
 
         self.setLayout(layout)
@@ -48,14 +55,14 @@ class SourceDEMsDialog(QDialog):
         okButton.clicked.connect(self.accept)
         cancelButton.clicked.connect(self.reject)
 
-        self.setWindowTitle("Define source DEMs")
+        self.setWindowTitle("Define data source")
 
-    def populate_raster_layer_treewidget(self):
+    def populate_layers_treewidget(self):
 
-        self.listDEMs_treeWidget.clear()
+        self.listData_treeWidget.clear()
 
-        for raster_layer in self.raster_layers:
-            tree_item = QTreeWidgetItem(self.listDEMs_treeWidget)
+        for raster_layer in self.data_layers:
+            tree_item = QTreeWidgetItem(self.listData_treeWidget)
             tree_item.setText(1, raster_layer)
             tree_item.setFlags(tree_item.flags() | Qt.ItemIsUserCheckable)
             tree_item.setCheckState(0, 0)

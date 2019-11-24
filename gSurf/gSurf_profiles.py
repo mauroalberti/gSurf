@@ -1,6 +1,10 @@
 import sys
 
+from typing import List, Optional
+
 from collections import namedtuple
+
+import numbers
 
 from PyQt5 import QtWidgets, uic
 
@@ -10,21 +14,24 @@ from pygsf.spatial.vectorial.io import read_linestring_geometries
 from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
-from gSurf_ui_classes import SourceDEMsDialog
+from gSurf_ui_classes import ChooseSourceDataDialog
 
 
-DemParameters = namedtuple("DemParameters", 'filePath, geoarray')
+DataParameters = namedtuple("DataParameters", 'filePath, data')
 
 
-def get_selected_dems_params(dialog):
+def get_selected_layers_indices(
+    treeWidgetDataList: QtWidgets.QTreeWidget
+) -> List[numbers.Integral]:
 
-    selected_dems_indices = []
-    for dem_ndx in range(dialog.listDEMs_treeWidget.topLevelItemCount()):
-        curr_DEM_item = dialog.listDEMs_treeWidget.topLevelItem(dem_ndx)
-        if curr_DEM_item.checkState(0) == 2:
-            selected_dems_indices.append(dem_ndx)
+    selected_data_indices = []
 
-    return selected_dems_indices
+    for data_ndx in range(treeWidgetDataList.topLevelItemCount()):
+        curr_data_item = treeWidgetDataList.topLevelItem(data_ndx)
+        if curr_data_item.checkState(0) == 2:
+            selected_data_indices.append(data_ndx)
+
+    return selected_data_indices
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -44,12 +51,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # Profiles menu
 
         self.actChooseDEMs.triggered.connect(self.choose_dems)
-        self.actDefineLines.triggered.connect(self.define_lines)
+        self.actChooseLines.triggered.connect(self.define_lines)
 
         # data storage
 
         self.dems = []
         self.lines = []
+
+        # data choices
+
+        self.selected_dems = []
+        self.selected_lines = []
 
         # window visibility
 
@@ -84,28 +96,28 @@ class MainWindow(QtWidgets.QMainWindow):
             inLevels=[data]
         )
 
-        self.dems.append(DemParameters(filePath, ga))
+        self.dems.append(DataParameters(filePath, ga))
 
         QMessageBox.information(
             None,
-            "Raster loading",
-            "Raster read".format(filePath)
+            "DEM loading",
+            "DEM read".format(filePath)
         )
 
     def load_line_shapefile(self):
 
-        fileName, _ = QFileDialog.getOpenFileName(
+        filePath, _ = QFileDialog.getOpenFileName(
             self,
             self.tr("Open line shapefile (using GDAL)"),
             "",
             "*.shp"
         )
 
-        if not fileName:
+        if not filePath:
             return
 
         try:
-            multiline = read_linestring_geometries(line_shp_path=fileName)
+            multiline = read_linestring_geometries(line_shp_path=filePath)
         except Exception as e:
             QMessageBox.critical(
                 None,
@@ -122,13 +134,37 @@ class MainWindow(QtWidgets.QMainWindow):
              )
             return
 
-        self.lines.append(multiline)
+        self.lines.append(DataParameters(filePath, multiline))
 
         QMessageBox.information(
             None,
             "Line shapefile",
             "Shapefile read ({} lines)".format(len(multiline))
         )
+
+    def choose_data(
+        self,
+        data: List[str]
+    ) -> Optional[List[numbers.Integral]]:
+        """
+        Choose data to use for profile creation.
+
+        :param data: the list of data sources
+        :type data: List[str]
+        :return: the selected data, as indices of the input list
+        :rtype: List[numbers.Integral]
+        """
+
+        selected_data_indices = []
+
+        dialog = ChooseSourceDataDialog(
+            self.plugin_name,
+            data_sources_paths=data)
+
+        if dialog.exec_():
+            selected_data_indices = get_selected_layers_indices(dialog.listData_treeWidget)
+
+        return selected_data_indices
 
     def choose_dems(self):
         """
@@ -137,23 +173,15 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        dialog = SourceDEMsDialog(
-            self.plugin_name,
-            dem_sources_paths=[dem.filePath for dem in self.dems])
+        self.selected_dems = self.choose_data(
+            data=[dem.filePath for dem in self.dems]
+        )
 
-        if dialog.exec_():
-            selected_dems_indices = get_selected_dems_params(dialog)
-        else:
+        if not self.selected_dems:
             warn(self,
                  self.plugin_name,
-                 "No chosen DEM")
-            return
-
-        if not selected_dems_indices:
-            warn(self,
-                 self.plugin_name,
-                 "No chosen DEM")
-            return
+                 "No chosen data")
+            return []
 
     def define_lines(self):
         """
@@ -162,7 +190,15 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        pass
+        self.selected_lines = self.choose_data(
+            data=[line.filePath for line in self.lines]
+        )
+
+        if not self.selected_lines:
+            warn(self,
+                 self.plugin_name,
+                 "No chosen data")
+            return []
 
 
 if __name__ == "__main__":

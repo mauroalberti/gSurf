@@ -110,7 +110,7 @@
      <string>Prof&amp;iles</string>
     </property>
     <addaction name="actChooseDEMs"/>
-    <addaction name="actDefineLines"/>
+    <addaction name="actChooseLines"/>
     <addaction name="separator"/>
     <addaction name="actCalcProfileStats"/>
     <addaction name="actCreateTopoProfile"/>
@@ -187,7 +187,7 @@
     <string>&amp;Choose DEM(s)</string>
    </property>
   </action>
-  <action name="actDefineLines">
+  <action name="actChooseLines">
    <property name="text">
     <string>&amp;Define line(s)</string>
    </property>
