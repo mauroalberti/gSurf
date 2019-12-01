@@ -9,10 +9,14 @@ import numbers
 from PyQt5 import QtWidgets, uic
 
 
-from pygsf.spatial.rasters.io import read_raster, read_band
+from pygsf.spatial.rasters.io import read_raster, read_band, read_raster_band
 from pygsf.spatial.vectorial.io import read_linestring_geometries
 from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
+
+from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile
+from pygsf.spatial.geology.profiles.profilers import LinearProfiler
+from pygsf.spatial.geology.profiles.plot import plot
 
 from gSurf_ui_classes import ChooseSourceDataDialog
 
@@ -53,6 +57,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actChooseDEMs.triggered.connect(self.choose_dems)
         self.actChooseLines.triggered.connect(self.define_lines)
 
+        self.actCreateTopoProfile.triggered.connect(self.create_profile)
+        self.actCalcProfileStats.triggered.connect(self.calculate_statistics)
+
         # data storage
 
         self.dems = []
@@ -60,8 +67,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # data choices
 
-        self.selected_dems = []
-        self.selected_lines = []
+        self.selected_dems_indices = []
+        self.selected_lines_indices = []
 
         # window visibility
 
@@ -173,11 +180,11 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        self.selected_dems = self.choose_data(
+        self.selected_dems_indices = self.choose_data(
             data=[dem.filePath for dem in self.dems]
         )
 
-        if not self.selected_dems:
+        if not self.selected_dems_indices:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
@@ -190,15 +197,36 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        self.selected_lines = self.choose_data(
+        self.selected_lines_indices = self.choose_data(
             data=[line.filePath for line in self.lines]
         )
 
-        if not self.selected_lines:
+        if not self.selected_lines_indices:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
             return []
+
+    def create_profile(self):
+
+        # DEM
+        geoarray = self.dems[self.selected_dems_indices[0]].data
+
+        # profile
+        profiles = self.lines[self.selected_lines_indices[0]].data
+        line = profiles.line()
+
+        geoprofile = GeoProfile()
+        profiler = LinearProfiler(start_pt=line.start_pt(), end_pt=line.end_pt(), densify_distance=5)
+
+        topo_profile = profiler.profile_grid(geoarray)
+        geoprofile.topo_profile = topo_profile
+        self.fig = plot(geoprofile)
+        self.fig.show()
+
+    def calculate_statistics(self):
+
+        pass
 
 
 if __name__ == "__main__":
