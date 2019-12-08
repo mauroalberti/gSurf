@@ -222,7 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         topo_profile = profiler.profile_grid(geoarray)
         geoprofile.topo_profile = topo_profile
         self.fig = plot(geoprofile)
-        self.fig.show()
+        #self.fig.show()
 
     def calculate_statistics(self):
 
