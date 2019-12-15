@@ -6,6 +6,8 @@ from collections import namedtuple
 
 import numbers
 
+import matplotlib.pyplot as plt
+
 from PyQt5 import QtWidgets, uic
 
 
@@ -14,14 +16,20 @@ from pygsf.spatial.vectorial.io import read_linestring_geometries
 from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
-from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile
-from pygsf.spatial.geology.profiles.profilers import LinearProfiler
+from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
+from pygsf.spatial.geology.profiles.profilers import LinearProfiler, ParallelProfilers
 from pygsf.spatial.geology.profiles.plot import plot
 
 from gSurf_ui_classes import ChooseSourceDataDialog
 
 
 DataParameters = namedtuple("DataParameters", 'filePath, data')
+
+multiple_profiles_choices = [
+    "central",
+    "left",
+    "right"
+]
 
 
 def get_selected_layers_indices(
@@ -43,7 +51,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
 
         super().__init__()
-        uic.loadUi('gSurf_0.3.0.ui', self)
+        uic.loadUi('./widgets/gSurf_0.3.0.ui', self)
 
         self.plugin_name = "gSurf"
 
@@ -57,8 +65,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actChooseDEMs.triggered.connect(self.choose_dems)
         self.actChooseLines.triggered.connect(self.define_lines)
 
-        self.actCreateTopoProfile.triggered.connect(self.create_profile)
-        self.actCalcProfileStats.triggered.connect(self.calculate_statistics)
+        self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
+        self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
 
         # data storage
 
@@ -207,7 +215,7 @@ class MainWindow(QtWidgets.QMainWindow):
                  "No chosen data")
             return []
 
-    def create_profile(self):
+    def create_single_profile(self):
 
         # DEM
         geoarray = self.dems[self.selected_dems_indices[0]].data
@@ -217,7 +225,11 @@ class MainWindow(QtWidgets.QMainWindow):
         line = profiles.line()
 
         geoprofile = GeoProfile()
-        profiler = LinearProfiler(start_pt=line.start_pt(), end_pt=line.end_pt(), densify_distance=5)
+        profiler = LinearProfiler(
+            start_pt=line.start_pt(),
+            end_pt=line.end_pt(),
+            densify_distance=5
+        )
 
         topo_profile = profiler.profile_grid(geoarray)
         geoprofile.topo_profile = topo_profile
@@ -226,9 +238,64 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig.show()
 
-    def calculate_statistics(self):
+    def create_multi_parallel_profiles(self):
 
-        pass
+        dialog = MultiProfilesDefWindow()
+
+        if dialog.exec_():
+            densify_distance = dialog.densifyDistanceDoubleSpinBox.value()
+            total_profiles_number = dialog.numberOfProfilesSpinBox.value()
+            profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
+            profiles_arrangement = dialog.profilesLocationComboBox.currentText()
+        else:
+            return
+
+        # DEM
+        geoarray = self.dems[self.selected_dems_indices[0]].data
+
+        # profile
+        profiles = self.lines[self.selected_lines_indices[0]].data
+        line = profiles.line()
+
+        geoprofiles = GeoProfileSet()
+        base_profiler = LinearProfiler(
+            start_pt=line.start_pt(),
+            end_pt=line.end_pt(),
+            densify_distance=densify_distance
+        )
+
+        multiple_profilers = ParallelProfilers.fromProfiler(
+            base_profiler=base_profiler,
+            profs_num=total_profiles_number,
+            profs_offset=profiles_offset,
+            profs_arr=profiles_arrangement
+        )
+
+        topo_profiles = multiple_profilers.profile_grid(geoarray)
+
+        geoprofiles.topo_profiles_set = topo_profiles
+
+        self.figs = plot(geoprofiles)
+
+        for fig in self.figs:
+            plt.plot(fig)
+
+        plt.show()
+
+
+class MultiProfilesDefWindow(QtWidgets.QDialog):
+
+    def __init__(self):
+
+        super().__init__()
+        uic.loadUi('./widgets/dialog_multiple_profiles.ui', self)
+
+        self.densifyDistanceDoubleSpinBox.setValue(5.0)
+        self.numberOfProfilesSpinBox.setValue(10)
+        self.profilesOffsetDoubleSpinBox.setValue(500)
+        self.profilesLocationComboBox.addItems(multiple_profiles_choices)
+
+        self.setWindowTitle("Multiple parallel profiles")
 
 
 if __name__ == "__main__":

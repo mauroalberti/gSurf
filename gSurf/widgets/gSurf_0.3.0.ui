@@ -85,7 +85,7 @@
      <x>0</x>
      <y>0</y>
      <width>998</width>
-     <height>30</height>
+     <height>20</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -109,10 +109,18 @@
     <property name="title">
      <string>Prof&amp;iles</string>
     </property>
+    <widget class="QMenu" name="menuCreate_topographic_profile_single">
+     <property name="title">
+      <string>C&amp;reate topographic profile(s)</string>
+     </property>
+     <addaction name="actionCreateSingleProfile"/>
+     <addaction name="actionCreateMultipleParallelProfiles"/>
+    </widget>
     <addaction name="actChooseDEMs"/>
     <addaction name="actChooseLines"/>
     <addaction name="separator"/>
-    <addaction name="actCreateTopoProfile"/>
+    <addaction name="menuCreate_topographic_profile_single"/>
+    <addaction name="separator"/>
     <addaction name="actCalcProfileStats"/>
     <addaction name="separator"/>
     <addaction name="actProjectGeolAttitudes"/>
@@ -197,11 +205,6 @@
     <string>Profile &amp;statistics</string>
    </property>
   </action>
-  <action name="actCreateTopoProfile">
-   <property name="text">
-    <string>C&amp;reate topographic profile</string>
-   </property>
-  </action>
   <action name="actProjectGeolAttitudes">
    <property name="text">
     <string>&amp;Project geological attitudes</string>
@@ -220,6 +223,16 @@
   <action name="actIntersectPolygonLayer">
    <property name="text">
     <string>Intersect polygon &amp;layer</string>
+   </property>
+  </action>
+  <action name="actionCreateMultipleParallelProfiles">
+   <property name="text">
+    <string>Multiple parallel profiles</string>
+   </property>
+  </action>
+  <action name="actionCreateSingleProfile">
+   <property name="text">
+    <string>Single profile</string>
    </property>
   </action>
  </widget>
