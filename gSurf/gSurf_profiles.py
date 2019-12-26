@@ -247,6 +247,7 @@ class MainWindow(QtWidgets.QMainWindow):
             total_profiles_number = dialog.numberOfProfilesSpinBox.value()
             profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
             profiles_arrangement = dialog.profilesLocationComboBox.currentText()
+            superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
         else:
             return
 
@@ -275,12 +276,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         geoprofiles.topo_profiles_set = topo_profiles
 
-        self.figs = plot(geoprofiles)
+        self.fig = plot(
+            geoprofiles,
+            superposed=superposed_profiles)
 
+        """
         for fig in self.figs:
             plt.plot(fig)
+        """
 
-        plt.show()
+        self.fig.show()
 
 
 class MultiProfilesDefWindow(QtWidgets.QDialog):
