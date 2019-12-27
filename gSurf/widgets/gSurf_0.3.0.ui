@@ -85,7 +85,7 @@
      <x>0</x>
      <y>0</y>
      <width>998</width>
-     <height>20</height>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -94,7 +94,7 @@
     </property>
     <addaction name="actLoadDem"/>
     <addaction name="actLoadLineShapefile"/>
-    <addaction name="separator"/>
+    <addaction name="actLoadPointShapefile"/>
     <addaction name="separator"/>
     <addaction name="actionQuit"/>
    </widget>
@@ -111,7 +111,7 @@
     </property>
     <widget class="QMenu" name="menuCreate_topographic_profile_single">
      <property name="title">
-      <string>C&amp;reate topographic profile(s)</string>
+      <string>C&amp;reate topographic profiles</string>
      </property>
      <addaction name="actionCreateSingleProfile"/>
      <addaction name="actionCreateMultipleParallelProfiles"/>
@@ -192,17 +192,17 @@
   </action>
   <action name="actChooseDEMs">
    <property name="text">
-    <string>&amp;Choose DEM(s)</string>
+    <string>&amp;Choose DEMs</string>
    </property>
   </action>
   <action name="actChooseLines">
    <property name="text">
-    <string>&amp;Define line(s)</string>
+    <string>&amp;Define profile lines</string>
    </property>
   </action>
   <action name="actCalcProfileStats">
    <property name="text">
-    <string>Profile &amp;statistics</string>
+    <string>Profiles &amp;statistics</string>
    </property>
   </action>
   <action name="actProjectGeolAttitudes">
@@ -233,6 +233,11 @@
   <action name="actionCreateSingleProfile">
    <property name="text">
     <string>Single profile</string>
+   </property>
+  </action>
+  <action name="actLoadPointShapefile">
+   <property name="text">
+    <string>Load point shapefile</string>
    </property>
   </action>
  </widget>

@@ -67,6 +67,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
         self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
+        self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
 
         # data storage
 
@@ -124,6 +125,44 @@ class MainWindow(QtWidgets.QMainWindow):
         filePath, _ = QFileDialog.getOpenFileName(
             self,
             self.tr("Open line shapefile (using GDAL)"),
+            "",
+            "*.shp"
+        )
+
+        if not filePath:
+            return
+
+        try:
+            multiline = read_linestring_geometries(line_shp_path=filePath)
+        except Exception as e:
+            QMessageBox.critical(
+                None,
+                "Line shapefile error",
+                "Exception: {}".format(e)
+             )
+            return
+
+        if not multiline:
+            QMessageBox.warning(
+                None,
+                "Line shapefile warning",
+                "Unable to read line shapefile"
+             )
+            return
+
+        self.lines.append(DataParameters(filePath, multiline))
+
+        QMessageBox.information(
+            None,
+            "Line shapefile",
+            "Shapefile read ({} lines)".format(len(multiline))
+        )
+
+    def load_point_shapefile(self):
+
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Open point shapefile (using GDAL)"),
             "",
             "*.shp"
         )
@@ -287,13 +326,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig.show()
 
+    def project_attitudes(self):
+
+        dialog = ProjectAttitudesDefWindow()
+
+        if dialog.exec_():
+            print("Hoora")
+            """
+            densify_distance = dialog.densifyDistanceDoubleSpinBox.value()
+            total_profiles_number = dialog.numberOfProfilesSpinBox.value()
+            profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
+            profiles_arrangement = dialog.profilesLocationComboBox.currentText()
+            superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
+            """
+        else:
+            return
+
 
 class MultiProfilesDefWindow(QtWidgets.QDialog):
 
     def __init__(self):
 
         super().__init__()
-        uic.loadUi('./widgets/dialog_multiple_profiles.ui', self)
+        uic.loadUi('./widgets/multiple_profiles.ui', self)
 
         self.densifyDistanceDoubleSpinBox.setValue(5.0)
         self.numberOfProfilesSpinBox.setValue(10)
@@ -302,6 +357,22 @@ class MultiProfilesDefWindow(QtWidgets.QDialog):
 
         self.setWindowTitle("Multiple parallel profiles")
 
+
+class ProjectAttitudesDefWindow(QtWidgets.QDialog):
+
+    def __init__(self):
+
+        super().__init__()
+        uic.loadUi('./widgets/project_attitudes.ui', self)
+
+        """
+        self.densifyDistanceDoubleSpinBox.setValue(5.0)
+        self.numberOfProfilesSpinBox.setValue(10)
+        self.profilesOffsetDoubleSpinBox.setValue(500)
+        self.profilesLocationComboBox.addItems(multiple_profiles_choices)
+        """
+
+        self.setWindowTitle("Project geological attitudes")
 
 if __name__ == "__main__":
     
