@@ -29,7 +29,7 @@
     <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
    </property>
   </widget>
-  <widget class="QWidget" name="">
+  <widget class="QWidget" name="layoutWidget">
    <property name="geometry">
     <rect>
      <x>20</x>
@@ -44,7 +44,7 @@
       <property name="title">
        <string>Input</string>
       </property>
-      <widget class="QWidget" name="">
+      <widget class="QWidget" name="layoutWidget">
        <property name="geometry">
         <rect>
          <x>30</x>
@@ -117,7 +117,7 @@
       <property name="title">
        <string>Project along</string>
       </property>
-      <widget class="QWidget" name="">
+      <widget class="QWidget" name="layoutWidget">
        <property name="geometry">
         <rect>
          <x>30</x>
@@ -149,7 +149,7 @@
          </widget>
         </item>
         <item row="2" column="6">
-         <widget class="QComboBox" name="axesPlungeFldNmComboBox"/>
+         <widget class="QComboBox" name="projectAxesPlungeFldNmComboBox"/>
         </item>
         <item row="2" column="0">
          <widget class="QRadioButton" name="projectAxesFromFieldsRadioButton">
@@ -159,10 +159,10 @@
          </widget>
         </item>
         <item row="2" column="1" colspan="3">
-         <widget class="QComboBox" name="axesTrendFldNmComboBox"/>
+         <widget class="QComboBox" name="projectAxesTrendFldNmComboBox"/>
         </item>
         <item row="1" column="6">
-         <widget class="QDoubleSpinBox" name="axisPlungeAngleValDblSpinBox"/>
+         <widget class="QDoubleSpinBox" name="projectAxisPlungeAngDblSpinBox"/>
         </item>
         <item row="1" column="4" colspan="2">
          <widget class="QLabel" name="label_4">
@@ -172,7 +172,7 @@
          </widget>
         </item>
         <item row="1" column="1" colspan="3">
-         <widget class="QDoubleSpinBox" name="axisTrendAngleValDblSpinBox"/>
+         <widget class="QDoubleSpinBox" name="projectAxisTrendAngDblSpinBox"/>
         </item>
        </layout>
       </widget>
@@ -183,7 +183,7 @@
       <property name="title">
        <string>Plot geological attitudes</string>
       </property>
-      <widget class="QWidget" name="">
+      <widget class="QWidget" name="layoutWidget">
        <property name="geometry">
         <rect>
          <x>30</x>

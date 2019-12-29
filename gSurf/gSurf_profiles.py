@@ -1,4 +1,5 @@
 import sys
+import os
 
 from typing import List, Optional
 
@@ -12,7 +13,8 @@ from PyQt5 import QtWidgets, uic
 
 
 from pygsf.spatial.rasters.io import read_raster, read_band, read_raster_band
-from pygsf.spatial.vectorial.io import read_linestring_geometries
+from pygsf.spatial.vectorial.io import try_read_as_geodataframe
+from pygsf.spatial.vectorial.geodataframes import geodataframe_geom_types, containsLines
 from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
@@ -22,8 +24,15 @@ from pygsf.spatial.geology.profiles.plot import plot
 
 from gSurf_ui_classes import ChooseSourceDataDialog
 
-
-DataParameters = namedtuple("DataParameters", 'filePath, data')
+DataPametersFldNms = [
+    "filePath",
+    "data",
+    "type"
+]
+DataParameters = namedtuple(
+    "DataParameters",
+    DataPametersFldNms
+)
 
 multiple_profiles_choices = [
     "central",
@@ -54,16 +63,19 @@ class MainWindow(QtWidgets.QMainWindow):
         uic.loadUi('./widgets/gSurf_0.3.0.ui', self)
 
         self.plugin_name = "gSurf"
+        self.chosen_dem = None
+        self.chosen_profile = None
 
         # File menu
 
         self.actLoadDem.triggered.connect(self.load_dem)
-        self.actLoadLineShapefile.triggered.connect(self.load_line_shapefile)
+        #self.actLoadLineShapefile.triggered.connect(self.load_line_shapefile)
+        self.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
 
         # Profiles menu
 
-        self.actChooseDEMs.triggered.connect(self.choose_dems)
-        self.actChooseLines.triggered.connect(self.define_lines)
+        self.actChooseDEMs.triggered.connect(self.define_used_dem)
+        self.actChooseLines.triggered.connect(self.define_used_profile_dataset)
 
         self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
         self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
@@ -72,12 +84,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # data storage
 
         self.dems = []
-        self.lines = []
+        self.vector_datasets = []
 
         # data choices
 
         self.selected_dems_indices = []
-        self.selected_lines_indices = []
+        self.selected_profiles_indices = []
 
         # window visibility
 
@@ -112,7 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
             inLevels=[data]
         )
 
-        self.dems.append(DataParameters(filePath, ga))
+        self.dems.append(DataParameters(filePath, ga, "DEM"))
 
         QMessageBox.information(
             None,
@@ -120,7 +132,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "DEM read".format(filePath)
         )
 
+    '''
     def load_line_shapefile(self):
+        """
+        Load a line shapefile data.
+
+        :return:
+        """
 
         filePath, _ = QFileDialog.getOpenFileName(
             self,
@@ -150,61 +168,60 @@ class MainWindow(QtWidgets.QMainWindow):
              )
             return
 
-        self.lines.append(DataParameters(filePath, multiline))
+        self.vector_datasets.append(DataParameters(filePath, multiline))
 
         QMessageBox.information(
             None,
             "Line shapefile",
             "Shapefile read ({} lines)".format(len(multiline))
         )
+    '''
 
-    def load_point_shapefile(self):
+    def load_vector_layer(self):
 
         filePath, _ = QFileDialog.getOpenFileName(
             self,
-            self.tr("Open point shapefile (using GDAL)"),
+            self.tr("Open vector layer (using geopandas)"),
             "",
-            "*.shp"
+            "*.*"
         )
+
+        filePath = filePath.strip()
 
         if not filePath:
             return
 
-        try:
-            multiline = read_linestring_geometries(line_shp_path=filePath)
-        except Exception as e:
-            QMessageBox.critical(
-                None,
-                "Line shapefile error",
-                "Exception: {}".format(e)
-             )
-            return
-
-        if not multiline:
-            QMessageBox.warning(
-                None,
-                "Line shapefile warning",
-                "Unable to read line shapefile"
-             )
-            return
-
-        self.lines.append(DataParameters(filePath, multiline))
-
-        QMessageBox.information(
-            None,
-            "Line shapefile",
-            "Shapefile read ({} lines)".format(len(multiline))
+        success, result = try_read_as_geodataframe(
+            path=filePath
         )
 
-    def choose_data(
+        if not success:
+            msg = result
+            QMessageBox.critical(
+                None,
+                "Input",
+                "Exception: {}".format(msg)
+             )
+            return
+        else:
+            geodataframe = result
+            self.vector_datasets.append(DataParameters(filePath, geodataframe, "vector"))
+            # self.vector_datasets.append(DataParameters(filePath, multiline))
+            QMessageBox.information(
+                None,
+                "Input",
+                "Dataset read"
+            )
+
+    def choose_datasets_indices(
         self,
-        data: List[str]
+        datasets_paths: List[str]
     ) -> Optional[List[numbers.Integral]]:
         """
         Choose data to use for profile creation.
 
-        :param data: the list of data sources
-        :type data: List[str]
+        :param datasets_paths: the list of data sources
+        :type datasets_paths: List[str]
         :return: the selected data, as indices of the input list
         :rtype: List[numbers.Integral]
         """
@@ -213,64 +230,63 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dialog = ChooseSourceDataDialog(
             self.plugin_name,
-            data_sources_paths=data)
+            data_sources=map(lambda pth: os.path.basename(pth), datasets_paths)
+        )
 
         if dialog.exec_():
             selected_data_indices = get_selected_layers_indices(dialog.listData_treeWidget)
 
         return selected_data_indices
 
-    def choose_dems(self):
+    def define_used_dem(self):
         """
-        Chooses DEM(s) to use for profile creation.
+        Define DEM to use for profile creation.
 
         :return:
         """
 
-        self.selected_dems_indices = self.choose_data(
-            data=[dem.filePath for dem in self.dems]
+        self.selected_dems_indices = self.choose_datasets_indices(
+            datasets_paths=[dem.filePath for dem in self.dems]
         )
 
         if not self.selected_dems_indices:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
-            return []
+        else:
+            self.chosen_dem = self.dems[self.selected_dems_indices[0]].data
 
-    def define_lines(self):
+    def define_used_profile_dataset(self):
         """
-        Defines lines to use for profile creation.
+        Defines vector dataset for profile creation.
 
         :return:
         """
 
-        self.selected_lines_indices = self.choose_data(
-            data=[line.filePath for line in self.lines]
+        lines_datasets = filter(lambda dataset: containsLines(dataset.data), self.vector_datasets)
+        self.selected_profiles_indices = self.choose_datasets_indices(
+            datasets_paths=[line_dataset.filePath for line_dataset in lines_datasets]
         )
 
-        if not self.selected_lines_indices:
+        if not self.selected_profiles_indices:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
-            return []
+        else:
+            self.chosen_profile = lines_datasets[self.selected_profiles_indices[0]].data
 
     def create_single_profile(self):
 
-        # DEM
-        geoarray = self.dems[self.selected_dems_indices[0]].data
-
-        # profile
-        profiles = self.lines[self.selected_lines_indices[0]].data
-        line = profiles.line()
+        baseline = self.chosen_profile.line()
 
         geoprofile = GeoProfile()
         profiler = LinearProfiler(
-            start_pt=line.start_pt(),
-            end_pt=line.end_pt(),
+            start_pt=baseline.start_pt(),
+            end_pt=baseline.end_pt(),
             densify_distance=5
         )
 
-        topo_profile = profiler.profile_grid(geoarray)
+        topo_profile = profiler.profile_grid(self.chosen_dem)
         geoprofile.topo_profile = topo_profile
 
         self.fig = plot(geoprofile)
@@ -290,17 +306,13 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             return
 
-        # DEM
-        geoarray = self.dems[self.selected_dems_indices[0]].data
-
         # profile
-        profiles = self.lines[self.selected_lines_indices[0]].data
-        line = profiles.line()
+        baseline = self.chosen_profile.line()
 
         geoprofiles = GeoProfileSet()
         base_profiler = LinearProfiler(
-            start_pt=line.start_pt(),
-            end_pt=line.end_pt(),
+            start_pt=baseline.start_pt(),
+            end_pt=baseline.end_pt(),
             densify_distance=densify_distance
         )
 
@@ -311,18 +323,14 @@ class MainWindow(QtWidgets.QMainWindow):
             profs_arr=profiles_arrangement
         )
 
-        topo_profiles = multiple_profilers.profile_grid(geoarray)
+        topo_profiles = multiple_profilers.profile_grid(self.chosen_dem)
 
         geoprofiles.topo_profiles_set = topo_profiles
 
         self.fig = plot(
             geoprofiles,
-            superposed=superposed_profiles)
-
-        """
-        for fig in self.figs:
-            plt.plot(fig)
-        """
+            superposed=superposed_profiles
+        )
 
         self.fig.show()
 
@@ -373,6 +381,7 @@ class ProjectAttitudesDefWindow(QtWidgets.QDialog):
         """
 
         self.setWindowTitle("Project geological attitudes")
+
 
 if __name__ == "__main__":
     

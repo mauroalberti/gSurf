@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>998</width>
-    <height>708</height>
+    <width>335</width>
+    <height>89</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -84,7 +84,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>998</width>
+     <width>335</width>
      <height>22</height>
     </rect>
    </property>
@@ -93,8 +93,7 @@
      <string>Fi&amp;le</string>
     </property>
     <addaction name="actLoadDem"/>
-    <addaction name="actLoadLineShapefile"/>
-    <addaction name="actLoadPointShapefile"/>
+    <addaction name="actLoadVectorLayer"/>
     <addaction name="separator"/>
     <addaction name="actionQuit"/>
    </widget>
@@ -235,9 +234,15 @@
     <string>Single profile</string>
    </property>
   </action>
-  <action name="actLoadPointShapefile">
+  <action name="actLoadVectorLayer">
    <property name="text">
-    <string>Load point shapefile</string>
+    <string>Load vector layer</string>
+   </property>
+   <property name="iconText">
+    <string>Load &amp;vector layer</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+R</string>
    </property>
   </action>
  </widget>

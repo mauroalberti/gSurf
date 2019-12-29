@@ -11,7 +11,7 @@ class ChooseSourceDataDialog(QDialog):
     def __init__(
         self,
         plugin_name: str,
-        data_sources_paths: List[str],
+        data_sources: List[str],
         parent=None
     ):
 
@@ -19,7 +19,7 @@ class ChooseSourceDataDialog(QDialog):
 
         self.plugin_name = plugin_name
 
-        self.data_layers = data_sources_paths
+        self.data_layers = data_sources
 
         self.listData_treeWidget = QTreeWidget()
         self.listData_treeWidget.setColumnCount(2)
