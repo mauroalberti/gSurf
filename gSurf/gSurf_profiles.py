@@ -41,18 +41,11 @@ multiple_profiles_choices = [
 ]
 
 
-def get_selected_layers_indices(
+def get_selected_layer_index(
     treeWidgetDataList: QtWidgets.QTreeWidget
-) -> List[numbers.Integral]:
+) -> numbers.Integral:
 
-    selected_data_indices = []
-
-    for data_ndx in range(treeWidgetDataList.topLevelItemCount()):
-        curr_data_item = treeWidgetDataList.topLevelItem(data_ndx)
-        if curr_data_item.checkState(0) == 2:
-            selected_data_indices.append(data_ndx)
-
-    return selected_data_indices
+    return treeWidgetDataList.selectedIndexes()[0].row()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -88,8 +81,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # data choices
 
-        self.selected_dems_indices = []
-        self.selected_profiles_indices = []
+        self.selected_dem_index = []
+        self.selected_profile_index = []
 
         # window visibility
 
@@ -213,7 +206,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Dataset read"
             )
 
-    def choose_datasets_indices(
+    def choose_dataset_index(
         self,
         datasets_paths: List[str]
     ) -> Optional[List[numbers.Integral]]:
@@ -222,11 +215,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         :param datasets_paths: the list of data sources
         :type datasets_paths: List[str]
-        :return: the selected data, as indices of the input list
-        :rtype: List[numbers.Integral]
+        :return: the selected data, as index of the input list
+        :rtype: numbers.Integral
         """
 
-        selected_data_indices = []
+        #selected_data_index = []
 
         dialog = ChooseSourceDataDialog(
             self.plugin_name,
@@ -234,9 +227,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         if dialog.exec_():
-            selected_data_indices = get_selected_layers_indices(dialog.listData_treeWidget)
+            return get_selected_layer_index(dialog.listData_treeWidget)
+        else:
+            return None
 
-        return selected_data_indices
+        #return selected_data_index
 
     def define_used_dem(self):
         """
@@ -245,16 +240,16 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        self.selected_dems_indices = self.choose_datasets_indices(
+        self.selected_dem_index = self.choose_dataset_index(
             datasets_paths=[dem.filePath for dem in self.dems]
         )
 
-        if not self.selected_dems_indices:
+        if self.selected_dem_index is None:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
         else:
-            self.chosen_dem = self.dems[self.selected_dems_indices[0]].data
+            self.chosen_dem = self.dems[self.selected_dem_index].data
 
     def define_used_profile_dataset(self):
         """
@@ -263,17 +258,17 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        lines_datasets = filter(lambda dataset: containsLines(dataset.data), self.vector_datasets)
-        self.selected_profiles_indices = self.choose_datasets_indices(
+        lines_datasets = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+        self.selected_profile_index = self.choose_dataset_index(
             datasets_paths=[line_dataset.filePath for line_dataset in lines_datasets]
         )
 
-        if not self.selected_profiles_indices:
+        if not self.selected_profile_index:
             warn(self,
                  self.plugin_name,
                  "No chosen data")
         else:
-            self.chosen_profile = lines_datasets[self.selected_profiles_indices[0]].data
+            self.chosen_profile = lines_datasets[self.selected_profile_index].data
 
     def create_single_profile(self):
 
