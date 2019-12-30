@@ -14,7 +14,7 @@ from PyQt5 import QtWidgets, uic
 
 from pygsf.spatial.rasters.io import read_raster, read_band, read_raster_band
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
-from pygsf.spatial.vectorial.geodataframes import geodataframe_geom_types, containsLines
+from pygsf.spatial.vectorial.geodataframes import *
 from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
@@ -43,9 +43,14 @@ multiple_profiles_choices = [
 
 def get_selected_layer_index(
     treeWidgetDataList: QtWidgets.QTreeWidget
-) -> numbers.Integral:
+) -> Optional[numbers.Integral]:
 
-    return treeWidgetDataList.selectedIndexes()[0].row()
+    if not treeWidgetDataList:
+        return None
+    elif not treeWidgetDataList.selectedIndexes():
+        return None
+    else:
+        return treeWidgetDataList.selectedIndexes()[0].row()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -219,8 +224,6 @@ class MainWindow(QtWidgets.QMainWindow):
         :rtype: numbers.Integral
         """
 
-        #selected_data_index = []
-
         dialog = ChooseSourceDataDialog(
             self.plugin_name,
             data_sources=map(lambda pth: os.path.basename(pth), datasets_paths)
@@ -230,8 +233,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return get_selected_layer_index(dialog.listData_treeWidget)
         else:
             return None
-
-        #return selected_data_index
 
     def define_used_dem(self):
         """
@@ -247,7 +248,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.selected_dem_index is None:
             warn(self,
                  self.plugin_name,
-                 "No chosen data")
+                 "No dataset selected")
         else:
             self.chosen_dem = self.dems[self.selected_dem_index].data
 
@@ -266,18 +267,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.selected_profile_index:
             warn(self,
                  self.plugin_name,
-                 "No chosen data")
+                 "No dataset selected")
         else:
             self.chosen_profile = lines_datasets[self.selected_profile_index].data
 
     def create_single_profile(self):
 
-        baseline = self.chosen_profile.line()
+        pts = extract_line_points(
+            geodataframe=self.chosen_profile,
+            ndx=0
+        )
+
+        if len(pts) != 2:
+            warn(self,
+                 self.plugin_name,
+                 "Input must be a line with two points")
+            return
 
         geoprofile = GeoProfile()
         profiler = LinearProfiler(
-            start_pt=baseline.start_pt(),
-            end_pt=baseline.end_pt(),
+            start_pt=pts[0],
+            end_pt=pts[1],
             densify_distance=5
         )
 
@@ -301,13 +311,21 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             return
 
-        # profile
-        baseline = self.chosen_profile.line()
+        pts = extract_line_points(
+            geodataframe=self.chosen_profile,
+            ndx=0
+        )
+
+        if len(pts) != 2:
+            warn(self,
+                 self.plugin_name,
+                 "Input must be a line with two points")
+            return
 
         geoprofiles = GeoProfileSet()
         base_profiler = LinearProfiler(
-            start_pt=baseline.start_pt(),
-            end_pt=baseline.end_pt(),
+            start_pt=pts[0],
+            end_pt=pts[1],
             densify_distance=densify_distance
         )
 

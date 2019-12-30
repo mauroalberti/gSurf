@@ -22,9 +22,9 @@ class ChooseSourceDataDialog(QDialog):
         self.data_layers = data_sources
 
         self.listData_treeWidget = QTreeWidget()
-        self.listData_treeWidget.setColumnCount(2)
-        self.listData_treeWidget.headerItem().setText(0, "Select")
-        self.listData_treeWidget.headerItem().setText(1, "Name")
+        self.listData_treeWidget.setColumnCount(1)
+        #self.listData_treeWidget.headerItem().setText(0, "Select")
+        self.listData_treeWidget.headerItem().setText(0, "Name")
         self.listData_treeWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.listData_treeWidget.setDragEnabled(False)
         self.listData_treeWidget.setDragDropMode(QAbstractItemView.NoDragDrop)
@@ -63,8 +63,8 @@ class ChooseSourceDataDialog(QDialog):
 
         for raster_layer in self.data_layers:
             tree_item = QTreeWidgetItem(self.listData_treeWidget)
-            tree_item.setText(1, raster_layer)
-            tree_item.setFlags(tree_item.flags() | Qt.ItemIsUserCheckable)
-            tree_item.setCheckState(0, 0)
+            tree_item.setText(0, raster_layer)
+            #tree_item.setFlags(tree_item.flags() | Qt.ItemIsUserCheckable)
+            #tree_item.setCheckState(0, 0)
 
 

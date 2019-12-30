@@ -120,13 +120,11 @@
     <addaction name="separator"/>
     <addaction name="menuCreate_topographic_profile_single"/>
     <addaction name="separator"/>
-    <addaction name="actCalcProfileStats"/>
-    <addaction name="separator"/>
     <addaction name="actProjectGeolAttitudes"/>
-    <addaction name="actProjectGeolTraces"/>
-    <addaction name="separator"/>
     <addaction name="actIntersectLineLayer"/>
     <addaction name="actIntersectPolygonLayer"/>
+    <addaction name="separator"/>
+    <addaction name="actCalcProfileStats"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuProfiles"/>
