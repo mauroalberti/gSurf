@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from PyQt5 import QtWidgets, uic
 
 
-from pygsf.spatial.rasters.io import read_raster, read_band, read_raster_band
+from pygsf.spatial.rasters.io import try_read_raster, read_band
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
 from pygsf.spatial.vectorial.geodataframes import *
 from pygsf.spatial.rasters.geoarray import GeoArray
@@ -105,7 +105,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if not filePath:
             return
 
-        dataset, geotransform, num_bands, projection = read_raster(filePath)
+        success, result = try_read_raster(filePath)
+        if not success:
+            msg = result
+            QMessageBox.warning(
+                None,
+                "Raster input",
+                "Error: {}".format(msg)
+             )
+            return
+
+        dataset, geotransform, num_bands, projection = result
+        print("Raster projection: {}".format(projection))
 
         if num_bands != 1:
             QMessageBox.warning(
@@ -264,7 +275,7 @@ class MainWindow(QtWidgets.QMainWindow):
             datasets_paths=[line_dataset.filePath for line_dataset in lines_datasets]
         )
 
-        if not self.selected_profile_index:
+        if self.selected_profile_index is None:
             warn(self,
                  self.plugin_name,
                  "No dataset selected")
