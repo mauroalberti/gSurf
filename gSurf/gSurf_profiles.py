@@ -1,18 +1,17 @@
 import sys
-import os
 
-from typing import List, Optional
+from typing import List
 
 from collections import namedtuple
 
 import numbers
 
-import matplotlib.pyplot as plt
 
+from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets, uic
 
 
-from pygsf.spatial.rasters.io import try_read_raster, read_band
+from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
 from pygsf.spatial.vectorial.geodataframes import *
 from pygsf.spatial.rasters.geoarray import GeoArray
@@ -22,7 +21,6 @@ from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
 from pygsf.spatial.geology.profiles.profilers import LinearProfiler, ParallelProfilers
 from pygsf.spatial.geology.profiles.plot import plot
 
-from gSurf_ui_classes import ChooseSourceDataDialog
 
 DataPametersFldNms = [
     "filePath",
@@ -40,6 +38,11 @@ multiple_profiles_choices = [
     "right"
 ]
 
+attitude_colors = [
+    "red",
+    "blue",
+    "orange"
+]
 
 def get_selected_layer_index(
     treeWidgetDataList: QtWidgets.QTreeWidget
@@ -67,7 +70,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # File menu
 
         self.actLoadDem.triggered.connect(self.load_dem)
-        #self.actLoadLineShapefile.triggered.connect(self.load_line_shapefile)
         self.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
 
         # Profiles menu
@@ -93,6 +95,49 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.show()
 
+    def load_dem(self):
+
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Open DEM file (using rasterio)"),
+            "",
+            "*.*"
+        )
+
+        if not filePath:
+            return
+
+        success, result = try_read_rasterio_band(
+            filePath
+        )
+
+        if not success:
+            msg = result
+            QMessageBox.warning(
+                None,
+                "Raster input",
+                "Error: {}".format(msg)
+             )
+            return
+
+        array, affine_transform, epsg = result
+
+        ga = GeoArray.fromRasterio(
+            array=array,
+            affine_transform=affine_transform,
+            epsg=epsg
+        )
+
+        self.dems.append(DataParameters(filePath, ga, "DEM"))
+
+        QMessageBox.information(
+            None,
+            "DEM loading",
+            "DEM read".format(filePath)
+        )
+
+    '''
+    
     def load_dem(self):
 
         filePath, _ = QFileDialog.getOpenFileName(
@@ -141,7 +186,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "DEM read".format(filePath)
         )
 
-    '''
+
     def load_line_shapefile(self):
         """
         Load a line shapefile data.
@@ -360,7 +405,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def project_attitudes(self):
 
-        dialog = ProjectAttitudesDefWindow()
+        point_layers = list(filter(lambda dataset: containsPoints(dataset.data), self.vector_datasets))
+
+        if not point_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No point layer available")
+            return
+
+        dialog = ProjectAttitudesDefWindow(
+            self.plugin_name,
+            point_layers
+        )
 
         if dialog.exec_():
             print("Hoora")
@@ -373,6 +429,65 @@ class MainWindow(QtWidgets.QMainWindow):
             """
         else:
             return
+
+
+class ChooseSourceDataDialog(QDialog):
+
+    def __init__(
+        self,
+        plugin_name: str,
+        data_sources: List[str],
+        parent=None
+    ):
+
+        super(ChooseSourceDataDialog, self).__init__(parent)
+
+        self.plugin_name = plugin_name
+
+        self.data_layers = data_sources
+
+        self.listData_treeWidget = QTreeWidget()
+        self.listData_treeWidget.setColumnCount(1)
+        self.listData_treeWidget.headerItem().setText(0, "Name")
+        self.listData_treeWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.listData_treeWidget.setDragEnabled(False)
+        self.listData_treeWidget.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.listData_treeWidget.setAlternatingRowColors(True)
+        self.listData_treeWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.listData_treeWidget.setTextElideMode(Qt.ElideLeft)
+
+        self.populate_layers_treewidget()
+
+        self.listData_treeWidget.resizeColumnToContents(0)
+        self.listData_treeWidget.resizeColumnToContents(1)
+
+        okButton = QPushButton("&OK")
+        cancelButton = QPushButton("Cancel")
+
+        buttonLayout = QHBoxLayout()
+        buttonLayout.addStretch()
+        buttonLayout.addWidget(okButton)
+        buttonLayout.addWidget(cancelButton)
+
+        layout = QGridLayout()
+
+        layout.addWidget(self.listData_treeWidget, 0, 0, 1, 3)
+        layout.addLayout(buttonLayout, 1, 0, 1, 3)
+
+        self.setLayout(layout)
+
+        okButton.clicked.connect(self.accept)
+        cancelButton.clicked.connect(self.reject)
+
+        self.setWindowTitle("Define data source")
+
+    def populate_layers_treewidget(self):
+
+        self.listData_treeWidget.clear()
+
+        for raster_layer in self.data_layers:
+            tree_item = QTreeWidgetItem(self.listData_treeWidget)
+            tree_item.setText(0, raster_layer)
 
 
 class MultiProfilesDefWindow(QtWidgets.QDialog):
@@ -392,19 +507,65 @@ class MultiProfilesDefWindow(QtWidgets.QDialog):
 
 class ProjectAttitudesDefWindow(QtWidgets.QDialog):
 
-    def __init__(self):
+    def __init__(self,
+        plugin_name: str,
+        point_layers: List
+    ):
 
         super().__init__()
+
+        self.plugin_name = plugin_name
+
         uic.loadUi('./widgets/project_attitudes.ui', self)
 
-        """
-        self.densifyDistanceDoubleSpinBox.setValue(5.0)
-        self.numberOfProfilesSpinBox.setValue(10)
-        self.profilesOffsetDoubleSpinBox.setValue(500)
-        self.profilesLocationComboBox.addItems(multiple_profiles_choices)
-        """
+        self.point_layers = point_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.point_layers)
+
+        self.inputPtLayerComboBox.insertItems(0, data_sources)
+        self.inputPtLayerComboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.point_layers[0]
+        fields = start_layer.data.columns
+
+        self.idFldNmComboBox.insertItems(0, fields)
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.azimuthDipDirRadioButton.setChecked(True)
+        self.projectNearestIntersectionRadioButton.setChecked(True)
+
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+        self.attitudesColorComboBox.insertItems(0, attitude_colors)
 
         self.setWindowTitle("Project geological attitudes")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.point_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.idFldNmComboBox.clear()
+        self.idFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeAzimAngleFldNmComboBox.clear()
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeDipAngleFldNmcomboBox.clear()
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.projectAxesTrendFldNmComboBox.clear()
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+
+        self.projectAxesPlungeFldNmComboBox.clear()
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
 
 
 if __name__ == "__main__":
