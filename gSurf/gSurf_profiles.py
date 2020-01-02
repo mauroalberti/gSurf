@@ -20,6 +20,7 @@ from pygsf.utils.qt.tools import *
 from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
 from pygsf.spatial.geology.profiles.profilers import LinearProfiler, ParallelProfilers
 from pygsf.spatial.geology.profiles.plot import plot
+from pygsf.spatial.geology.convert import extract_georeferenced_attitudes
 
 
 DataPametersFldNms = [
@@ -329,6 +330,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def create_single_profile(self):
 
+        self.superposed_profiles = False
+
         pts = extract_line_points(
             geodataframe=self.chosen_profile,
             ndx=0
@@ -340,17 +343,17 @@ class MainWindow(QtWidgets.QMainWindow):
                  "Input must be a line with two points")
             return
 
-        geoprofile = GeoProfile()
-        profiler = LinearProfiler(
+        self.geoprofiles = GeoProfile()
+        self.profiler = LinearProfiler(
             start_pt=pts[0],
             end_pt=pts[1],
             densify_distance=5
         )
 
-        topo_profile = profiler.profile_grid(self.chosen_dem)
-        geoprofile.topo_profile = topo_profile
+        topo_profile = self.profiler.profile_grid(self.chosen_dem)
+        self.geoprofiles.topo_profile = topo_profile
 
-        self.fig = plot(geoprofile)
+        self.fig = plot(self.geoprofiles)
 
         self.fig.show()
 
@@ -363,7 +366,7 @@ class MainWindow(QtWidgets.QMainWindow):
             total_profiles_number = dialog.numberOfProfilesSpinBox.value()
             profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
             profiles_arrangement = dialog.profilesLocationComboBox.currentText()
-            superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
+            self.superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
         else:
             return
 
@@ -378,27 +381,27 @@ class MainWindow(QtWidgets.QMainWindow):
                  "Input must be a line with two points")
             return
 
-        geoprofiles = GeoProfileSet()
+        self.geoprofiles = GeoProfileSet()
         base_profiler = LinearProfiler(
             start_pt=pts[0],
             end_pt=pts[1],
             densify_distance=densify_distance
         )
 
-        multiple_profilers = ParallelProfilers.fromProfiler(
+        self.profiler = ParallelProfilers.fromProfiler(
             base_profiler=base_profiler,
             profs_num=total_profiles_number,
             profs_offset=profiles_offset,
             profs_arr=profiles_arrangement
         )
 
-        topo_profiles = multiple_profilers.profile_grid(self.chosen_dem)
+        topo_profiles = self.profiler.profile_grid(self.chosen_dem)
 
-        geoprofiles.topo_profiles_set = topo_profiles
+        self.geoprofiles.topo_profiles_set = topo_profiles
 
         self.fig = plot(
-            geoprofiles,
-            superposed=superposed_profiles
+            self.geoprofiles,
+            superposed=self.superposed_profiles
         )
 
         self.fig.show()
@@ -419,17 +422,78 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         if dialog.exec_():
-            print("Hoora")
-            """
-            densify_distance = dialog.densifyDistanceDoubleSpinBox.value()
-            total_profiles_number = dialog.numberOfProfilesSpinBox.value()
-            profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
-            profiles_arrangement = dialog.profilesLocationComboBox.currentText()
-            superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
-            """
+
+            input_layer_index = dialog.inputPtLayerComboBox.currentIndex()
+
+            azimuth_is_dipdir = dialog.azimuthDipDirRadioButton.isChecked()
+            azimuth_is_strikerhr = dialog.azimuthRHRStrikeRadioButton.isChecked()
+
+            attitude_id_fldnm = dialog.idFldNmComboBox.currentText()
+            attitude_azimuth_angle_fldnm = dialog.attitudeAzimAngleFldNmComboBox.currentText()
+            attitude_dip_angle_fldnm = dialog.attitudeDipAngleFldNmcomboBox.currentText()
+
+            projection_nearest_intersection = dialog.projectNearestIntersectionRadioButton.isChecked()
+            projection_constant_axis = dialog.projectAxisWithTrendRadioButton.isChecked()
+            projection_axes_from_fields = dialog.projectAxesFromFieldsRadioButton.isChecked()
+
+            projection_axis_trend_angle = dialog.projectAxisTrendAngDblSpinBox.value()
+            projection_axis_plunge_angle = dialog.projectAxisPlungeAngDblSpinBox.value()
+
+            projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
+            projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
+
+            labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
+            labels_add_id = dialog.labelsIdCheckBox.isChecked()
+
+            attitudes_color = dialog.attitudesColorComboBox.currentText()
+
         else:
             return
 
+        attitudes = point_layers[input_layer_index].data
+
+        georef_attitudes = extract_georeferenced_attitudes(
+            geodataframe=attitudes,
+            azim_fldnm=attitude_azimuth_angle_fldnm,
+            dip_ang_fldnm=attitude_dip_angle_fldnm,
+            id_fldnm=attitude_id_fldnm,
+            is_rhrstrike=azimuth_is_strikerhr
+        )
+
+        mapping_method = {}
+        if projection_nearest_intersection:
+            mapping_method['method'] = 'nearest'
+        elif projection_constant_axis:
+            mapping_method['method'] = 'common axis'
+            mapping_method['trend'] = projection_axis_trend_angle
+            mapping_method['plunge'] = projection_axis_plunge_angle
+        elif projection_axes_from_fields:
+            mapping_method['method'] = 'individual axes'
+            axes_values = []
+            for att in attitudes:
+                axes_values.append((att.projection_axes_trend_fldnm, att.projection_axes_plunge_fldnm))
+            mapping_method['individual_axes_values'] = axes_values
+        else:
+            raise Exception("Debug_ mapping method not correctly defined")
+
+        att_projs = self.profiler.map_georef_attitudes_to_section(
+                    structural_data=georef_attitudes,
+                    mapping_method=mapping_method,
+                    height_source=self.chosen_dem
+        )
+
+        self.geoprofiles.profile_attitudes = att_projs
+
+        print("Plotting")
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            attitude_color=attitudes_color,
+            labels_add_orientdip=labels_add_orientdip,
+            labels_add_id=labels_add_id
+        )
+
+        self.fig.show()
 
 class ChooseSourceDataDialog(QDialog):
 
