@@ -214,7 +214,7 @@
         <item>
          <widget class="QCheckBox" name="labelsOrDipCheckBox">
           <property name="text">
-           <string>or./dip</string>
+           <string>source or./dip</string>
           </property>
          </widget>
         </item>

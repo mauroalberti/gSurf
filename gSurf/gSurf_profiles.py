@@ -470,21 +470,22 @@ class MainWindow(QtWidgets.QMainWindow):
         elif projection_axes_from_fields:
             mapping_method['method'] = 'individual axes'
             axes_values = []
-            for att in attitudes:
-                axes_values.append((att.projection_axes_trend_fldnm, att.projection_axes_plunge_fldnm))
+            for projection_axes_trend, projection_axes_plunge in zip(attitudes[projection_axes_trend_fldnm], attitudes[projection_axes_plunge_fldnm]):
+                axes_values.append((projection_axes_trend, projection_axes_plunge))
             mapping_method['individual_axes_values'] = axes_values
         else:
             raise Exception("Debug_ mapping method not correctly defined")
 
         att_projs = self.profiler.map_georef_attitudes_to_section(
-                    structural_data=georef_attitudes,
-                    mapping_method=mapping_method,
-                    height_source=self.chosen_dem
+            structural_data=georef_attitudes,
+            mapping_method=mapping_method,
+            height_source=self.chosen_dem
         )
 
         self.geoprofiles.profile_attitudes = att_projs
 
         print("Plotting")
+
         self.fig = plot(
             self.geoprofiles,
             superposed=self.superposed_profiles,
@@ -494,6 +495,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self.fig.show()
+
 
 class ChooseSourceDataDialog(QDialog):
 
