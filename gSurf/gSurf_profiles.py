@@ -6,10 +6,8 @@ from collections import namedtuple
 
 import numbers
 
-
 from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets, uic
-
 
 from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
@@ -44,6 +42,7 @@ attitude_colors = [
     "blue",
     "orange"
 ]
+
 
 def get_selected_layer_index(
     treeWidgetDataList: QtWidgets.QTreeWidget
@@ -81,6 +80,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
         self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
         self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
+        self.actIntersectLineLayer.triggered.connect(self.intersect_lines)
 
         # data storage
 
@@ -136,101 +136,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "DEM loading",
             "DEM read".format(filePath)
         )
-
-    '''
-    
-    def load_dem(self):
-
-        filePath, _ = QFileDialog.getOpenFileName(
-            self,
-            self.tr("Open DEM file (using GDAL)"),
-            "",
-            "*.*"
-        )
-
-        if not filePath:
-            return
-
-        success, result = try_read_raster(filePath)
-        if not success:
-            msg = result
-            QMessageBox.warning(
-                None,
-                "Raster input",
-                "Error: {}".format(msg)
-             )
-            return
-
-        dataset, geotransform, num_bands, projection = result
-        print("Raster projection: {}".format(projection))
-
-        if num_bands != 1:
-            QMessageBox.warning(
-                None,
-                "Raster warning",
-                "Number of bands is {}, not 1 as required".format(num_bands)
-             )
-            return
-
-        band_params, data = read_band(dataset)
-        ga = GeoArray(
-            inGeotransform=geotransform,
-            epsg_cd=-1,
-            inLevels=[data]
-        )
-
-        self.dems.append(DataParameters(filePath, ga, "DEM"))
-
-        QMessageBox.information(
-            None,
-            "DEM loading",
-            "DEM read".format(filePath)
-        )
-
-
-    def load_line_shapefile(self):
-        """
-        Load a line shapefile data.
-
-        :return:
-        """
-
-        filePath, _ = QFileDialog.getOpenFileName(
-            self,
-            self.tr("Open line shapefile (using GDAL)"),
-            "",
-            "*.shp"
-        )
-
-        if not filePath:
-            return
-
-        try:
-            multiline = read_linestring_geometries(line_shp_path=filePath)
-        except Exception as e:
-            QMessageBox.critical(
-                None,
-                "Line shapefile error",
-                "Exception: {}".format(e)
-             )
-            return
-
-        if not multiline:
-            QMessageBox.warning(
-                None,
-                "Line shapefile warning",
-                "Unable to read line shapefile"
-             )
-            return
-
-        self.vector_datasets.append(DataParameters(filePath, multiline))
-
-        QMessageBox.information(
-            None,
-            "Line shapefile",
-            "Shapefile read ({} lines)".format(len(multiline))
-        )
-    '''
 
     def load_vector_layer(self):
 
@@ -496,6 +401,54 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig.show()
 
+    def intersect_lines(self):
+
+        line_layers = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+
+        if not line_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No line layer available")
+            return
+
+        dialog = LinesIntersectionDefWindow(
+            self.plugin_name,
+            line_layers
+        )
+
+        if dialog.exec_():
+
+            input_layer_index = dialog.inputLayercomboBox.currentIndex()
+
+            """
+            azimuth_is_dipdir = dialog.azimuthDipDirRadioButton.isChecked()
+            azimuth_is_strikerhr = dialog.azimuthRHRStrikeRadioButton.isChecked()
+
+            attitude_id_fldnm = dialog.idFldNmComboBox.currentText()
+            attitude_azimuth_angle_fldnm = dialog.attitudeAzimAngleFldNmComboBox.currentText()
+            attitude_dip_angle_fldnm = dialog.attitudeDipAngleFldNmcomboBox.currentText()
+
+            projection_nearest_intersection = dialog.projectNearestIntersectionRadioButton.isChecked()
+            projection_constant_axis = dialog.projectAxisWithTrendRadioButton.isChecked()
+            projection_axes_from_fields = dialog.projectAxesFromFieldsRadioButton.isChecked()
+
+            projection_axis_trend_angle = dialog.projectAxisTrendAngDblSpinBox.value()
+            projection_axis_plunge_angle = dialog.projectAxisPlungeAngDblSpinBox.value()
+
+            projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
+            projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
+
+            labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
+            labels_add_id = dialog.labelsIdCheckBox.isChecked()
+
+            attitudes_color = dialog.attitudesColorComboBox.currentText()
+            """
+
+        else:
+            return
+
+        #attitudes = line_layers[input_layer_index].data
+
 
 class ChooseSourceDataDialog(QDialog):
 
@@ -632,6 +585,46 @@ class ProjectAttitudesDefWindow(QtWidgets.QDialog):
 
         self.projectAxesPlungeFldNmComboBox.clear()
         self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+
+class LinesIntersectionDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+        plugin_name: str,
+        line_layers: List
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/line_intersections.ui', self)
+
+        self.line_layers = line_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.line_layers)
+
+        self.inputLayercomboBox.insertItems(0, data_sources)
+        self.inputLayercomboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.point_layers[0]
+        fields = start_layer.data.columns
+
+        self.idFldNmComboBox.insertItems(0, fields)
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.azimuthDipDirRadioButton.setChecked(True)
+        self.projectNearestIntersectionRadioButton.setChecked(True)
+
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+        self.attitudesColorComboBox.insertItems(0, attitude_colors)
+
+
+
+        self.setWindowTitle("Line intersections")
 
 
 if __name__ == "__main__":
