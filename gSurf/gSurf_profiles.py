@@ -43,6 +43,20 @@ attitude_colors = [
     "orange"
 ]
 
+color_palettes = [
+    "Pastel1",
+    "Pastel2",
+    "Paired",
+    "Accent",
+    "Dark2",
+    "Set1",
+    "Set2",
+    "Set3",
+    "tab10",
+    "tab20",
+    "tab20b",
+    "tab20c"
+]
 
 def get_selected_layer_index(
     treeWidgetDataList: QtWidgets.QTreeWidget
@@ -420,34 +434,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             input_layer_index = dialog.inputLayercomboBox.currentIndex()
 
-            """
-            azimuth_is_dipdir = dialog.azimuthDipDirRadioButton.isChecked()
-            azimuth_is_strikerhr = dialog.azimuthRHRStrikeRadioButton.isChecked()
-
-            attitude_id_fldnm = dialog.idFldNmComboBox.currentText()
-            attitude_azimuth_angle_fldnm = dialog.attitudeAzimAngleFldNmComboBox.currentText()
-            attitude_dip_angle_fldnm = dialog.attitudeDipAngleFldNmcomboBox.currentText()
-
-            projection_nearest_intersection = dialog.projectNearestIntersectionRadioButton.isChecked()
-            projection_constant_axis = dialog.projectAxisWithTrendRadioButton.isChecked()
-            projection_axes_from_fields = dialog.projectAxesFromFieldsRadioButton.isChecked()
-
-            projection_axis_trend_angle = dialog.projectAxisTrendAngDblSpinBox.value()
-            projection_axis_plunge_angle = dialog.projectAxisPlungeAngDblSpinBox.value()
-
-            projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
-            projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
-
-            labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
-            labels_add_id = dialog.labelsIdCheckBox.isChecked()
-
-            attitudes_color = dialog.attitudesColorComboBox.currentText()
-            """
+            category_fldnm = dialog.categoryFieldcomboBox.currentText()
+            color_palette_nm = dialog.colorPalettecomboBox.currentText()
+            label_fldnm = dialog.labelFieldcomboBox.currentText()
 
         else:
             return
 
-        #attitudes = line_layers[input_layer_index].data
+        lines = line_layers[input_layer_index].data
 
 
 class ChooseSourceDataDialog(QDialog):
@@ -607,24 +601,31 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
         self.inputLayercomboBox.insertItems(0, data_sources)
         self.inputLayercomboBox.currentIndexChanged.connect(self.layer_index_changed)
 
-        start_layer = self.point_layers[0]
+        start_layer = self.line_layers[0]
         fields = start_layer.data.columns
 
-        self.idFldNmComboBox.insertItems(0, fields)
-        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
-        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+        self.categoryFieldcomboBox.insertItems(0, fields)
+        self.labelFieldcomboBox.insertItems(0, fields)
 
-        self.azimuthDipDirRadioButton.setChecked(True)
-        self.projectNearestIntersectionRadioButton.setChecked(True)
-
-        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
-        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
-
-        self.attitudesColorComboBox.insertItems(0, attitude_colors)
-
-
+        self.colorPalettecomboBox.insertItems(0, color_palettes)
 
         self.setWindowTitle("Line intersections")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.line_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.categoryFieldcomboBox.clear()
+        self.categoryFieldcomboBox.insertItems(0, fields)
+
+        self.labelFieldcomboBox.clear()
+        self.labelFieldcomboBox.insertItems(0, fields)
 
 
 if __name__ == "__main__":
