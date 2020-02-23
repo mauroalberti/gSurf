@@ -58,16 +58,17 @@ color_palettes = [
     "tab20c"
 ]
 
+
 def get_selected_layer_index(
-    treeWidgetDataList: QtWidgets.QTreeWidget
+    treewidget_data_list: QtWidgets.QTreeWidget
 ) -> Optional[numbers.Integral]:
 
-    if not treeWidgetDataList:
+    if not treewidget_data_list:
         return None
-    elif not treeWidgetDataList.selectedIndexes():
+    elif not treewidget_data_list.selectedIndexes():
         return None
     else:
-        return treeWidgetDataList.selectedIndexes()[0].row()
+        return treewidget_data_list.selectedIndexes()[0].row()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -75,7 +76,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
 
         super().__init__()
-        uic.loadUi('./widgets/gSurf_0.3.0.ui', self)
+        uic.loadUi(
+            './widgets/gSurf_0.3.0.ui',
+            self
+        )
 
         self.plugin_name = "gSurf"
         self.chosen_dem = None
@@ -137,6 +141,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         array, affine_transform, epsg = result
 
+        if epsg == -1:
+
+            dialog = EPSGCodeDefineWindow(
+                self.plugin_name
+            )
+
+            if dialog.exec_():
+
+                epsg = dialog.EPSGCodeSpinBox.value()
+
+            else:
+
+                QMessageBox.warning(
+                    None,
+                    "Raster input",
+                    "No EPSG code defined"
+                )
+                return
+
         ga = GeoArray.fromRasterio(
             array=array,
             affine_transform=affine_transform,
@@ -190,19 +213,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def choose_dataset_index(
         self,
         datasets_paths: List[str]
-    ) -> Optional[List[numbers.Integral]]:
+    ) -> Optional[numbers.Integral]:
         """
         Choose data to use for profile creation.
 
         :param datasets_paths: the list of data sources
         :type datasets_paths: List[str]
         :return: the selected data, as index of the input list
-        :rtype: numbers.Integral
+        :rtype: Optional[numbers.Integral]
         """
 
         dialog = ChooseSourceDataDialog(
             self.plugin_name,
-            data_sources=map(lambda pth: os.path.basename(pth), datasets_paths)
+            data_sources=list(map(lambda pth: os.path.basename(pth), datasets_paths))
         )
 
         if dialog.exec_():
@@ -323,7 +346,14 @@ class MainWindow(QtWidgets.QMainWindow):
             superposed=self.superposed_profiles
         )
 
-        self.fig.show()
+        if self.fig:
+            self.fig.show()
+        else:
+            warn(
+                self,
+                "Figure",
+                "Figure not created"
+            )
 
     def project_attitudes(self):
 
@@ -361,12 +391,15 @@ class MainWindow(QtWidgets.QMainWindow):
             projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
             projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
 
+            projection_max_distance_from_profile = dialog.maxDistFromProfDoubleSpinBox.value()
+
             labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
             labels_add_id = dialog.labelsIdCheckBox.isChecked()
 
             attitudes_color = dialog.attitudesColorComboBox.currentText()
 
         else:
+
             return
 
         attitudes = point_layers[input_layer_index].data
@@ -398,7 +431,8 @@ class MainWindow(QtWidgets.QMainWindow):
         att_projs = self.profiler.map_georef_attitudes_to_section(
             structural_data=georef_attitudes,
             mapping_method=mapping_method,
-            height_source=self.chosen_dem
+            height_source=self.chosen_dem,
+            max_profile_distance=projection_max_distance_from_profile
         )
 
         self.geoprofiles.profile_attitudes = att_projs
@@ -443,6 +477,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         lines = line_layers[input_layer_index].data
 
+        print("Lines are {}".format(type(lines)))
+        print("{}".format(lines))
 
 class ChooseSourceDataDialog(QDialog):
 
@@ -511,7 +547,7 @@ class MultiProfilesDefWindow(QtWidgets.QDialog):
         uic.loadUi('./widgets/multiple_profiles.ui', self)
 
         self.densifyDistanceDoubleSpinBox.setValue(5.0)
-        self.numberOfProfilesSpinBox.setValue(10)
+        self.numberOfProfilesSpinBox.setValue(5)
         self.profilesOffsetDoubleSpinBox.setValue(500)
         self.profilesLocationComboBox.addItems(multiple_profiles_choices)
 
@@ -626,6 +662,19 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
 
         self.labelFieldcomboBox.clear()
         self.labelFieldcomboBox.insertItems(0, fields)
+
+
+class EPSGCodeDefineWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+        plugin_name: str
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/define_epsg_code.ui', self)
 
 
 if __name__ == "__main__":

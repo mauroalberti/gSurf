@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>582</width>
-    <height>588</height>
+    <height>571</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -17,7 +17,7 @@
    <property name="geometry">
     <rect>
      <x>180</x>
-     <y>520</y>
+     <y>500</y>
      <width>341</width>
      <height>32</height>
     </rect>
@@ -28,218 +28,6 @@
    <property name="standardButtons">
     <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
    </property>
-  </widget>
-  <widget class="QWidget" name="layoutWidget">
-   <property name="geometry">
-    <rect>
-     <x>20</x>
-     <y>20</y>
-     <width>541</width>
-     <height>491</height>
-    </rect>
-   </property>
-   <layout class="QVBoxLayout" name="verticalLayout">
-    <item>
-     <widget class="QGroupBox" name="groupBox">
-      <property name="title">
-       <string>Input</string>
-      </property>
-      <widget class="QWidget" name="layoutWidget">
-       <property name="geometry">
-        <rect>
-         <x>30</x>
-         <y>40</y>
-         <width>491</width>
-         <height>81</height>
-        </rect>
-       </property>
-       <layout class="QGridLayout" name="gridLayout">
-        <item row="0" column="0">
-         <widget class="QLabel" name="label">
-          <property name="text">
-           <string>Layer</string>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="1" colspan="4">
-         <widget class="QComboBox" name="inputPtLayerComboBox"/>
-        </item>
-        <item row="1" column="1">
-         <widget class="QLabel" name="label_8">
-          <property name="text">
-           <string>Id</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="2">
-         <widget class="QRadioButton" name="azimuthDipDirRadioButton">
-          <property name="text">
-           <string>Dip. dir.</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="3">
-         <widget class="QRadioButton" name="azimuthRHRStrikeRadioButton">
-          <property name="text">
-           <string>RHR str.</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="4">
-         <widget class="QLabel" name="label_3">
-          <property name="text">
-           <string>Dip angle</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="0">
-         <widget class="QLabel" name="label_2">
-          <property name="text">
-           <string>Fields</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="1">
-         <widget class="QComboBox" name="idFldNmComboBox"/>
-        </item>
-        <item row="2" column="2" colspan="2">
-         <widget class="QComboBox" name="attitudeAzimAngleFldNmComboBox"/>
-        </item>
-        <item row="2" column="4">
-         <widget class="QComboBox" name="attitudeDipAngleFldNmcomboBox"/>
-        </item>
-       </layout>
-      </widget>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="groupBox_2">
-      <property name="title">
-       <string>Project along</string>
-      </property>
-      <widget class="QWidget" name="layoutWidget">
-       <property name="geometry">
-        <rect>
-         <x>30</x>
-         <y>40</y>
-         <width>492</width>
-         <height>83</height>
-        </rect>
-       </property>
-       <layout class="QGridLayout" name="gridLayout_2">
-        <item row="0" column="0" colspan="2">
-         <widget class="QRadioButton" name="projectNearestIntersectionRadioButton">
-          <property name="text">
-           <string>nearest intersection</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="0">
-         <widget class="QRadioButton" name="projectAxisWithTrendRadioButton">
-          <property name="text">
-           <string>constant axis:         trend            </string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="4" colspan="2">
-         <widget class="QLabel" name="label_5">
-          <property name="text">
-           <string>  plunge</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="6">
-         <widget class="QComboBox" name="projectAxesPlungeFldNmComboBox"/>
-        </item>
-        <item row="2" column="0">
-         <widget class="QRadioButton" name="projectAxesFromFieldsRadioButton">
-          <property name="text">
-           <string>axes from fields:   trend</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="1" colspan="3">
-         <widget class="QComboBox" name="projectAxesTrendFldNmComboBox"/>
-        </item>
-        <item row="1" column="6">
-         <widget class="QDoubleSpinBox" name="projectAxisPlungeAngDblSpinBox">
-          <property name="minimum">
-           <double>-90.000000000000000</double>
-          </property>
-          <property name="maximum">
-           <double>90.000000000000000</double>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="4" colspan="2">
-         <widget class="QLabel" name="label_4">
-          <property name="text">
-           <string>  plunge</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="1" colspan="3">
-         <widget class="QDoubleSpinBox" name="projectAxisTrendAngDblSpinBox">
-          <property name="maximum">
-           <double>360.000000000000000</double>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </widget>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="groupBox_3">
-      <property name="title">
-       <string>Plot geological attitudes</string>
-      </property>
-      <widget class="QWidget" name="layoutWidget">
-       <property name="geometry">
-        <rect>
-         <x>30</x>
-         <y>40</y>
-         <width>491</width>
-         <height>26</height>
-        </rect>
-       </property>
-       <layout class="QHBoxLayout" name="horizontalLayout">
-        <item>
-         <widget class="QLabel" name="label_6">
-          <property name="text">
-           <string>Labels</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QCheckBox" name="labelsOrDipCheckBox">
-          <property name="text">
-           <string>source or./dip</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QCheckBox" name="labelsIdCheckBox">
-          <property name="text">
-           <string>id</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="attitudeColorlabel_7">
-          <property name="text">
-           <string>Color</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QComboBox" name="attitudesColorComboBox"/>
-        </item>
-       </layout>
-      </widget>
-     </widget>
-    </item>
-   </layout>
   </widget>
   <widget class="QSplitter" name="splitter">
    <property name="geometry">
@@ -253,6 +41,244 @@
    <property name="orientation">
     <enum>Qt::Horizontal</enum>
    </property>
+  </widget>
+  <widget class="QGroupBox" name="groupBox_3">
+   <property name="geometry">
+    <rect>
+     <x>21</x>
+     <y>380</y>
+     <width>539</width>
+     <height>81</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>Plot geological attitudes</string>
+   </property>
+   <widget class="QWidget" name="layoutWidget">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>40</y>
+      <width>491</width>
+      <height>26</height>
+     </rect>
+    </property>
+    <layout class="QHBoxLayout" name="horizontalLayout">
+     <item>
+      <widget class="QLabel" name="label_6">
+       <property name="text">
+        <string>Labels</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="labelsOrDipCheckBox">
+       <property name="text">
+        <string>source or./dip</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="labelsIdCheckBox">
+       <property name="text">
+        <string>id</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="attitudeColorlabel_7">
+       <property name="text">
+        <string>Color</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="attitudesColorComboBox"/>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QGroupBox" name="groupBox">
+   <property name="geometry">
+    <rect>
+     <x>21</x>
+     <y>21</y>
+     <width>539</width>
+     <height>183</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>Input</string>
+   </property>
+   <widget class="QWidget" name="layoutWidget">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>40</y>
+      <width>491</width>
+      <height>112</height>
+     </rect>
+    </property>
+    <layout class="QGridLayout" name="gridLayout">
+     <item row="2" column="1">
+      <widget class="QComboBox" name="idFldNmComboBox"/>
+     </item>
+     <item row="1" column="4">
+      <widget class="QLabel" name="label_3">
+       <property name="text">
+        <string>Dip angle</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="label_2">
+       <property name="text">
+        <string>Fields</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="4">
+      <widget class="QComboBox" name="attitudeDipAngleFldNmcomboBox"/>
+     </item>
+     <item row="1" column="2">
+      <widget class="QRadioButton" name="azimuthDipDirRadioButton">
+       <property name="text">
+        <string>Dip. dir.</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="0">
+      <widget class="QLabel" name="label">
+       <property name="text">
+        <string>Layer</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="2" colspan="2">
+      <widget class="QComboBox" name="attitudeAzimAngleFldNmComboBox"/>
+     </item>
+     <item row="0" column="1" colspan="4">
+      <widget class="QComboBox" name="inputPtLayerComboBox"/>
+     </item>
+     <item row="1" column="3">
+      <widget class="QRadioButton" name="azimuthRHRStrikeRadioButton">
+       <property name="text">
+        <string>RHR str.</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLabel" name="label_8">
+       <property name="text">
+        <string>Id</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QGroupBox" name="groupBox_2">
+   <property name="geometry">
+    <rect>
+     <x>21</x>
+     <y>200</y>
+     <width>539</width>
+     <height>183</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>Project along</string>
+   </property>
+   <widget class="QWidget" name="layoutWidget">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>40</y>
+      <width>492</width>
+      <height>114</height>
+     </rect>
+    </property>
+    <layout class="QGridLayout" name="gridLayout_2">
+     <item row="2" column="4" colspan="2">
+      <widget class="QLabel" name="label_5">
+       <property name="text">
+        <string>  plunge</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1" colspan="3">
+      <widget class="QDoubleSpinBox" name="projectAxisTrendAngDblSpinBox">
+       <property name="maximum">
+        <double>360.000000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QRadioButton" name="projectAxisWithTrendRadioButton">
+       <property name="text">
+        <string>constant axis:         trend            </string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="4" colspan="2">
+      <widget class="QLabel" name="label_4">
+       <property name="text">
+        <string>  plunge</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="0" colspan="2">
+      <widget class="QRadioButton" name="projectNearestIntersectionRadioButton">
+       <property name="text">
+        <string>nearest intersection</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1" colspan="3">
+      <widget class="QComboBox" name="projectAxesTrendFldNmComboBox"/>
+     </item>
+     <item row="2" column="6">
+      <widget class="QComboBox" name="projectAxesPlungeFldNmComboBox"/>
+     </item>
+     <item row="1" column="6">
+      <widget class="QDoubleSpinBox" name="projectAxisPlungeAngDblSpinBox">
+       <property name="minimum">
+        <double>-90.000000000000000</double>
+       </property>
+       <property name="maximum">
+        <double>90.000000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QRadioButton" name="projectAxesFromFieldsRadioButton">
+       <property name="text">
+        <string>axes from fields:   trend</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="label_7">
+       <property name="text">
+        <string>Max distance from profile</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1" colspan="3">
+      <widget class="QDoubleSpinBox" name="maxDistFromProfDoubleSpinBox">
+       <property name="decimals">
+        <number>1</number>
+       </property>
+       <property name="maximum">
+        <double>999999.000000000000000</double>
+       </property>
+       <property name="value">
+        <double>500.000000000000000</double>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
   </widget>
  </widget>
  <resources/>
