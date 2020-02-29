@@ -297,7 +297,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig = plot(self.geoprofiles)
 
-        self.fig.show()
+        if self.fig:
+            self.fig.show()
+        else:
+            warn(self,
+                 self.plugin_name,
+                 "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
+                 )
+            return
 
     def create_multi_parallel_profiles(self):
 
@@ -351,8 +358,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             warn(
                 self,
-                "Figure",
-                "Figure not created"
+                self.plugin_name,
+                "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
             )
 
     def project_attitudes(self):

@@ -95,7 +95,6 @@
     <addaction name="actLoadDem"/>
     <addaction name="actLoadVectorLayer"/>
     <addaction name="separator"/>
-    <addaction name="actionQuit"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
