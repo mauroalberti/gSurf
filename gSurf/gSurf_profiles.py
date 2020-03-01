@@ -16,9 +16,9 @@ from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
 from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
-from pygsf.spatial.geology.profiles.profilers import LinearProfiler, ParallelProfilers
+from pygsf.spatial.geology.profiles.profilers import *
 from pygsf.spatial.geology.profiles.plot import plot
-from pygsf.spatial.geology.convert import extract_georeferenced_attitudes
+from pygsf.spatial.geology.convert import try_extract_georeferenced_attitudes
 
 
 DataPametersFldNms = [
@@ -84,6 +84,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plugin_name = "gSurf"
         self.chosen_dem = None
         self.chosen_profile = None
+        self.fig = None
 
         # File menu
 
@@ -411,13 +412,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         attitudes = point_layers[input_layer_index].data
 
-        georef_attitudes = extract_georeferenced_attitudes(
+        success, result = try_extract_georeferenced_attitudes(
             geodataframe=attitudes,
             azim_fldnm=attitude_azimuth_angle_fldnm,
             dip_ang_fldnm=attitude_dip_angle_fldnm,
             id_fldnm=attitude_id_fldnm,
             is_rhrstrike=azimuth_is_strikerhr
         )
+
+        if not success:
+            msg = result
+            warn(
+                self,
+                self.plugin_name,
+                "Error with georeferenced attitudes extraction: {}".format(msg)
+            )
+            return
+
+        georef_attitudes = result
 
         mapping_method = {}
         if projection_nearest_intersection:
@@ -435,10 +447,14 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             raise Exception("Debug_ mapping method not correctly defined")
 
-        att_projs = self.profiler.map_georef_attitudes_to_section(
+        attitudes_3d = georef_attitudes_3d_from_grid(
             structural_data=georef_attitudes,
-            mapping_method=mapping_method,
             height_source=self.chosen_dem,
+        )
+
+        att_projs = self.profiler.map_georef_attitudes_to_section(
+            attitudes_3d=attitudes_3d,
+            mapping_method=mapping_method,
             max_profile_distance=projection_max_distance_from_profile
         )
 
@@ -454,7 +470,17 @@ class MainWindow(QtWidgets.QMainWindow):
             labels_add_id=labels_add_id
         )
 
-        self.fig.show()
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
 
     def intersect_lines(self):
 
