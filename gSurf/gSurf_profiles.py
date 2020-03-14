@@ -5,6 +5,8 @@ from typing import List
 from collections import namedtuple
 
 import numbers
+import pyproj
+
 
 from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets, uic
@@ -338,7 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
             densify_distance=densify_distance
         )
 
-        self.profiler = ParallelProfilers.fromProfiler(
+        self.profiler = ParallelProfiler.fromBaseProfiler(
             base_profiler=base_profiler,
             profs_num=total_profiles_number,
             profs_offset=profiles_offset,
@@ -500,18 +502,50 @@ class MainWindow(QtWidgets.QMainWindow):
         if dialog.exec_():
 
             input_layer_index = dialog.inputLayercomboBox.currentIndex()
-
-            category_fldnm = dialog.categoryFieldcomboBox.currentText()
-            color_palette_nm = dialog.colorPalettecomboBox.currentText()
             label_fldnm = dialog.labelFieldcomboBox.currentText()
+            color_palette_nm = dialog.colorPalettecomboBox.currentText()
 
         else:
+
             return
 
         lines = line_layers[input_layer_index].data
 
-        print("Lines are {}".format(type(lines)))
-        print("{}".format(lines))
+        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg())
+        if not lines.crs == pyproj.Proj(profiler_pyproj_epsg):
+            lines = lines.to_crs(profiler_pyproj_epsg)
+
+        imported_lines = []
+        for index, row in lines.iterrows():
+
+            line_label = row[label_fldnm]
+
+            imported_line = line_from_shapely(
+                src_line=row['geometry'],
+                epsg_code=self.profiler.epsg()
+            )
+
+            imported_lines.append((line_label, imported_line))
+
+        profiles_intersections = []
+
+        if isinstance(self.profiler, LinearProfiler):
+            intersections = []
+            for line_label, line in imported_lines:
+                print("Line label: {} - lenght: {}".format(line_label, line.length_2d()))
+                intersections.append((line_label, self.profiler.intersect_line(line)))
+            profiles_intersections.append(intersections)
+        elif isinstance(self.profiler, ParallelProfiler):
+            for profile in self.profiler:
+                intersections = []
+                for line_label, line in imported_lines:
+                    intersections.append((line_label, profile.intersect_line(line)))
+                profiles_intersections.append(intersections)
+        else:
+            raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
+
+        print(profiles_intersections)
+
 
 class ChooseSourceDataDialog(QDialog):
 
@@ -673,7 +707,6 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
         start_layer = self.line_layers[0]
         fields = start_layer.data.columns
 
-        self.categoryFieldcomboBox.insertItems(0, fields)
         self.labelFieldcomboBox.insertItems(0, fields)
 
         self.colorPalettecomboBox.insertItems(0, color_palettes)
@@ -689,9 +722,6 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
 
         current_lyr = self.line_layers[ndx]
         fields = current_lyr.data.columns
-
-        self.categoryFieldcomboBox.clear()
-        self.categoryFieldcomboBox.insertItems(0, fields)
 
         self.labelFieldcomboBox.clear()
         self.labelFieldcomboBox.insertItems(0, fields)
