@@ -4,7 +4,6 @@ from typing import List
 
 from collections import namedtuple
 
-import numbers
 import pyproj
 
 
@@ -14,7 +13,6 @@ from PyQt5 import QtWidgets, uic
 from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
 from pygsf.spatial.vectorial.geodataframes import *
-from pygsf.spatial.rasters.geoarray import GeoArray
 from pygsf.utils.qt.tools import *
 
 from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
@@ -527,24 +525,68 @@ class MainWindow(QtWidgets.QMainWindow):
 
             imported_lines.append((line_label, imported_line))
 
-        profiles_intersections = []
-
         if isinstance(self.profiler, LinearProfiler):
-            intersections = []
+
+            lines_intersections = []
+
             for line_label, line in imported_lines:
-                print("Line label: {} - lenght: {}".format(line_label, line.length_2d()))
-                intersections.append((line_label, self.profiler.intersect_line(line)))
-            profiles_intersections.append(intersections)
+
+                line_intersections = PointSegmentCollection(
+                        line_id=line_label,
+                        geoms=self.profiler.intersect_line(line)
+                )
+
+                lines_intersections.append(line_intersections)
+
+            profile_intersections = PointSegmentCollections(lines_intersections)
+
+            self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
+
         elif isinstance(self.profiler, ParallelProfiler):
+
+            profiles_intersections = []
+
             for profile in self.profiler:
-                intersections = []
+
+                lines_intersections = []
+
                 for line_label, line in imported_lines:
-                    intersections.append((line_label, profile.intersect_line(line)))
-                profiles_intersections.append(intersections)
+
+                    line_intersections = PointSegmentCollection(
+                        line_id=line_label,
+                        geoms=profile.intersect_line(line)
+                    )
+
+                    lines_intersections.append(line_intersections)
+
+                profile_intersections = PointSegmentCollections(lines_intersections)
+                profiles_intersections.append(profile_intersections)
+
+            profiles_intersections_set = LinesIntersectionsSet(profiles_intersections)
+            self.geoprofiles.lines_intersections_set = profiles_intersections_set
+
         else:
+
             raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
 
-        print(profiles_intersections)
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
 
 
 class ChooseSourceDataDialog(QDialog):
