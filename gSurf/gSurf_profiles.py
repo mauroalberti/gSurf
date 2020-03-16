@@ -509,7 +509,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         lines = line_layers[input_layer_index].data
 
-        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg())
+        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
         if not lines.crs == pyproj.Proj(profiler_pyproj_epsg):
             lines = lines.to_crs(profiler_pyproj_epsg)
 
@@ -520,7 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             imported_line = line_from_shapely(
                 src_line=row['geometry'],
-                epsg_code=self.profiler.epsg()
+                epsg_code=self.profiler.epsg_code()
             )
 
             imported_lines.append((line_label, imported_line))
