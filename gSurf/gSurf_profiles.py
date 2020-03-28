@@ -100,6 +100,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
         self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
         self.actIntersectLineLayer.triggered.connect(self.intersect_lines)
+        self.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
 
         # data storage
 
@@ -519,7 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
             line_label = row[label_fldnm]
 
             imported_line = line_from_shapely(
-                src_line=row['geometry'],
+                shapely_linestring=row['geometry'],
                 epsg_code=self.profiler.epsg_code()
             )
 
@@ -589,6 +590,119 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Unable to create figure"
             )
 
+    def intersect_polygons(self):
+
+        polygon_layers = list(filter(lambda dataset: containsPolygons(dataset.data), self.vector_datasets))
+
+        if not polygon_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No polygon layer available")
+            return
+
+        dialog = PolygonsIntersectionDefWindow(
+            self.plugin_name,
+            polygon_layers
+        )
+
+        if dialog.exec_():
+
+            input_layer_index = dialog.polygonLayercomboBox.currentIndex()
+            classification_fldnm = dialog.classificationFieldcomboBox.currentText()
+            add_labels = dialog.addLabelcheckBox.isChecked()
+
+        else:
+
+            return
+
+        polygons = polygon_layers[input_layer_index].data
+
+        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
+        if not polygons.crs == pyproj.Proj(profiler_pyproj_epsg):
+            polygons = polygons.to_crs(profiler_pyproj_epsg)
+
+        imported_profiles = []
+
+        for index, row in polygons.iterrows():
+
+            polygon_label = row[classification_fldnm]
+
+            print(polygon_label, type(row["geometry"]))
+
+            """
+            imported_line = line_from_shapely(
+                src_line=row['geometry'],
+                epsg_code=self.profiler.epsg_code()
+            )
+
+            imported_profiles.append((polygon_label, imported_line))
+            """
+
+        """
+        if isinstance(self.profiler, LinearProfiler):
+
+            lines_intersections = []
+
+            for polygon_label, line in imported_profiles:
+
+                line_intersections = PointSegmentCollection(
+                        line_id=polygon_label,
+                        geoms=self.profiler.intersect_line(line)
+                )
+
+                lines_intersections.append(line_intersections)
+
+            profile_intersections = PointSegmentCollections(lines_intersections)
+
+            self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
+
+        elif isinstance(self.profiler, ParallelProfiler):
+
+            profiles_intersections = []
+
+            for profile in self.profiler:
+
+                lines_intersections = []
+
+                for polygon_label, line in imported_profiles:
+
+                    line_intersections = PointSegmentCollection(
+                        line_id=polygon_label,
+                        geoms=profile.intersect_line(line)
+                    )
+
+                    lines_intersections.append(line_intersections)
+
+                profile_intersections = PointSegmentCollections(lines_intersections)
+                profiles_intersections.append(profile_intersections)
+
+            profiles_intersections_set = LinesIntersectionsSet(profiles_intersections)
+            self.geoprofiles.lines_intersections_set = profiles_intersections_set
+
+        else:
+
+            raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
+
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            inters_label=add_labels
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
+        """
 
 class ChooseSourceDataDialog(QDialog):
 
@@ -766,6 +880,47 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
 
         self.labelFieldcomboBox.clear()
         self.labelFieldcomboBox.insertItems(0, fields)
+
+
+class PolygonsIntersectionDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+                 plugin_name: str,
+                 polygon_layers: List
+                 ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/polygons_intersections.ui', self)
+
+        self.polygon_layers = polygon_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.polygon_layers)
+
+        self.polygonLayercomboBox.insertItems(0, data_sources)
+        self.polygonLayercomboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.polygon_layers[0]
+        fields = start_layer.data.columns
+
+        self.classificationFieldcomboBox.insertItems(0, fields)
+
+        self.setWindowTitle("Polygon intersections")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.polygon_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.classificationFieldcomboBox.clear()
+        self.classificationFieldcomboBox.insertItems(0, fields)
 
 
 class EPSGCodeDefineWindow(QtWidgets.QDialog):
