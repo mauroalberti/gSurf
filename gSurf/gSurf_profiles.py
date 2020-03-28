@@ -501,7 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             input_layer_index = dialog.inputLayercomboBox.currentIndex()
             label_fldnm = dialog.labelFieldcomboBox.currentText()
-            color_palette_nm = dialog.colorPalettecomboBox.currentText()
+            add_labels = dialog.addLabelcheckBox.isChecked()
 
         else:
 
@@ -574,6 +574,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fig = plot(
             self.geoprofiles,
             superposed=self.superposed_profiles,
+            inters_label=add_labels
         )
 
         if self.fig:
@@ -750,8 +751,6 @@ class LinesIntersectionDefWindow(QtWidgets.QDialog):
         fields = start_layer.data.columns
 
         self.labelFieldcomboBox.insertItems(0, fields)
-
-        self.colorPalettecomboBox.insertItems(0, color_palettes)
 
         self.setWindowTitle("Line intersections")
 
