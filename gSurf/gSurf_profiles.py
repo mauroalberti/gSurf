@@ -83,6 +83,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plugin_name = "gSurf"
         self.chosen_dem = None
+        self.working_epsg_code = None
         self.chosen_profile = None
         self.fig = None
 
@@ -252,6 +253,8 @@ class MainWindow(QtWidgets.QMainWindow):
                  "No dataset selected")
         else:
             self.chosen_dem = self.dems[self.selected_dem_index].data
+            print(f"DEM EPSG code: {self.chosen_dem.epsg_code()}")
+            self.working_epsg_code = self.chosen_dem.epsg_code()
 
     def define_used_profile_dataset(self):
         """
@@ -608,7 +611,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if dialog.exec_():
 
             input_layer_index = dialog.polygonLayercomboBox.currentIndex()
-            classification_fldnm = dialog.classificationFieldcomboBox.currentText()
+            category_fldnm = dialog.classificationFieldcomboBox.currentText()
             add_labels = dialog.addLabelcheckBox.isChecked()
 
         else:
@@ -621,13 +624,48 @@ class MainWindow(QtWidgets.QMainWindow):
         if not polygons.crs == pyproj.Proj(profiler_pyproj_epsg):
             polygons = polygons.to_crs(profiler_pyproj_epsg)
 
+        profileline_shapely, epsg_code = line_to_shapely(self.profiler.to_line())
+
         imported_profiles = []
 
         for index, row in polygons.iterrows():
 
-            polygon_label = row[classification_fldnm]
+            polygon_category = row[category_fldnm]
+            polygon_geometry = row["geometry"]
 
-            print(polygon_label, type(row["geometry"]))
+            if polygon_geometry:
+
+                intersection = profileline_shapely.intersection(polygon_geometry)
+
+                if intersection:
+
+                    #print(intersection.geom_type)
+
+                    if intersection.geom_type == "LineString":
+
+                        inters_ln = line_from_shapely(
+                            shapely_linestring=intersection,
+                            epsg_code=epsg_code
+                        )
+
+                        print(inters_ln)
+
+                    elif intersection.geom_type == "MultiLineString":
+
+                        for intersection_line in intersection:
+
+                            inters_ln = line_from_shapely(
+                                shapely_linestring=intersection_line,
+                                epsg_code=epsg_code
+                            )
+
+                            print(inters_ln)
+
+                    else:
+
+                        pass
+
+
 
             """
             imported_line = line_from_shapely(
@@ -635,7 +673,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 epsg_code=self.profiler.epsg_code()
             )
 
-            imported_profiles.append((polygon_label, imported_line))
+            imported_profiles.append((polygon_category, imported_line))
             """
 
         """
@@ -643,10 +681,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
             lines_intersections = []
 
-            for polygon_label, line in imported_profiles:
+            for polygon_category, line in imported_profiles:
 
                 line_intersections = PointSegmentCollection(
-                        line_id=polygon_label,
+                        line_id=polygon_category,
                         geoms=self.profiler.intersect_line(line)
                 )
 
@@ -664,10 +702,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 lines_intersections = []
 
-                for polygon_label, line in imported_profiles:
+                for polygon_category, line in imported_profiles:
 
                     line_intersections = PointSegmentCollection(
-                        line_id=polygon_label,
+                        line_id=polygon_category,
                         geoms=profile.intersect_line(line)
                     )
 
