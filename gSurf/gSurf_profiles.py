@@ -624,10 +624,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not polygons.crs == pyproj.Proj(profiler_pyproj_epsg):
             polygons = polygons.to_crs(profiler_pyproj_epsg)
 
-        profileline_shapely, epsg_code = line_to_shapely(self.profiler.to_line())
-
-        imported_profiles = []
-
         for index, row in polygons.iterrows():
 
             polygon_category = row[category_fldnm]
@@ -635,91 +631,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if polygon_geometry:
 
-                intersection = profileline_shapely.intersection(polygon_geometry)
+                if isinstance(self.profiler, LinearProfiler):
 
-                if intersection:
-
-                    #print(intersection.geom_type)
-
-                    if intersection.geom_type == "LineString":
-
-                        inters_ln = line_from_shapely(
-                            shapely_linestring=intersection,
-                            epsg_code=epsg_code
-                        )
-
-                        print(inters_ln)
-
-                    elif intersection.geom_type == "MultiLineString":
-
-                        for intersection_line in intersection:
-
-                            inters_ln = line_from_shapely(
-                                shapely_linestring=intersection_line,
-                                epsg_code=epsg_code
-                            )
-
-                            print(inters_ln)
-
-                    else:
-
-                        pass
-
-
-
-            """
-            imported_line = line_from_shapely(
-                src_line=row['geometry'],
-                epsg_code=self.profiler.epsg_code()
-            )
-
-            imported_profiles.append((polygon_category, imported_line))
-            """
-
-        """
-        if isinstance(self.profiler, LinearProfiler):
-
-            lines_intersections = []
-
-            for polygon_category, line in imported_profiles:
-
-                line_intersections = PointSegmentCollection(
-                        line_id=polygon_category,
-                        geoms=self.profiler.intersect_line(line)
-                )
-
-                lines_intersections.append(line_intersections)
-
-            profile_intersections = PointSegmentCollections(lines_intersections)
-
-            self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
-
-        elif isinstance(self.profiler, ParallelProfiler):
-
-            profiles_intersections = []
-
-            for profile in self.profiler:
-
-                lines_intersections = []
-
-                for polygon_category, line in imported_profiles:
-
-                    line_intersections = PointSegmentCollection(
-                        line_id=polygon_category,
-                        geoms=profile.intersect_line(line)
+                    intersection_lines = self.profiler.intersect_polygon(
+                        mpolygon=polygon_geometry
                     )
 
-                    lines_intersections.append(line_intersections)
+                elif isinstance(self.profiler, ParallelProfiler):
 
-                profile_intersections = PointSegmentCollections(lines_intersections)
-                profiles_intersections.append(profile_intersections)
+                    pass
 
-            profiles_intersections_set = LinesIntersectionsSet(profiles_intersections)
-            self.geoprofiles.lines_intersections_set = profiles_intersections_set
+                else:
 
-        else:
+                    raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
 
-            raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
 
         print("Plotting")
 
@@ -740,7 +665,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plugin_name,
                 "Unable to create figure"
             )
-        """
+
 
 class ChooseSourceDataDialog(QDialog):
 
