@@ -619,10 +619,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         polygons = polygon_layers[input_layer_index].data
+        polygons = polygons[~polygons.is_empty]
 
         profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
-        if not polygons.crs == pyproj.Proj(profiler_pyproj_epsg):
-            polygons = polygons.to_crs(profiler_pyproj_epsg)
+
+        if not polygons.crs == pyproj.Proj('+init={}'.format(profiler_pyproj_epsg)):
+
+            polygons = polygons.to_crs(epsg=self.profiler.epsg_code())
 
         for index, row in polygons.iterrows():
 
