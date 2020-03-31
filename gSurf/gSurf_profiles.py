@@ -536,7 +536,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for line_label, line in imported_lines:
 
                 line_intersections = PointSegmentCollection(
-                        line_id=line_label,
+                        element_id=line_label,
                         geoms=self.profiler.intersect_line(line)
                 )
 
@@ -557,7 +557,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 for line_label, line in imported_lines:
 
                     line_intersections = PointSegmentCollection(
-                        line_id=line_label,
+                        element_id=line_label,
                         geoms=profile.intersect_line(line)
                     )
 
@@ -622,32 +622,20 @@ class MainWindow(QtWidgets.QMainWindow):
         polygons = polygons[~polygons.is_empty]
 
         profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
-
         if not polygons.crs == pyproj.Proj('+init={}'.format(profiler_pyproj_epsg)):
-
             polygons = polygons.to_crs(epsg=self.profiler.epsg_code())
 
+        polyg_data = []
         for index, row in polygons.iterrows():
-
             polygon_category = row[category_fldnm]
             polygon_geometry = row["geometry"]
 
             if polygon_geometry:
+                polyg_data.append((polygon_category, polygon_geometry))
 
-                if isinstance(self.profiler, LinearProfiler):
-
-                    intersection_lines = self.profiler.intersect_polygon(
-                        mpolygon=polygon_geometry
-                    )
-
-                elif isinstance(self.profiler, ParallelProfiler):
-
-                    pass
-
-                else:
-
-                    raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
-
+        intersection_sections = self.profiler.intersect_polygons(
+            polygons=polyg_data
+        )
 
         print("Plotting")
 
