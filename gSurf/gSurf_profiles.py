@@ -5,6 +5,7 @@ from typing import List
 from collections import namedtuple
 
 import pyproj
+import fiona
 
 
 from PyQt5.QtCore import Qt
@@ -24,8 +25,10 @@ from pygsf.spatial.geology.convert import try_extract_georeferenced_attitudes
 DataPametersFldNms = [
     "filePath",
     "data",
-    "type"
+    "type",
+    "epsg_code"
 ]
+
 DataParameters = namedtuple(
     "DataParameters",
     DataPametersFldNms
@@ -84,7 +87,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plugin_name = "gSurf"
         self.chosen_dem = None
         self.working_epsg_code = None
-        self.chosen_profile = None
+        self.chosen_profile_data = None
         self.fig = None
 
         # File menu
@@ -142,9 +145,9 @@ class MainWindow(QtWidgets.QMainWindow):
              )
             return
 
-        array, affine_transform, epsg = result
+        array, affine_transform, epsg_code = result
 
-        if epsg == -1:
+        if epsg_code == -1:
 
             dialog = EPSGCodeDefineWindow(
                 self.plugin_name
@@ -152,7 +155,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if dialog.exec_():
 
-                epsg = dialog.EPSGCodeSpinBox.value()
+                epsg_code = dialog.EPSGCodeSpinBox.value()
 
             else:
 
@@ -166,10 +169,17 @@ class MainWindow(QtWidgets.QMainWindow):
         ga = GeoArray.fromRasterio(
             array=array,
             affine_transform=affine_transform,
-            epsg=epsg
+            epsg_code=epsg_code
         )
 
-        self.dems.append(DataParameters(filePath, ga, "DEM"))
+        self.dems.append(
+            DataParameters(
+                filePath,
+                ga,
+                "DEM",
+                epsg_code
+            )
+        )
 
         QMessageBox.information(
             None,
@@ -203,15 +213,55 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Exception: {}".format(msg)
              )
             return
+
+        geodataframe = result
+
+        crs = geodataframe.crs
+
+        if isinstance(crs, str):
+            crs = fiona.crs.from_string(crs)
+
+        if crs and "init" in crs and crs["init"].lower().startswith("epsg:"):
+
+            epsg_code = int(crs["init"].split(":")[1])
+
         else:
-            geodataframe = result
-            self.vector_datasets.append(DataParameters(filePath, geodataframe, "vector"))
-            # self.vector_datasets.append(DataParameters(filePath, multiline))
-            QMessageBox.information(
-                None,
-                "Input",
-                "Dataset read"
+
+            epsg_code = -1
+
+        if epsg_code == -1:
+
+            dialog = EPSGCodeDefineWindow(
+                self.plugin_name
             )
+
+            if dialog.exec_():
+
+                epsg_code = dialog.EPSGCodeSpinBox.value()
+
+            else:
+
+                QMessageBox.warning(
+                    None,
+                    "Raster input",
+                    "No EPSG code defined"
+                )
+                return
+
+        self.vector_datasets.append(
+            DataParameters(
+                filePath,
+                geodataframe,
+                "vector",
+                epsg_code
+            )
+        )
+
+        QMessageBox.information(
+            None,
+            "Input",
+            "Dataset read"
+        )
 
     def choose_dataset_index(
         self,
@@ -273,15 +323,18 @@ class MainWindow(QtWidgets.QMainWindow):
                  self.plugin_name,
                  "No dataset selected")
         else:
-            self.chosen_profile = lines_datasets[self.selected_profile_index].data
+            self.chosen_profile = lines_datasets[self.selected_profile_index]
+            self.chosen_profile_data = lines_datasets[self.selected_profile_index].data
+
 
     def create_single_profile(self):
 
         self.superposed_profiles = False
 
         pts = extract_line_points(
-            geodataframe=self.chosen_profile,
-            ndx=0
+            geodataframe=self.chosen_profile.data,
+            ndx=0,
+            epsg_code=self.chosen_profile.epsg_code
         )
 
         if len(pts) != 2:
@@ -325,8 +378,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         pts = extract_line_points(
-            geodataframe=self.chosen_profile,
-            ndx=0
+            geodataframe=self.chosen_profile.data,
+            ndx=0,
+            epsg_code=self.chosen_profile.epsg_code
         )
 
         if len(pts) != 2:
@@ -566,8 +620,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 profile_intersections = PointSegmentCollections(lines_intersections)
                 profiles_intersections.append(profile_intersections)
 
-            profiles_intersections_set = LinesIntersectionsSet(profiles_intersections)
-            self.geoprofiles.lines_intersections_set = profiles_intersections_set
+            lines_intersections_set = PointSegmentCollectionsSet(profiles_intersections)
+            self.geoprofiles.lines_intersections_set = lines_intersections_set
 
         else:
 
@@ -625,18 +679,36 @@ class MainWindow(QtWidgets.QMainWindow):
         if not polygons.crs == pyproj.Proj('+init={}'.format(profiler_pyproj_epsg)):
             polygons = polygons.to_crs(epsg=self.profiler.epsg_code())
 
-        polyg_data = []
+        polyg_results = []
+
         for index, row in polygons.iterrows():
+
             polygon_category = row[category_fldnm]
             polygon_geometry = row["geometry"]
 
             if polygon_geometry:
-                polyg_data.append((polygon_category, polygon_geometry))
 
-        intersection_sections = self.profiler.intersect_polygons(
-            polygons=polyg_data
-        )
+                mpolygon = MPolygon(
+                        geom=polygon_geometry,
+                        epsg_code=self.profiler.epsg_code()
+                )
 
+                intersections = self.profiler.intersect_polygon(
+                    mpolygon=mpolygon
+                )
+
+                if intersections:
+                    polyg_results.append((polygon_category, intersections))
+
+        for cat, intersections in polyg_results:
+            print(cat)
+            for intersection in intersections:
+                print(intersection)
+
+        """
+        polygons_intersections_set = PointSegmentCollectionsSet(intersection_sections)
+
+        self.geoprofiles.polygons_intersections_set = polygons_intersections_set
         print("Plotting")
 
         self.fig = plot(
@@ -656,7 +728,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plugin_name,
                 "Unable to create figure"
             )
-
+        """
 
 class ChooseSourceDataDialog(QDialog):
 
