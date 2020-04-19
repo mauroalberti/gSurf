@@ -542,9 +542,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def intersect_lines(self):
 
-        line_layers = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+        mline_layers = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
 
-        if not line_layers:
+        if not mline_layers:
             warn(self,
                  self.plugin_name,
                  "No line layer available")
@@ -552,51 +552,61 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dialog = LinesIntersectionDefWindow(
             self.plugin_name,
-            line_layers
+            mline_layers
         )
 
         if dialog.exec_():
 
             input_layer_index = dialog.inputLayercomboBox.currentIndex()
-            label_fldnm = dialog.labelFieldcomboBox.currentText()
+            category_fldnm = dialog.labelFieldcomboBox.currentText()
             add_labels = dialog.addLabelcheckBox.isChecked()
 
         else:
 
             return
 
-        lines = line_layers[input_layer_index].data
+        mlines_geoms = mline_layers[input_layer_index].data
+        mlines_geoms = mlines_geoms[~mlines_geoms.is_empty]
 
-        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
-        if not lines.crs == pyproj.Proj(profiler_pyproj_epsg):
-            lines = lines.to_crs(profiler_pyproj_epsg)
-
-        imported_lines = []
-        for index, row in lines.iterrows():
-
-            line_label = row[label_fldnm]
-
-            imported_line = line_from_shapely(
-                shapely_linestring=row['geometry'],
-                epsg_code=self.profiler.epsg_code()
+        profiler_pyproj_epsg = f"EPSG:{self.profiler.epsg_code()}"
+        if not mlines_geoms.crs == pyproj.Proj(profiler_pyproj_epsg):
+            mlines_geoms = mlines_geoms.to_crs(
+                epsg=self.profiler.epsg_code()
             )
 
-            imported_lines.append((line_label, imported_line))
+        toprocess_geometries = []
+
+        for index, row in mlines_geoms.iterrows():
+
+            geom_cat = row[category_fldnm]
+            mline_geometry = row["geometry"]
+
+            if mline_geometry:
+
+                geometry = line_from_shapely(
+                    shapely_geom=mline_geometry,
+                    epsg_code=self.profiler.epsg_code()
+                )
+
+                toprocess_geometries.append(
+                    (geom_cat, geometry)
+                )
 
         if isinstance(self.profiler, LinearProfiler):
 
-            lines_intersections = []
+            intersections_cat_geom = []
 
-            for line_label, line in imported_lines:
+            for geom_cat, geometry in toprocess_geometries:
 
-                line_intersections = PointSegmentCollection(
-                        element_id=line_label,
-                        geoms=self.profiler.intersect_line(line)
+                ptsegm_intersections = self.profiler.intersect_line(
+                    mline=geometry
                 )
 
-                lines_intersections.append(line_intersections)
+                if ptsegm_intersections:
 
-            profile_intersections = PointSegmentCollections(lines_intersections)
+                    intersections_cat_geom.append((geom_cat, ptsegm_intersections))
+
+            profile_intersections = PointSegmentCollections(intersections_cat_geom)
 
             self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
 
@@ -606,18 +616,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
             for profile in self.profiler:
 
-                lines_intersections = []
+                intersections_cat_geom = []
 
-                for line_label, line in imported_lines:
+                for geom_cat, geometry in toprocess_geometries:
 
-                    line_intersections = PointSegmentCollection(
-                        element_id=line_label,
-                        geoms=profile.intersect_line(line)
+                    pt_segm_collection = PointSegmentCollection(
+                        element_id=geom_cat,
+                        geoms=profile.intersect_line(geometry)
                     )
 
-                    lines_intersections.append(line_intersections)
+                    intersections_cat_geom.append(pt_segm_collection)
 
-                profile_intersections = PointSegmentCollections(lines_intersections)
+                profile_intersections = PointSegmentCollections(intersections_cat_geom)
                 profiles_intersections.append(profile_intersections)
 
             lines_intersections_set = PointSegmentCollectionsSet(profiles_intersections)
@@ -649,9 +659,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def intersect_polygons(self):
 
-        polygon_layers = list(filter(lambda dataset: containsPolygons(dataset.data), self.vector_datasets))
+        mpolygon_layers = list(filter(lambda dataset: containsPolygons(dataset.data), self.vector_datasets))
 
-        if not polygon_layers:
+        if not mpolygon_layers:
             warn(self,
                  self.plugin_name,
                  "No polygon layer available")
@@ -659,7 +669,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dialog = PolygonsIntersectionDefWindow(
             self.plugin_name,
-            polygon_layers
+            mpolygon_layers
         )
 
         if dialog.exec_():
@@ -672,35 +682,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
             return
 
-        polygons = polygon_layers[input_layer_index].data
-        polygons = polygons[~polygons.is_empty]
+        mpolygons_geoms = mpolygon_layers[input_layer_index].data
+        mpolygons_geoms = mpolygons_geoms[~mpolygons_geoms.is_empty]
 
-        profiler_pyproj_epsg = 'EPSG:{}'.format(self.profiler.epsg_code())
-        if not polygons.crs == pyproj.Proj('+init={}'.format(profiler_pyproj_epsg)):
-            polygons = polygons.to_crs(epsg=self.profiler.epsg_code())
+        profiler_pyproj_epsg = f"EPSG:{self.profiler.epsg_code()}"
+        if not mpolygons_geoms.crs == pyproj.Proj(profiler_pyproj_epsg):
+            mpolygons_geoms = mpolygons_geoms.to_crs(
+                epsg=self.profiler.epsg_code()
+            )
 
-        polyg_results = []
+        toprocess_geometries = []
 
-        for index, row in polygons.iterrows():
+        for index, row in mpolygons_geoms.iterrows():
 
-            polygon_category = row[category_fldnm]
-            polygon_geometry = row["geometry"]
+            geom_cat = row[category_fldnm]
+            mpolygon_geometry = row["geometry"]
 
-            if polygon_geometry:
+            if mpolygon_geometry:
 
-                mpolygon = MPolygon(
-                        geom=polygon_geometry,
+                geometry = MPolygon(
+                        shapely_geom=mpolygon_geometry,
                         epsg_code=self.profiler.epsg_code()
                 )
 
+                toprocess_geometries.append(
+                    (geom_cat, geometry)
+                )
+
+        if isinstance(self.profiler, LinearProfiler):
+
+            pt_segment_intersections = []
+
+            for geom_cat, geometry in toprocess_geometries:
+
                 intersections = self.profiler.intersect_polygon(
-                    mpolygon=mpolygon
+                    mpolygon=geometry
                 )
 
                 if intersections:
-                    polyg_results.append((polygon_category, intersections))
+                    toprocess_geometries.append((geom_cat, intersections))
 
-        for cat, intersections in polyg_results:
+        for cat, intersections in imported_polygons:
             print(cat)
             for intersection in intersections:
                 print(intersection)
