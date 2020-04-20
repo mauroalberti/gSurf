@@ -576,7 +576,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         toprocess_geometries = []
 
+        print("Input geometries")
+
         for index, row in mlines_geoms.iterrows():
+
+            print(index, row)
 
             geom_cat = row[category_fldnm]
             mline_geometry = row["geometry"]
@@ -588,11 +592,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     epsg_code=self.profiler.epsg_code()
                 )
 
+                print(geometry)
+
                 toprocess_geometries.append(
                     (geom_cat, geometry)
                 )
 
         if isinstance(self.profiler, LinearProfiler):
+
+            print("Intersections")
 
             intersections_cat_geom = []
 
@@ -601,6 +609,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ptsegm_intersections = self.profiler.intersect_line(
                     mline=geometry
                 )
+
+                print(geom_cat, ptsegm_intersections)
 
                 if ptsegm_intersections:
 
