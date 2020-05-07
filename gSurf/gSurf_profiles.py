@@ -95,6 +95,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actLoadDem.triggered.connect(self.load_dem)
         self.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
 
+        # Plane-DEM intersections menu
+
+        self.actOpenDemIntersection.triggered.connect(self.open_dem_intersection_win)
+
         # Profiles menu
 
         self.actChooseDEMs.triggered.connect(self.define_used_dem)
@@ -119,6 +123,18 @@ class MainWindow(QtWidgets.QMainWindow):
         # window visibility
 
         self.show()
+
+    def open_dem_intersection_win(self):
+
+        line_layers = lines_datasets = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+
+        dialog = PlaneDemIntersWindow(
+            self.plugin_name,
+            self.dems,
+            line_layers
+        )
+
+        dialog.exec_()
 
     def load_dem(self):
 
@@ -761,6 +777,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Unable to create figure"
             )
         """
+
+
+class PlaneDemIntersWindow(QDialog):
+
+    def __init__(self,
+        plugin_name: str,
+        dems,
+        line_layers
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/intersections.ui', self)
+
+        dem_sources = [os.path.basename(dem.filePath) for dem in dems]
+        self.InputDemComboBox.insertItems(0, dem_sources)
+
+        lines_sources = map(lambda data_par: os.path.basename(data_par.filePath), line_layers)
+        self.InputTracesComboBox.insertItems(0, lines_sources)
+
 
 class ChooseSourceDataDialog(QDialog):
 

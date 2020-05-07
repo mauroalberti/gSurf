@@ -125,7 +125,14 @@
     <addaction name="separator"/>
     <addaction name="actCalcProfileStats"/>
    </widget>
+   <widget class="QMenu" name="menuIntersections">
+    <property name="title">
+     <string>Intersections</string>
+    </property>
+    <addaction name="actOpenDemIntersection"/>
+   </widget>
    <addaction name="menuFile"/>
+   <addaction name="menuIntersections"/>
    <addaction name="menuProfiles"/>
    <addaction name="menuHelp"/>
   </widget>
@@ -240,6 +247,11 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+R</string>
+   </property>
+  </action>
+  <action name="actOpenDemIntersection">
+   <property name="text">
+    <string>Open window</string>
    </property>
   </action>
  </widget>
