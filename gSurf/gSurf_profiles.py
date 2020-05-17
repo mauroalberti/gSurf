@@ -735,23 +735,29 @@ class MainWindow(QtWidgets.QMainWindow):
                     (geom_cat, geometry)
                 )
 
-        if isinstance(self.profiler, LinearProfiler):
+        pt_segment_intersections = []
 
-            pt_segment_intersections = []
+        if isinstance(self.profiler, LinearProfiler):
 
             for geom_cat, geometry in toprocess_geometries:
 
+                #print(type(geometry))
                 intersections = self.profiler.intersect_polygon(
                     mpolygon=geometry
                 )
 
                 if intersections:
-                    toprocess_geometries.append((geom_cat, intersections))
+                    pt_segment_intersections.append((geom_cat, intersections))
 
+        for cat, inters in pt_segment_intersections:
+            print(cat, inters)
+
+        """
         for cat, intersections in imported_polygons:
             print(cat)
             for intersection in intersections:
                 print(intersection)
+        """
 
         """
         polygons_intersections_set = PointSegmentCollectionsSet(intersection_sections)
