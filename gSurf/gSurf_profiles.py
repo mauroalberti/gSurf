@@ -342,7 +342,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chosen_profile = lines_datasets[self.selected_profile_index]
             self.chosen_profile_data = lines_datasets[self.selected_profile_index].data
 
-
     def create_single_profile(self):
 
         self.superposed_profiles = False

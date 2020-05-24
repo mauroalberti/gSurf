@@ -6,20 +6,85 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>678</width>
-    <height>509</height>
+    <width>335</width>
+    <height>89</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>gSurf   -  vers. 0.3.0</string>
   </property>
-  <widget class="QWidget" name="centralwidget"/>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QWidget" name="Input_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>6</y>
+      <width>251</width>
+      <height>138</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="SourcePoint_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>148</y>
+      <width>251</width>
+      <height>130</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="Plane_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>285</y>
+      <width>252</width>
+      <height>253</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+   <widget class="QWidget" name="Intersection_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>5</x>
+      <y>550</y>
+      <width>251</width>
+      <height>111</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Verdana</family>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+   </widget>
+  </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>678</width>
+     <width>335</width>
      <height>22</height>
     </rect>
    </property>
@@ -38,32 +103,37 @@
     <addaction name="actionHelp"/>
     <addaction name="actionAbout"/>
    </widget>
-   <widget class="QMenu" name="menuProcessings">
+   <widget class="QMenu" name="menuProfiles">
     <property name="title">
-     <string>Processings</string>
+     <string>Prof&amp;iles</string>
     </property>
-    <widget class="QMenu" name="menuProfiles">
+    <widget class="QMenu" name="menuCreate_topographic_profile_single">
      <property name="title">
-      <string>Profiles</string>
+      <string>C&amp;reate topographic profiles</string>
      </property>
-     <addaction name="actChooseDEM"/>
-     <addaction name="actChooseLineLyr"/>
-     <addaction name="separator"/>
-     <addaction name="actCreateSingleProfile"/>
-     <addaction name="actCreateMultipleProfiles"/>
-     <addaction name="separator"/>
-     <addaction name="actProjectGeologicAttitudes"/>
-     <addaction name="actIntersectLineLyr"/>
-     <addaction name="actIntersectPolygonLyr"/>
-     <addaction name="separator"/>
-     <addaction name="actCalcProfileStatistics"/>
+     <addaction name="actionCreateSingleProfile"/>
+     <addaction name="actionCreateMultipleParallelProfiles"/>
     </widget>
+    <addaction name="actChooseDEMs"/>
+    <addaction name="actChooseLines"/>
+    <addaction name="separator"/>
+    <addaction name="menuCreate_topographic_profile_single"/>
+    <addaction name="separator"/>
+    <addaction name="actProjectGeolAttitudes"/>
+    <addaction name="actIntersectLineLayer"/>
+    <addaction name="actIntersectPolygonLayer"/>
+    <addaction name="separator"/>
+    <addaction name="actCalcProfileStats"/>
+   </widget>
+   <widget class="QMenu" name="menuIntersections">
+    <property name="title">
+     <string>Intersections</string>
+    </property>
     <addaction name="actOpenDemIntersection"/>
-    <addaction name="menuProfiles"/>
-    <addaction name="actionStereonetts"/>
    </widget>
    <addaction name="menuFile"/>
-   <addaction name="menuProcessings"/>
+   <addaction name="menuIntersections"/>
+   <addaction name="menuProfiles"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -181,52 +251,7 @@
   </action>
   <action name="actOpenDemIntersection">
    <property name="text">
-    <string>Intersections</string>
-   </property>
-  </action>
-  <action name="actionStereonetts">
-   <property name="text">
-    <string>Stereonets</string>
-   </property>
-  </action>
-  <action name="actChooseDEM">
-   <property name="text">
-    <string>Choose DEM</string>
-   </property>
-  </action>
-  <action name="actChooseLineLyr">
-   <property name="text">
-    <string>Choose lines</string>
-   </property>
-  </action>
-  <action name="actCreateSingleProfile">
-   <property name="text">
-    <string>Create single profile</string>
-   </property>
-  </action>
-  <action name="actCreateMultipleProfiles">
-   <property name="text">
-    <string>Create multiple profiles</string>
-   </property>
-  </action>
-  <action name="actProjectGeologicAttitudes">
-   <property name="text">
-    <string>Project geological attitudes</string>
-   </property>
-  </action>
-  <action name="actIntersectLineLyr">
-   <property name="text">
-    <string>Intersect line layer</string>
-   </property>
-  </action>
-  <action name="actIntersectPolygonLyr">
-   <property name="text">
-    <string>Intersect polygon layer</string>
-   </property>
-  </action>
-  <action name="actCalcProfileStatistics">
-   <property name="text">
-    <string>Profile statistics</string>
+    <string>Open window</string>
    </property>
   </action>
  </widget>
