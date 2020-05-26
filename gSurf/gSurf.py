@@ -1,1237 +1,1046 @@
-# -*- coding: utf-8 -*-
-
-"""
-/***************************************************************************
- geoSurf
-
- DEM - planes intersections
-                              -------------------
-        begin                : 2011-12-21
-        version              : 0.1.2 - 2012-03-10
-        copyright            : (C) 2011-2012 by Mauro Alberti - www.malg.eu
-        email                : alberti.m65@gmail.com
- ***************************************************************************/
-
-/***************************************************************************
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 3 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- ***************************************************************************/
-"""
-
-import os
 import sys
 
-from math import isnan, floor
-
-import webbrowser
-
-from PyQt5 import QtWidgets
-
-from matplotlib.offsetbox import AnchoredOffsetbox, TextArea
-
-from gSurf_ui import Ui_MainWindow
-
-from gis_utils_OLD.rasters import *
-from gsf_OLD.grids import *
-
-
-__version__ = "0.2.0"
-
-
-class IntersectionParameters(object):
-    """
-    IntersectionParameters class.
-    Manages the metadata for spdata results (DEM source filename, source point, plane attitude.
-
-    """
-
-    def __init__(self, sourcename, src_pt, src_plane_attitude):
-        """
-        Class constructor.
-
-        @param sourcename: name of the DEM used to create the grid.
-        @type sourcename: String.
-        @param src_plane_attitude: orientation of the plane used to calculate the spdata.
-        @type src_plane_attitude: class StructPlane.
-
-        @return: self
-        """
-        self._sourcename = sourcename
-        self._srcPt = src_pt
-        self._srcPlaneAttitude = src_plane_attitude
-
-
-class Traces(object):
-
-    def __init__(self):
-        self.lines_x, self.lines_y = [], []
-        self.extent_x = [0, 100]
-        self.extent_y = [0, 100]
-
-
-class Intersections(object):
-
-    def __init__(self):
-        self.parameters = None
-
-        self.xcoords_x = []
-        self.xcoords_y = []
-        self.ycoords_x = []
-        self.ycoords_y = []
-
-        self.links = None
-        self.networks = {}
-
-
-class GeoData(object):
-
-    def set_dem_default(self):
-
-        self.dem = None
-
-    def set_vector_default(self):
-
-        # Fault traces data
-        self.traces = Traces()
-
-    def set_intersections_default(self):
-        """
-        Set result values to null.
-        """
-        self.inters = Intersections()
-
-    def __init__(self):
-
-        self.set_dem_default()
-        self.set_vector_default()
-        self.set_intersections_default()
-
-    def read_traces(self, in_traces_shp):
-        """
-        Read line shapefile.
-
-        @param  in_traces_shp:  parameter to check.
-        @type  in_traces_shp:  QString or string
-
-        """
-        # reset layer parameters
-
-        self.set_vector_default()
-
-        if in_traces_shp is None or in_traces_shp == '':
-            return
-
-            # open input shapefile
-        shape_driver = ogr.GetDriverByName("ESRI Shapefile")
-
-        in_shape = shape_driver.Open(str(in_traces_shp), 0)
-
-        if in_shape is None:
-            return
-
-        # get internal layer
-        lnLayer = in_shape.GetLayer(0)
-
-        # set vector layer extent
-        self.traces.extent_x[0], self.traces.extent_x[1], \
-        self.traces.extent_y[0], self.traces.extent_y[1] \
-            = lnLayer.GetExtent()
-
-        # start reading layer features
-        curr_line = lnLayer.GetNextFeature()
-
-        # loop in layer features
-        while curr_line:
-
-            line_vert_x, line_vert_y = [], []
-
-            line_geom = curr_line.GetGeometryRef()
-
-            if line_geom is None:
-                in_shape.Destroy()
-                return
-
-            if line_geom.GetGeometryType() != ogr.wkbLineString and \
-                    line_geom.GetGeometryType() != ogr.wkbMultiLineString:
-                in_shape.Destroy()
-                return
-
-            for i in range(line_geom.GetPointCount()):
-                x, y = line_geom.GetX(i), line_geom.GetY(i)
-
-                line_vert_x.append(x)
-                line_vert_y.append(y)
-
-            self.traces.lines_x.append(line_vert_x)
-            self.traces.lines_y.append(line_vert_y)
-
-            curr_line = lnLayer.GetNextFeature()
-
-        in_shape.Destroy()
-
-    def get_intersections(self):
-        """
-        Initialize a structured array of the possible and found links for each intersection.
-        It will store a list of the possible connections for each intersection,
-        together with the found connections.
-        """
-
-        # data type for structured array storing intersection parameters
-        dt = np.dtype([('id', np.uint16),
-                       ('i', np.uint16),
-                       ('j', np.uint16),
-                       ('pi_dir', np.str_, 1),
-                       ('conn_from', np.uint16),
-                       ('conn_to', np.uint16),
-                       ('start', np.bool_)])
-
-        # number of valid intersections
-        num_intersections = len(list(self.inters.xcoords_x[np.logical_not(np.isnan(self.inters.xcoords_x))])) + \
-                            len(list(self.inters.ycoords_y[np.logical_not(np.isnan(self.inters.ycoords_y))]))
-
-        # creation and initialization of structured array of valid intersections in the x-direction
-        links = np.zeros(num_intersections, dtype=dt)
-
-        # filling array with values
-
-        curr_ndx = 0
-        for i in range(self.inters.xcoords_x.shape[0]):
-            for j in range(self.inters.xcoords_x.shape[1]):
-                if not isnan(self.inters.xcoords_x[i, j]):
-                    links[curr_ndx] = (curr_ndx + 1, i, j, 'x', 0, 0, False)
-                    curr_ndx += 1
-
-        for i in range(self.inters.ycoords_y.shape[0]):
-            for j in range(self.inters.ycoords_y.shape[1]):
-                if not isnan(self.inters.ycoords_y[i, j]):
-                    links[curr_ndx] = (curr_ndx + 1, i, j, 'y', 0, 0, False)
-                    curr_ndx += 1
-
-        return links
-
-    def set_neighbours(self):
-
-        # shape of input arrays (equal shapes)
-        num_rows, num_cols = self.inters.xcoords_x.shape
-
-        # dictionary storing intersection links
-        neighbours = {}
-
-        # search and connect intersection points
-        for curr_ndx in range(self.inters.links.shape[0]):
-
-            # get current point location (i, j) and direction type (pi_dir)
-            curr_id = self.inters.links[curr_ndx]['id']
-            curr_i = self.inters.links[curr_ndx]['i']
-            curr_j = self.inters.links[curr_ndx]['j']
-            curr_dir = self.inters.links[curr_ndx]['pi_dir']
-
-            # check possible connected spdata
-            near_intersections = []
-
-            if curr_dir == 'x':
-
-                if curr_i < num_rows - 1 and curr_j < num_cols - 1:
-
-                    try:  # -- A
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
-                                                    (self.inters.links['j'] == curr_j + 1) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- B
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- C
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i + 1) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-
-                if curr_i > 0 and curr_j < num_cols - 1:
-
-                    try:  # -- E
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- F
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- G
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j + 1) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-
-            if curr_dir == 'y':
-
-                if curr_i > 0 and curr_j < num_cols - 1:
-
-                    try:  # -- D
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- F
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
-                                                    (self.inters.links['j'] == curr_j) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- G
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j + 1) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-
-                if curr_i > 0 and curr_j > 0:
-
-                    try:  # -- H
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j - 1) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- I
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i) & \
-                                                    (self.inters.links['j'] == curr_j - 1) & \
-                                                    (self.inters.links['pi_dir'] == 'y')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-                    try:  # -- L
-                        id_link = self.inters.links[(self.inters.links['i'] == curr_i - 1) & \
-                                                    (self.inters.links['j'] == curr_j - 1) & \
-                                                    (self.inters.links['pi_dir'] == 'x')]['id']
-                        if len(list(id_link)) == 1:
-                            near_intersections.append(id_link[0])
-                    except:
-                        pass
-
-            neighbours[curr_id] = near_intersections
-
-        return neighbours
-
-    def follow_path(self, start_id):
-        """
-        Creates a path of connected intersections from a given start intersection.
-
-        """
-        from_id = start_id
-
-        while self.inters.links[from_id - 1]['conn_to'] == 0:
-
-            conns = self.inters.neighbours[from_id]
-            num_conn = len(conns)
-            if num_conn == 0:
-                raise ConnectionError('no connected intersection')
-            elif num_conn == 1:
-                if self.inters.links[conns[0] - 1]['conn_from'] == 0 and self.inters.links[conns[0] - 1][
-                    'conn_to'] != from_id:
-                    to_id = conns[0]
-                else:
-                    raise ConnectionError('no free connection')
-            elif num_conn == 2:
-                if self.inters.links[conns[0] - 1]['conn_from'] == 0 and self.inters.links[conns[0] - 1][
-                    'conn_to'] != from_id:
-                    to_id = conns[0]
-                elif self.inters.links[conns[1] - 1]['conn_from'] == 0 and self.inters.links[conns[1] - 1][
-                    'conn_to'] != from_id:
-                    to_id = conns[1]
-                else:
-                    raise ConnectionError('no free connection')
-            else:
-                raise ConnectionError('multiple connection')
-
-            # set connection
-            self.inters.links[to_id - 1]['conn_from'] = from_id
-            self.inters.links[from_id - 1]['conn_to'] = to_id
-
-            # prepare for next step
-            from_id = to_id
-
-    def path_closed(self, start_id):
-
-        from_id = start_id
-
-        while self.inters.links[from_id - 1]['conn_to'] != 0:
-
-            to_id = self.inters.links[from_id - 1]['conn_to']
-
-            if to_id == start_id: return True
-
-            from_id = to_id
-
-        return False
-
-    def invert_path(self, start_id):
-
-        self.inters.links[start_id - 1]['start'] = False
-
-        curr_id = start_id
-
-        while curr_id != 0:
-
-            prev_from_id = self.inters.links[curr_id - 1]['conn_from']
-            prev_to_id = self.inters.links[curr_id - 1]['conn_to']
-
-            self.inters.links[curr_id - 1]['conn_from'] = prev_to_id
-            self.inters.links[curr_id - 1]['conn_to'] = prev_from_id
-
-            if self.inters.links[curr_id - 1]['conn_from'] == 0:
-                self.inters.links[curr_id - 1]['start'] = True
-
-            curr_id = prev_to_id
-
-        return
-
-    def patch_path(self, start_id):
-
-        if self.path_closed(start_id):
-            return
-
-        from_id = start_id
-
-        conns = self.inters.neighbours[from_id]
-        try:
-            conns.remove(self.inters.links[from_id - 1]['conn_to'])
-        except:
-            pass
-
-        num_conn = len(conns)
-
-        if num_conn != 1: return
-
-        new_toid = self.inters.links[conns[0] - 1]
-
-        if self.inters.links[new_toid]['conn_to'] > 0 \
-                and self.inters.links[new_toid]['conn_to'] != from_id \
-                and self.inters.links[new_toid]['conn_from'] == 0:
-
-            if self.path_closed(new_toid): return
-            self.invert_path(from_id)
-            self.self.inters.links[from_id - 1]['conn_to'] = new_toid
-            self.self.inters.links[new_toid - 1]['conn_from'] = from_id
-            self.self.inters.links[new_toid - 1]['start'] = False
-
-    def define_paths(self):
-
-        # simple networks starting from border
-        for ndx in range(self.inters.links.shape[0]):
-
-            if len(self.inters.neighbours[ndx + 1]) != 1 or \
-                    self.inters.links[ndx]['conn_from'] > 0 or \
-                    self.inters.links[ndx]['conn_to'] > 0:
-                continue
-
-            try:
-                self.follow_path(ndx + 1)
-            except:
-                continue
-
-        # inner, simple networks
-
-        for ndx in range(self.inters.links.shape[0]):
-
-            if len(self.inters.neighbours[ndx + 1]) != 2 or \
-                    self.inters.links[ndx]['conn_to'] > 0 or \
-                    self.inters.links[ndx]['start'] == True:
-                continue
-
-            try:
-                self.inters.links[ndx]['start'] = True
-                self.follow_path(ndx + 1)
-            except:
-                continue
-
-        # inner, simple networks, connection of FROM
-
-        for ndx in range(self.inters.links.shape[0]):
-
-            if len(self.inters.neighbours[ndx + 1]) == 2 and \
-                    self.inters.links[ndx]['conn_from'] == 0:
-                try:
-                    self.patch_path(ndx + 1)
-                except:
-                    continue
-
-    def define_networks(self):
-        """
-        Creates list of connected intersections,
-        to output as line shapefile.
-        """
-
-        pid = 0
-        networks = {}
-
-        # open, simple networks
-        for ndx in range(self.inters.links.shape[0]):
-
-            if len(self.inters.neighbours[ndx + 1]) != 1:
-                continue
-
-            network_list = []
-
-            to_ndx = ndx + 1
-
-            while to_ndx != 0:
-                network_list.append(to_ndx)
-
-                to_ndx = self.inters.links[to_ndx - 1]['conn_to']
-
-            if len(network_list) > 1:
-                pid += 1
-
-                networks[pid] = network_list
-
-                # closed, simple networks
-        for ndx in range(self.inters.links.shape[0]):
-
-            if len(self.inters.neighbours[ndx + 1]) != 2 or not self.inters.links[ndx]['start']:
-                continue
-
-            start_id = ndx + 1
-
-            network_list = []
-
-            to_ndx = ndx + 1
-
-            while to_ndx != 0:
-
-                network_list.append(to_ndx)
-
-                to_ndx = self.inters.links[to_ndx - 1]['conn_to']
-
-                if to_ndx == start_id:
-                    network_list.append(to_ndx)
-                    break
-
-            if len(network_list) > 1:
-                pid += 1
-
-                networks[pid] = network_list
-
-        return networks
+from typing import List
+
+from collections import namedtuple
+
+import pyproj
+import fiona
+
+
+from PyQt5.QtCore import Qt
+from PyQt5 import QtWidgets, uic
+
+from pygsf.spatial.rasters.io import *
+from pygsf.spatial.vectorial.io import try_read_as_geodataframe
+from pygsf.spatial.vectorial.geodataframes import *
+from pygsf.utils.qt.tools import *
+
+from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
+from pygsf.spatial.geology.profiles.profilers import *
+from pygsf.spatial.geology.profiles.plot import plot
+from pygsf.spatial.geology.convert import try_extract_georeferenced_attitudes
+
+
+DataPametersFldNms = [
+    "filePath",
+    "data",
+    "type",
+    "epsg_code"
+]
+
+DataParameters = namedtuple(
+    "DataParameters",
+    DataPametersFldNms
+)
+
+multiple_profiles_choices = [
+    "central",
+    "left",
+    "right"
+]
+
+attitude_colors = [
+    "red",
+    "blue",
+    "orange"
+]
+
+color_palettes = [
+    "Pastel1",
+    "Pastel2",
+    "Paired",
+    "Accent",
+    "Dark2",
+    "Set1",
+    "Set2",
+    "Set3",
+    "tab10",
+    "tab20",
+    "tab20b",
+    "tab20c"
+]
+
+
+def get_selected_layer_index(
+    treewidget_data_list: QtWidgets.QTreeWidget
+) -> Optional[numbers.Integral]:
+
+    if not treewidget_data_list:
+        return None
+    elif not treewidget_data_list.selectedIndexes():
+        return None
+    else:
+        return treewidget_data_list.selectedIndexes()[0].row()
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    """
-    Principal GUI class
-    
-    """
-    
-    def __init__(self, parent=None):
-        """
-        Constructor
-        
-        """
-        super(MainWindow, self).__init__(parent)
-        
-        # Set up the user interface from Designer.
-        self.ui = Ui_MainWindow()
-        self.ui.setupUi(self)
-        
-        # initialize intersection drawing
-        self.valid_intersections = False
-        
-        # initialize spdata
 
-        self.spdata = GeoData()        
+    def __init__(self):
 
-        # DEM connections
+        super().__init__()
+        uic.loadUi(
+            './widgets/gSurf_0.3.0.ui',
+            self
+        )
 
-        self.ui.actionInput_DEM.triggered.connect(self.select_dem_file)
-        self.ui.DEM_lineEdit.textChanged['QString'].connect(self.selected_dem)
+        self.plugin_name = "gSurf"
+        self.chosen_dem = None
+        self.working_epsg_code = None
+        self.chosen_profile_data = None
+        self.fig = None
 
-        self.ui.show_DEM_checkBox.stateChanged['int'].connect(self.redraw_map)
-        self.ui.DEM_cmap_comboBox.currentIndexChanged['QString'].connect(self.redraw_map)
+        # File menu
 
-        # Fault traces connections
+        self.actLoadDem.triggered.connect(self.load_dem)
+        self.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
 
-        self.ui.actionInput_line_shapefile.triggered.connect(self.select_traces_file)
-        self.ui.Trace_lineEdit.textChanged['QString'].connect(self.reading_traces)
-        self.ui.show_Fault_checkBox.stateChanged['int'].connect(self.redraw_map)
+        # Plane-DEM intersections menu
 
-        # Full zoom
+        self.actOpenDemIntersection.triggered.connect(self.open_dem_intersection_win)
 
-        self.ui.mplwidget.zoom_to_full_view.connect(self.zoom_full_view)
+        # Profiles menu
 
-        # Source point
+        self.actChooseDEMs.triggered.connect(self.define_used_dem)
+        self.actChooseLines.triggered.connect(self.define_used_profile_dataset)
 
-        self.ui.mplwidget.map_press.connect(self.update_src_pt)
+        self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
+        self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
+        self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
+        self.actIntersectLineLayer.triggered.connect(self.intersect_lines)
+        self.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
 
-        self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.set_z)
-        self.ui.Pt_spinBox_y.valueChanged['int'].connect(self.set_z)
-        self.ui.Z_fix2DEM_checkBox_z.stateChanged['int'].connect(self.set_z)
-        self.ui.Pt_spinBox_z.valueChanged['int'].connect(self.set_z)
+        # data storage
 
-        self.ui.Pt_spinBox_x.valueChanged['int'].connect(self.redraw_map)
-        self.ui.Pt_spinBox_y.valueChanged['int'].connect(self.redraw_map)
-        self.ui.Pt_spinBox_z.valueChanged['int'].connect(self.redraw_map)
+        self.dems = []
+        self.vector_datasets = []
 
-        self.ui.show_SrcPt_checkBox.stateChanged['int'].connect(self.redraw_map)
+        # data choices
 
-        # Plane orientation
+        self.selected_dem_index = []
+        self.selected_profile_index = []
 
-        self.ui.DDirection_dial.valueChanged['int'].connect(self.update_dipdir_spinbox)
-        self.ui.DDirection_spinBox.valueChanged['int'].connect(self.update_dipdir_slider)
+        # window visibility
 
-        self.ui.DAngle_verticalSlider.valueChanged['int'].connect(self.update_dipang_spinbox)
-        self.ui.DAngle_spinBox.valueChanged['int'].connect(self.update_dipang_slider)
+        self.show()
 
-        # Intersections
-        self.ui.Intersection_calculate_pushButton.clicked['bool'].connect(self.calc_intersections)
-        self.ui.Intersection_show_checkBox.stateChanged['int'].connect(self.redraw_map)
-        self.ui.Intersection_color_comboBox.currentIndexChanged['QString'].connect(self.redraw_map)
+    def open_dem_intersection_win(self):
 
-        # Write result
-        self.ui.actionPoints.triggered.connect(self.write_intersections_as_points)
-        self.ui.actionLines.triggered.connect(self.write_intersections_as_lines)
+        line_layers = lines_datasets = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
 
-        # Other actions
-        self.ui.actionHelp.triggered.connect(self.openHelp)
-        self.ui.actionAbout.triggered.connect(self.helpAbout)
-        self.ui.actionQuit.triggered.connect(sys.exit)
+        dialog = PlaneDemIntersWindow(
+            self.plugin_name,
+            self.dems,
+            line_layers
+        )
 
-    def draw_map(self, map_extent_x, map_extent_y):            
-        """
-        Draw the map content.
-    
-        @param  map_extent_x:  map extent along the x axis.
-        @type  map_extent_x:  list of two float values (min x and max x).
-        @param  map_extent_y:  map extent along the y axis.
-        @type  map_extent_y:  list of two float values (min y and max y).
-        """
+        dialog.exec_()
 
-        self.ui.mplwidget.canvas.ax.cla()
-        
-        # DEM processing
+    def load_dem(self):
 
-        if self.spdata.dem is not None:
-                           
-            geo_extent = [
-                self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x,
-                self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
-            
-            if self.ui.show_DEM_checkBox.isChecked():  # DEM check is on
-                
-                curr_colormap = str(self.ui.DEM_cmap_comboBox.currentText())
-                     
-                self.ui.mplwidget.canvas.ax.imshow(self.spdata.dem.data, extent=geo_extent,  cmap=curr_colormap)
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Open DEM file (using rasterio)"),
+            "",
+            "*.*"
+        )
 
-        # Fault traces proc.
-
-        if self.spdata.traces.lines_x is not None and self.spdata.traces.lines_y is not None \
-           and self.ui.show_Fault_checkBox.isChecked():  # Fault check is on
- 
-            for currLine_x, currLine_y in zip(self.spdata.traces.lines_x, self.spdata.traces.lines_y):
-                    self.ui.mplwidget.canvas.ax.plot(currLine_x, currLine_y,'-')
-
-        # Intersections proc.
-
-        if self.ui.Intersection_show_checkBox.isChecked() and self.valid_intersections:
-            
-            curr_color = str(self.ui.Intersection_color_comboBox.currentText())
-                        
-            intersections_x = list(self.spdata.inters.xcoords_x[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]) + \
-                              list(self.spdata.inters.ycoords_x[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))])
-        
-            intersections_y = list(self.spdata.inters.xcoords_y[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]) + \
-                              list(self.spdata.inters.ycoords_y[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))])
-
-            self.ui.mplwidget.canvas.ax.plot(intersections_x, intersections_y,  "w+",  ms=2,  mec=curr_color,  mew=2)
-                                
-            legend_text = "Plane dip dir., angle: (%d, %d)\nSource point x, y, z: (%d, %d, %d)" % \
-                (self.spdata.inters.parameters._srcPlaneAttitude._dipdir, self.spdata.inters.parameters._srcPlaneAttitude._dipangle,
-                 self.spdata.inters.parameters._srcPt.x, self.spdata.inters.parameters._srcPt.y, self.spdata.inters.parameters._srcPt.z) 
-                                             
-            at = AnchoredText(
-                legend_text,
-                loc=2,
-                frameon=True)
-            
-            at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
-            at.patch.set_alpha(0.5)
-            self.ui.mplwidget.canvas.ax.add_artist(at)    
-
-        # Source point proc.         
-        curr_x = self.ui.Pt_spinBox_x.value()
-        curr_y = self.ui.Pt_spinBox_y.value() 
-               
-        if self.ui.show_SrcPt_checkBox.isChecked():                  
-
-            self.ui.mplwidget.canvas.ax.plot(curr_x, curr_y, "ro")
-          
-        self.ui.mplwidget.canvas.draw()           
-          
-        self.ui.mplwidget.canvas.ax.set_xlim(map_extent_x) 
-        self.ui.mplwidget.canvas.ax.set_ylim(map_extent_y) 
-
-    def refresh_map(self, map_extent_x=None, map_extent_y=None):
-        """
-        Update map.
-    
-        @param  map_extent_x:  map extent along the x axis.
-        @type  map_extent_x:  list of two float values (min x and max x).
-        @param  map_extent_y:  map extent along the y axis.
-        @type  map_extent_y:  list of two float values (min y and max y).
-        """
-
-        if map_extent_x is None:
-            map_extent_x = self.ui.mplwidget.canvas.ax.get_xlim()
-
-        if map_extent_y is None:
-            map_extent_y = self.ui.mplwidget.canvas.ax.get_ylim()
-                
-        self.draw_map(map_extent_x, map_extent_y)
-
-    def redraw_map(self):
-        """
-        Convenience function for drawing the map.
-        """
-                      
-        self.refresh_map()
-                
-    def zoom_full_view(self):
-        """
-        Update map view to the DEM extent or otherwise, if available, to the shapefile extent.
-        """
-       
-        if self.spdata.dem is not None:
-            map_extent_x = [self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x]
-            map_extent_y = [self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y]
-            
-        elif self.spdata.traces.extent_x != [] and self.spdata.traces.extent_y != []:
-            map_extent_x = self.spdata.traces.extent_x
-            map_extent_y = self.spdata.traces.extent_y
-
-        else:
-            map_extent_x = [0, 100]
-            map_extent_y = [0, 100]
-                                
-        self.refresh_map(map_extent_x, map_extent_y)
-        
-    def select_dem_file(self):
-        """
-        Select input DEM file
-        
-        """
-
-        fileName = QtWidgets.QFileDialog.getOpenFileName(self, self.tr("Open DEM file (using GDAL)"), '', "*.*")
-        file_path = fileName[0]
-        if not file_path:
-            return          
-
-        self.ui.DEM_lineEdit.setText(file_path)
-
-    def selected_dem(self):
-
-        in_dem_fn = self.ui.DEM_lineEdit.text()
-
-        if not in_dem_fn:
+        if not filePath:
             return
 
-        try:
-            self.spdata.dem = read_dem(in_dem_fn)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "DEM", "Unable to read file: {}".format(e.message))
-            self.ui.DEM_lineEdit.clear()
+        success, result = try_read_rasterio_band(
+            filePath
+        )
+
+        if not success:
+            msg = result
+            QMessageBox.warning(
+                None,
+                "Raster input",
+                "Error: {}".format(msg)
+             )
             return
-        
-        # set map limits
 
-        self.ui.mplwidget.canvas.ax.set_xlim(self.spdata.dem.domain.g_llcorner().x, self.spdata.dem.domain.g_trcorner().x)
-        self.ui.mplwidget.canvas.ax.set_ylim(self.spdata.dem.domain.g_llcorner().y, self.spdata.dem.domain.g_trcorner().y) 
+        array, affine_transform, epsg_code = result
 
-        # fix z to DEM if required
+        if epsg_code == -1:
 
-        self.set_z()
-        #self.ui.Z_fix2DEM_checkBox_z.emit(QtCore.SIGNAL(" stateChanged (int) "), 1)
-             
-        # set DEM visibility on
+            dialog = EPSGCodeDefineWindow(
+                self.plugin_name
+            )
 
-        self.ui.show_DEM_checkBox.setCheckState(2)
-        
-        # set intersection validity to False
+            if dialog.exec_():
 
-        self.valid_intersections = False
-        
-        # zoom to full view
+                epsg_code = dialog.EPSGCodeSpinBox.value()
 
-        self.zoom_full_view()
+            else:
 
-    def select_traces_file(self):        
-        """
-        Selection of the linear shapefile to be opened.
-        
-        """            
-        fileName = QtWidgets.QFileDialog.getOpenFileName(self, self.tr("Open shapefile"), '', "shp (*.shp *.SHP)")
-        file_path = fileName[0]
-        if not file_path:
-            return          
-
-        self.ui.Trace_lineEdit.setText(file_path)
-                
-    def reading_traces(self, in_traces_shp):
-        """
-        Read line shapefile.
-    
-        @param  in_traces_shp:  parameter to check.
-        @type  in_traces_shp:  QString or string
-        
-        """ 
-        
-        try:
-            self.spdata.read_traces(in_traces_shp)
-        except:
-            QtWidgets.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
-            return
-        else:
-            if self.spdata.traces.lines_x is None or self.spdata.traces.lines_y is None:
-                self.ui.Trace_lineEdit.setText('')
-                QtWidgets.QMessageBox.critical(self, "Traces", "Unable to read shapefile")
-                return           
-                      
-        # set layer visibility on
-        self.ui.show_Fault_checkBox.setCheckState(2) 
-        
-        # zoom to full view
-        self.zoom_full_view()
-
-    def update_src_pt (self, x, y):
-        """
-        Update the source point position from user input (click event in map).
-          
-        @param x: x coordinate of clicked point.
-        @param y: y coordinate of clicked point.
-        @type: list of two float values.      
-        """         
-        
-        self.ui.Pt_spinBox_x.setValue(int(x))
-        self.ui.Pt_spinBox_y.setValue(int(y))
-        
-        # set intersection validity to False
-        self.valid_intersections = False
-
-    def set_z(self):
-        """
-        Update z value.
-        
-        """ 
-        
-        # set intersection validity to False
-        self.valid_intersections = False        
-        
-        if self.spdata.dem is None:
-            return
-        
-        if self.ui.Z_fix2DEM_checkBox_z.isChecked():    
-   
-            curr_x = self.ui.Pt_spinBox_x.value()
-            curr_y = self.ui.Pt_spinBox_y.value()
-            
-            if curr_x <= self.spdata.dem.domain.g_llcorner().x or curr_x >= self.spdata.dem.domain.g_trcorner().x or \
-               curr_y <= self.spdata.dem.domain.g_llcorner().y or curr_y >= self.spdata.dem.domain.g_trcorner().y:
+                QMessageBox.warning(
+                    None,
+                    "Raster input",
+                    "No EPSG code defined"
+                )
                 return
-           
-            curr_point = Point(curr_x, curr_y)
-            currArrCoord = self.spdata.dem.geog2array_coord(curr_point)
-    
-            z = floor(self.spdata.dem.interpolate_bilinear(currArrCoord))
-    
-            self.ui.Pt_spinBox_z.setValue(int(z))
 
-    def update_dipdir_slider(self):
-        """
-        Update the value of the dip direction in the slider.
-        """
+        ga = GeoArray.fromRasterio(
+            array=array,
+            affine_transform=affine_transform,
+            epsg_code=epsg_code
+        )
 
-        real_dipdirection = self.ui.DDirection_spinBox.value()
-        
-        transformed_dipdirection = real_dipdirection + 180.0
-        if transformed_dipdirection > 360.0:
-            transformed_dipdirection = transformed_dipdirection - 360 
-                       
-        self.ui.DDirection_dial.setValue(transformed_dipdirection) 
-           
-        # set intersection validity to False
-        self.valid_intersections = False
-         
-    def update_dipdir_spinbox(self):            
-        """
-        Update the value of the dip direction in the spinbox.
-        """        
-        transformed_dipdirection = self.ui.DDirection_dial.value()
-        
-        real_dipdirection = transformed_dipdirection - 180.0
-        if real_dipdirection < 0.0:
-            real_dipdirection = real_dipdirection + 360.0
-            
-        self.ui.DDirection_spinBox.setValue(real_dipdirection) 
+        self.dems.append(
+            DataParameters(
+                filePath,
+                ga,
+                "DEM",
+                epsg_code
+            )
+        )
 
-        # set intersection validity to False
-        self.valid_intersections = False
-         
-    def update_dipang_slider(self):
-        """
-        Update the value of the dip angle in the slider.
-        """
-        self.ui.DAngle_verticalSlider.setValue(self.ui.DAngle_spinBox.value())    
-                  
-        # set intersection validity to False
-        self.valid_intersections = False
-                
-    def update_dipang_spinbox(self):            
-        """
-        Update the value of the dip angle in the spinbox.
-        """        
-        self.ui.DAngle_spinBox.setValue(self.ui.DAngle_verticalSlider.value()) 
+        QMessageBox.information(
+            None,
+            "DEM loading",
+            "DEM read".format(filePath)
+        )
 
-        # set intersection validity to False
-        self.valid_intersections = False
-        
-    def calc_intersections(self):
-        """
-        Calculate intersection points.
-        """                
-                      
-        curr_x = self.ui.Pt_spinBox_x.value()
-        curr_y = self.ui.Pt_spinBox_y.value()
-        curr_z = self.ui.Pt_spinBox_z.value()
-                
-        srcPt = Point(curr_x, curr_y, curr_z)
+    def load_vector_layer(self):
 
-        srcDipDir = self.ui.DDirection_spinBox.value()
-        srcDipAngle = self.ui.DAngle_verticalSlider.value()
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Open vector layer (using geopandas)"),
+            "",
+            "*.*"
+        )
 
-        srcPlaneAttitude = GPlane(srcDipDir, srcDipAngle)
+        filePath = filePath.strip()
 
-        # intersection arrays
-        self.spdata.set_intersections_default()
-        
-        intersection_results = self.spdata.dem.intersection_with_surface('plane', srcPt, srcPlaneAttitude)
-        
-        self.spdata.inters.xcoords_x = intersection_results[0]
-        self.spdata.inters.xcoords_y = intersection_results[1]
-        self.spdata.inters.ycoords_x = intersection_results[2]
-        self.spdata.inters.ycoords_y = intersection_results[3]
-            
-        self.spdata.inters.parameters = IntersectionParameters(self.spdata.dem._sourcename, srcPt, srcPlaneAttitude)
-        
-        self.valid_intersections = True
-
-        self.refresh_map()
-
-    def write_intersections_as_points(self):
-        """
-        Write intersection results in the output shapefile.
-        """
-        
-        if self.spdata.inters.xcoords_x == []:
-            QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
+        if not filePath:
             return
 
-        srcPt = self.spdata.inters.parameters._srcPt
-        srcPlaneAttitude = self.spdata.inters.parameters._srcPlaneAttitude     
-                
-        plane_z = plane_from_geo(srcPt, srcPlaneAttitude)   
-                                
-        x_filtered_coord_x = self.spdata.inters.xcoords_x[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))] 
-        x_filtered_coord_y = self.spdata.inters.xcoords_y[np.logical_not(np.isnan(self.spdata.inters.xcoords_x))]            
-        x_filtered_coord_z = plane_z(x_filtered_coord_x, x_filtered_coord_y)
+        success, result = try_read_as_geodataframe(
+            path=filePath
+        )
 
-        y_filtered_coord_x = self.spdata.inters.ycoords_x[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))] 
-        y_filtered_coord_y = self.spdata.inters.ycoords_y[np.logical_not(np.isnan(self.spdata.inters.ycoords_y))]             
-        y_filtered_coord_z = plane_z(y_filtered_coord_x, y_filtered_coord_y)        
-        
-        intersections_x = list(x_filtered_coord_x) + list(y_filtered_coord_x)    
-        intersections_y = list(x_filtered_coord_y) + list(y_filtered_coord_y)                                           
-        intersections_z = list(x_filtered_coord_z) + list(y_filtered_coord_z)       
-
-        # creation of output shapefile
-
-        fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'points.shp', "shp (*.shp *.SHP)")
-        fileName = fileName[0]
-        if not fileName:
-            return  
-
-        fileName = str(fileName)
-        
-        shape_driver = ogr.GetDriverByName("ESRI Shapefile")
-              
-        out_shape = shape_driver.CreateDataSource(fileName)
-        if out_shape is None:
-            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
+        if not success:
+            msg = result
+            QMessageBox.critical(
+                None,
+                "Input",
+                "Exception: {}".format(msg)
+             )
             return
-        out_layer = out_shape.CreateLayer('output_points', geom_type=ogr.wkbPoint)
-        if out_layer is None:
-            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
-            return        
-        
-        # add fields to the output shapefile
 
-        id_fieldDef = ogr.FieldDefn('id', ogr.OFTInteger)
-        out_layer.CreateField(id_fieldDef)
-                
-        x_fieldDef = ogr.FieldDefn('x', ogr.OFTReal)
-        out_layer.CreateField(x_fieldDef)
+        geodataframe = result
 
-        y_fieldDef = ogr.FieldDefn('y', ogr.OFTReal)
-        out_layer.CreateField(y_fieldDef)
+        crs = geodataframe.crs
 
-        z_fieldDef = ogr.FieldDefn('z', ogr.OFTReal)
-        out_layer.CreateField(z_fieldDef)
+        if isinstance(crs, str):
+            crs = fiona.crs.from_string(crs)
 
-        srcPt_x_fieldDef = ogr.FieldDefn('srcPt_x', ogr.OFTReal)
-        out_layer.CreateField(srcPt_x_fieldDef)
+        if crs and "init" in crs and crs["init"].lower().startswith("epsg:"):
 
-        srcPt_y_fieldDef = ogr.FieldDefn('srcPt_y', ogr.OFTReal)
-        out_layer.CreateField(srcPt_y_fieldDef)
+            epsg_code = int(crs["init"].split(":")[1])
 
-        srcPt_z_fieldDef = ogr.FieldDefn('srcPt_z', ogr.OFTReal)
-        out_layer.CreateField(srcPt_z_fieldDef)        
-        
-        DipDir_fieldDef = ogr.FieldDefn('dip_dir', ogr.OFTReal)
-        out_layer.CreateField(DipDir_fieldDef)
+        else:
 
-        DipAng_fieldDef = ogr.FieldDefn('dip_ang', ogr.OFTReal)
-        out_layer.CreateField(DipAng_fieldDef)        
-                        
-        # get the layer definition of the output shapefile
-        outshape_featdef = out_layer.GetLayerDefn()  
-        
-        curr_Pt_id = 0                    
+            epsg_code = -1
 
-        for curr_Pt in zip(intersections_x, intersections_y, intersections_z):
-            
-            curr_Pt_id += 1
-            
-            # pre-processing for new feature in output layer
-            curr_Pt_geom = ogr.Geometry(ogr.wkbPoint)
-            curr_Pt_geom.AddPoint(float(curr_Pt[0]), float(curr_Pt[1]), float(curr_Pt[2]))
-                
-            # create a new feature
-            curr_Pt_shape = ogr.Feature(outshape_featdef)
-            curr_Pt_shape.SetGeometry(curr_Pt_geom)
-            curr_Pt_shape.SetField('id', curr_Pt_id)                                       
-            curr_Pt_shape.SetField('x', curr_Pt[0])
-            curr_Pt_shape.SetField('y', curr_Pt[1]) 
-            curr_Pt_shape.SetField('z', curr_Pt[2]) 
+        if epsg_code == -1:
 
-            curr_Pt_shape.SetField('srcPt_x', srcPt.x)
-            curr_Pt_shape.SetField('srcPt_y', srcPt.y) 
-            curr_Pt_shape.SetField('srcPt_z', srcPt.z)
+            dialog = EPSGCodeDefineWindow(
+                self.plugin_name
+            )
 
-            curr_Pt_shape.SetField('dip_dir', srcPlaneAttitude._dipdir)
-            curr_Pt_shape.SetField('dip_ang', srcPlaneAttitude._dipangle)             
+            if dialog.exec_():
 
-            # add the feature to the output layer
-            out_layer.CreateFeature(curr_Pt_shape)            
-            
-            # destroy no longer used objects
-            curr_Pt_geom.Destroy()
-            curr_Pt_shape.Destroy()
-                            
-        # destroy output geometry
-        out_shape.Destroy()
+                epsg_code = dialog.EPSGCodeSpinBox.value()
 
-        QtWidgets.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
+            else:
 
-    def write_intersections_as_lines(self):
+                QMessageBox.warning(
+                    None,
+                    "Raster input",
+                    "No EPSG code defined"
+                )
+                return
+
+        self.vector_datasets.append(
+            DataParameters(
+                filePath,
+                geodataframe,
+                "vector",
+                epsg_code
+            )
+        )
+
+        QMessageBox.information(
+            None,
+            "Input",
+            "Dataset read"
+        )
+
+    def choose_dataset_index(
+        self,
+        datasets_paths: List[str]
+    ) -> Optional[numbers.Integral]:
         """
-        Write intersection results in a line shapefile.
+        Choose data to use for profile creation.
+
+        :param datasets_paths: the list of data sources
+        :type datasets_paths: List[str]
+        :return: the selected data, as index of the input list
+        :rtype: Optional[numbers.Integral]
         """
-        
-        if self.spdata.inters.xcoords_x == []:
-            QtWidgets.QMessageBox.critical(self, "Save results", "No results available")
-            return        
 
-        srcPt = self.spdata.inters.parameters._srcPt
-        srcPlaneAttitude = self.spdata.inters.parameters._srcPlaneAttitude     
+        dialog = ChooseSourceDataDialog(
+            self.plugin_name,
+            data_sources=list(map(lambda pth: os.path.basename(pth), datasets_paths))
+        )
 
-        plane_z = plane_from_geo(srcPt, srcPlaneAttitude) 
-                
-        # create dictionary of cell with intersection points
-        
-        self.spdata.inters.links = self.spdata.get_intersections() 
-            
-        self.spdata.inters.neighbours = self.spdata.set_neighbours()        
-                
-        self.spdata.define_paths()  
-        
-        # networks of connected intersections
-        self.spdata.inters.networks = self.spdata.define_networks()        
+        if dialog.exec_():
+            return get_selected_layer_index(dialog.listData_treeWidget)
+        else:
+            return None
 
-        # creation of output shapefile
+    def define_used_dem(self):
+        """
+        Define DEM to use for profile creation.
 
-        fileName = QtWidgets.QFileDialog.getSaveFileName(self, self.tr("Save as shapefile"), 'lines.shp', "shp (*.shp *.SHP)")
-        fileName = fileName[0]
-        if not fileName:
-            return  
+        :return:
+        """
 
-        fileName = str(fileName)
-               
-        shape_driver = ogr.GetDriverByName("ESRI Shapefile")
-              
-        out_shape = shape_driver.CreateDataSource(fileName)
-        if out_shape is None:
-            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
+        self.selected_dem_index = self.choose_dataset_index(
+            datasets_paths=[dem.filePath for dem in self.dems]
+        )
+
+        if self.selected_dem_index is None:
+            warn(self,
+                 self.plugin_name,
+                 "No dataset selected")
+        else:
+            self.chosen_dem = self.dems[self.selected_dem_index].data
+            print(f"DEM EPSG code: {self.chosen_dem.epsg_code()}")
+            self.working_epsg_code = self.chosen_dem.epsg_code()
+
+    def define_used_profile_dataset(self):
+        """
+        Defines vector dataset for profile creation.
+
+        :return:
+        """
+
+        lines_datasets = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+        self.selected_profile_index = self.choose_dataset_index(
+            datasets_paths=[line_dataset.filePath for line_dataset in lines_datasets]
+        )
+
+        if self.selected_profile_index is None:
+            warn(self,
+                 self.plugin_name,
+                 "No dataset selected")
+        else:
+            self.chosen_profile = lines_datasets[self.selected_profile_index]
+            self.chosen_profile_data = lines_datasets[self.selected_profile_index].data
+
+    def create_single_profile(self):
+
+        self.superposed_profiles = False
+
+        pts = extract_line_points(
+            geodataframe=self.chosen_profile.data,
+            ndx=0,
+            epsg_code=self.chosen_profile.epsg_code
+        )
+
+        if len(pts) != 2:
+            warn(self,
+                 self.plugin_name,
+                 "Input must be a line with two points")
             return
-        out_layer = out_shape.CreateLayer('output_lines', geom_type=ogr.wkbLineString)
-        if out_layer is None:
-            QtWidgets.QMessageBox.critical(self, "Results", "Unable to create output shapefile: %s" % fileName)
-            return        
-        
-        # add fields to the output shapefile      
 
-        pathId_fieldDef = ogr.FieldDefn('id', ogr.OFTInteger)
-        out_layer.CreateField(pathId_fieldDef)
-                
-        srcPt_x_fieldDef = ogr.FieldDefn('srcPt_x', ogr.OFTReal)
-        out_layer.CreateField(srcPt_x_fieldDef)
+        self.geoprofiles = GeoProfile()
+        self.profiler = LinearProfiler(
+            start_pt=pts[0],
+            end_pt=pts[1],
+            densify_distance=5
+        )
 
-        srcPt_y_fieldDef = ogr.FieldDefn('srcPt_y', ogr.OFTReal)
-        out_layer.CreateField(srcPt_y_fieldDef)
+        topo_profile = self.profiler.profile_grid(self.chosen_dem)
+        self.geoprofiles.topo_profile = topo_profile
 
-        srcPt_z_fieldDef = ogr.FieldDefn('srcPt_z', ogr.OFTReal)
-        out_layer.CreateField(srcPt_z_fieldDef)        
-        
-        DipDir_fieldDef = ogr.FieldDefn('dip_dir', ogr.OFTReal)
-        out_layer.CreateField(DipDir_fieldDef)
+        self.fig = plot(self.geoprofiles)
 
-        DipAng_fieldDef = ogr.FieldDefn('dip_ang', ogr.OFTReal)
-        out_layer.CreateField(DipAng_fieldDef)        
-                        
-        # get the layer definition of the output shapefile
-        outshape_featdef = out_layer.GetLayerDefn()  
+        if self.fig:
+            self.fig.show()
+        else:
+            warn(self,
+                 self.plugin_name,
+                 "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
+                 )
+            return
 
-        for curr_path_id in sorted(self.spdata.inters.networks.keys()):
+    def create_multi_parallel_profiles(self):
 
-            curr_path_points = self.spdata.inters.networks[curr_path_id]
-                                    
-            line = ogr.Geometry(ogr.wkbLineString)
-            
-            for curr_point_id in curr_path_points:  
-                          
-                curr_intersection = self.spdata.inters.links[curr_point_id-1]
-                           
-                i, j, direct = curr_intersection['i'], curr_intersection['j'], curr_intersection['pi_dir']
-                
-                if direct == 'x':
-                    x, y = self.spdata.inters.xcoords_x[i, j], self.spdata.inters.xcoords_y[i, j]
-                if direct == 'y':
-                    x, y = self.spdata.inters.ycoords_x[i, j], self.spdata.inters.ycoords_y[i, j]
-                                       
-                z = plane_z(x, y)
- 
-                line.AddPoint(x, y, z)
+        dialog = MultiProfilesDefWindow()
 
-            # create a new feature
-            line_shape = ogr.Feature(outshape_featdef)
-            line_shape.SetGeometry(line)                           
+        if dialog.exec_():
+            densify_distance = dialog.densifyDistanceDoubleSpinBox.value()
+            total_profiles_number = dialog.numberOfProfilesSpinBox.value()
+            profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
+            profiles_arrangement = dialog.profilesLocationComboBox.currentText()
+            self.superposed_profiles = dialog.superposedProfilesCheckBox.isChecked()
+        else:
+            return
 
-            line_shape.SetField('id', curr_path_id)
-            line_shape.SetField('srcPt_x', srcPt.x)
-            line_shape.SetField('srcPt_y', srcPt.y) 
-            line_shape.SetField('srcPt_z', srcPt.z)
+        pts = extract_line_points(
+            geodataframe=self.chosen_profile.data,
+            ndx=0,
+            epsg_code=self.chosen_profile.epsg_code
+        )
+
+        if len(pts) != 2:
+            warn(self,
+                 self.plugin_name,
+                 "Input must be a line with two points")
+            return
+
+        self.geoprofiles = GeoProfileSet()
+        base_profiler = LinearProfiler(
+            start_pt=pts[0],
+            end_pt=pts[1],
+            densify_distance=densify_distance
+        )
+
+        self.profiler = ParallelProfiler.fromBaseProfiler(
+            base_profiler=base_profiler,
+            profs_num=total_profiles_number,
+            profs_offset=profiles_offset,
+            profs_arr=profiles_arrangement
+        )
+
+        topo_profiles = self.profiler.profile_grid(self.chosen_dem)
+
+        self.geoprofiles.topo_profiles_set = topo_profiles
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles
+        )
+
+        if self.fig:
+            self.fig.show()
+        else:
+            warn(
+                self,
+                self.plugin_name,
+                "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
+            )
+
+    def project_attitudes(self):
+
+        point_layers = list(filter(lambda dataset: containsPoints(dataset.data), self.vector_datasets))
+
+        if not point_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No point layer available")
+            return
+
+        dialog = ProjectAttitudesDefWindow(
+            self.plugin_name,
+            point_layers
+        )
+
+        if dialog.exec_():
+
+            input_layer_index = dialog.inputPtLayerComboBox.currentIndex()
+
+            azimuth_is_dipdir = dialog.azimuthDipDirRadioButton.isChecked()
+            azimuth_is_strikerhr = dialog.azimuthRHRStrikeRadioButton.isChecked()
+
+            attitude_id_fldnm = dialog.idFldNmComboBox.currentText()
+            attitude_azimuth_angle_fldnm = dialog.attitudeAzimAngleFldNmComboBox.currentText()
+            attitude_dip_angle_fldnm = dialog.attitudeDipAngleFldNmcomboBox.currentText()
+
+            projection_nearest_intersection = dialog.projectNearestIntersectionRadioButton.isChecked()
+            projection_constant_axis = dialog.projectAxisWithTrendRadioButton.isChecked()
+            projection_axes_from_fields = dialog.projectAxesFromFieldsRadioButton.isChecked()
+
+            projection_axis_trend_angle = dialog.projectAxisTrendAngDblSpinBox.value()
+            projection_axis_plunge_angle = dialog.projectAxisPlungeAngDblSpinBox.value()
+
+            projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
+            projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
+
+            projection_max_distance_from_profile = dialog.maxDistFromProfDoubleSpinBox.value()
+
+            labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
+            labels_add_id = dialog.labelsIdCheckBox.isChecked()
+
+            attitudes_color = dialog.attitudesColorComboBox.currentText()
+
+        else:
+
+            return
+
+        attitudes = point_layers[input_layer_index].data
+
+        success, result = try_extract_georeferenced_attitudes(
+            geodataframe=attitudes,
+            azim_fldnm=attitude_azimuth_angle_fldnm,
+            dip_ang_fldnm=attitude_dip_angle_fldnm,
+            id_fldnm=attitude_id_fldnm,
+            is_rhrstrike=azimuth_is_strikerhr
+        )
+
+        if not success:
+            msg = result
+            warn(
+                self,
+                self.plugin_name,
+                "Error with georeferenced attitudes extraction: {}".format(msg)
+            )
+            return
+
+        georef_attitudes = result
+
+        mapping_method = {}
+        if projection_nearest_intersection:
+            mapping_method['method'] = 'nearest'
+        elif projection_constant_axis:
+            mapping_method['method'] = 'common axis'
+            mapping_method['trend'] = projection_axis_trend_angle
+            mapping_method['plunge'] = projection_axis_plunge_angle
+        elif projection_axes_from_fields:
+            mapping_method['method'] = 'individual axes'
+            axes_values = []
+            for projection_axes_trend, projection_axes_plunge in zip(attitudes[projection_axes_trend_fldnm], attitudes[projection_axes_plunge_fldnm]):
+                axes_values.append((projection_axes_trend, projection_axes_plunge))
+            mapping_method['individual_axes_values'] = axes_values
+        else:
+            raise Exception("Debug_ mapping method not correctly defined")
+
+        attitudes_3d = georef_attitudes_3d_from_grid(
+            structural_data=georef_attitudes,
+            height_source=self.chosen_dem,
+        )
+
+        att_projs = self.profiler.map_georef_attitudes_to_section(
+            attitudes_3d=attitudes_3d,
+            mapping_method=mapping_method,
+            max_profile_distance=projection_max_distance_from_profile
+        )
+
+        self.geoprofiles.profile_attitudes = att_projs
+
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            attitude_color=attitudes_color,
+            labels_add_orientdip=labels_add_orientdip,
+            labels_add_id=labels_add_id
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
+
+    def intersect_lines(self):
+
+        mline_layers = list(filter(lambda dataset: containsLines(dataset.data), self.vector_datasets))
+
+        if not mline_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No line layer available")
+            return
+
+        dialog = LinesIntersectionDefWindow(
+            self.plugin_name,
+            mline_layers
+        )
+
+        if dialog.exec_():
+
+            input_layer_index = dialog.inputLayercomboBox.currentIndex()
+            category_fldnm = dialog.labelFieldcomboBox.currentText()
+            add_labels = dialog.addLabelcheckBox.isChecked()
+
+        else:
+
+            return
+
+        mlines_geoms = mline_layers[input_layer_index].data
+        mlines_geoms = mlines_geoms[~mlines_geoms.is_empty]
+
+        profiler_pyproj_epsg = f"EPSG:{self.profiler.epsg_code()}"
+        if not mlines_geoms.crs == pyproj.Proj(profiler_pyproj_epsg):
+            mlines_geoms = mlines_geoms.to_crs(
+                epsg=self.profiler.epsg_code()
+            )
+
+        toprocess_geometries = []
+
+        print("Input geometries")
+
+        for index, row in mlines_geoms.iterrows():
+
+            print(index, row)
+
+            geom_cat = row[category_fldnm]
+            mline_geometry = row["geometry"]
+
+            if mline_geometry:
+
+                geometry = line_from_shapely(
+                    shapely_geom=mline_geometry,
+                    epsg_code=self.profiler.epsg_code()
+                )
+
+                print(geometry)
+
+                toprocess_geometries.append(
+                    (geom_cat, geometry)
+                )
+
+        if isinstance(self.profiler, LinearProfiler):
+
+            print("Intersections")
+
+            intersections_cat_geom = []
+
+            for geom_cat, geometry in toprocess_geometries:
+
+                ptsegm_intersections = self.profiler.intersect_line(
+                    mline=geometry
+                )
+
+                print(geom_cat, ptsegm_intersections)
+
+                if ptsegm_intersections:
+
+                    intersections_cat_geom.append((geom_cat, ptsegm_intersections))
+
+            profile_intersections = PointSegmentCollections(intersections_cat_geom)
+
+            self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
+
+        elif isinstance(self.profiler, ParallelProfiler):
+
+            profiles_intersections = []
+
+            for profile in self.profiler:
+
+                intersections_cat_geom = []
+
+                for geom_cat, geometry in toprocess_geometries:
+
+                    pt_segm_collection = PointSegmentCollection(
+                        element_id=geom_cat,
+                        geoms=profile.intersect_line(geometry)
+                    )
+
+                    intersections_cat_geom.append(pt_segm_collection)
+
+                profile_intersections = PointSegmentCollections(intersections_cat_geom)
+                profiles_intersections.append(profile_intersections)
+
+            lines_intersections_set = PointSegmentCollectionsSet(profiles_intersections)
+            self.geoprofiles.lines_intersections_set = lines_intersections_set
+
+        else:
+
+            raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
+
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            inters_label=add_labels
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
+
+    def intersect_polygons(self):
+
+        mpolygon_layers = list(filter(lambda dataset: containsPolygons(dataset.data), self.vector_datasets))
+
+        if not mpolygon_layers:
+            warn(self,
+                 self.plugin_name,
+                 "No polygon layer available")
+            return
+
+        dialog = PolygonsIntersectionDefWindow(
+            self.plugin_name,
+            mpolygon_layers
+        )
+
+        if dialog.exec_():
+
+            input_layer_index = dialog.polygonLayercomboBox.currentIndex()
+            category_fldnm = dialog.classificationFieldcomboBox.currentText()
+            add_labels = dialog.addLabelcheckBox.isChecked()
+
+        else:
+
+            return
+
+        mpolygons_geoms = mpolygon_layers[input_layer_index].data
+        mpolygons_geoms = mpolygons_geoms[~mpolygons_geoms.is_empty]
+
+        profiler_pyproj_epsg = f"EPSG:{self.profiler.epsg_code()}"
+        if not mpolygons_geoms.crs == pyproj.Proj(profiler_pyproj_epsg):
+            mpolygons_geoms = mpolygons_geoms.to_crs(
+                epsg=self.profiler.epsg_code()
+            )
+
+        toprocess_geometries = []
+
+        for index, row in mpolygons_geoms.iterrows():
+
+            geom_cat = row[category_fldnm]
+            mpolygon_geometry = row["geometry"]
+
+            if mpolygon_geometry:
+
+                geometry = MPolygon(
+                        shapely_geom=mpolygon_geometry,
+                        epsg_code=self.profiler.epsg_code()
+                )
+
+                toprocess_geometries.append(
+                    (geom_cat, geometry)
+                )
+
+        pt_segment_intersections = []
+
+        if isinstance(self.profiler, LinearProfiler):
+
+            for geom_cat, geometry in toprocess_geometries:
+
+                #print(type(geometry))
+                intersections = self.profiler.intersect_polygon(
+                    mpolygon=geometry
+                )
+
+                if intersections:
+                    pt_segment_intersections.append((geom_cat, intersections))
+
+        for cat, inters in pt_segment_intersections:
+            print(cat, inters)
+
+        """
+        for cat, intersections in imported_polygons:
+            print(cat)
+            for intersection in intersections:
+                print(intersection)
+        """
+
+        """
+        polygons_intersections_set = PointSegmentCollectionsSet(intersection_sections)
+
+        self.geoprofiles.polygons_intersections_set = polygons_intersections_set
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            inters_label=add_labels
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
+        """
+
+
+class PlaneDemIntersWindow(QDialog):
+
+    def __init__(self,
+        plugin_name: str,
+        dems,
+        line_layers
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/intersections.ui', self)
+
+        dem_sources = [os.path.basename(dem.filePath) for dem in dems]
+        self.InputDemComboBox.insertItems(0, dem_sources)
+
+        lines_sources = map(lambda data_par: os.path.basename(data_par.filePath), line_layers)
+        self.InputTracesComboBox.insertItems(0, lines_sources)
+
+
+class ChooseSourceDataDialog(QDialog):
+
+    def __init__(
+        self,
+        plugin_name: str,
+        data_sources: List[str],
+        parent=None
+    ):
+
+        super(ChooseSourceDataDialog, self).__init__(parent)
+
+        self.plugin_name = plugin_name
+
+        self.data_layers = data_sources
+
+        self.listData_treeWidget = QTreeWidget()
+        self.listData_treeWidget.setColumnCount(1)
+        self.listData_treeWidget.headerItem().setText(0, "Name")
+        self.listData_treeWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.listData_treeWidget.setDragEnabled(False)
+        self.listData_treeWidget.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.listData_treeWidget.setAlternatingRowColors(True)
+        self.listData_treeWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.listData_treeWidget.setTextElideMode(Qt.ElideLeft)
+
+        self.populate_layers_treewidget()
+
+        self.listData_treeWidget.resizeColumnToContents(0)
+        self.listData_treeWidget.resizeColumnToContents(1)
+
+        okButton = QPushButton("&OK")
+        cancelButton = QPushButton("Cancel")
+
+        buttonLayout = QHBoxLayout()
+        buttonLayout.addStretch()
+        buttonLayout.addWidget(okButton)
+        buttonLayout.addWidget(cancelButton)
+
+        layout = QGridLayout()
+
+        layout.addWidget(self.listData_treeWidget, 0, 0, 1, 3)
+        layout.addLayout(buttonLayout, 1, 0, 1, 3)
+
+        self.setLayout(layout)
+
+        okButton.clicked.connect(self.accept)
+        cancelButton.clicked.connect(self.reject)
+
+        self.setWindowTitle("Define data source")
+
+    def populate_layers_treewidget(self):
+
+        self.listData_treeWidget.clear()
+
+        for raster_layer in self.data_layers:
+            tree_item = QTreeWidgetItem(self.listData_treeWidget)
+            tree_item.setText(0, raster_layer)
+
+
+class MultiProfilesDefWindow(QtWidgets.QDialog):
+
+    def __init__(self):
+
+        super().__init__()
+        uic.loadUi('./widgets/multiple_profiles.ui', self)
+
+        self.densifyDistanceDoubleSpinBox.setValue(5.0)
+        self.numberOfProfilesSpinBox.setValue(5)
+        self.profilesOffsetDoubleSpinBox.setValue(500)
+        self.profilesLocationComboBox.addItems(multiple_profiles_choices)
+
+        self.setWindowTitle("Multiple parallel profiles")
+
+
+class ProjectAttitudesDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+        plugin_name: str,
+        point_layers: List
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/project_attitudes.ui', self)
+
+        self.point_layers = point_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.point_layers)
+
+        self.inputPtLayerComboBox.insertItems(0, data_sources)
+        self.inputPtLayerComboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.point_layers[0]
+        fields = start_layer.data.columns
+
+        self.idFldNmComboBox.insertItems(0, fields)
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.azimuthDipDirRadioButton.setChecked(True)
+        self.projectNearestIntersectionRadioButton.setChecked(True)
+
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+        self.attitudesColorComboBox.insertItems(0, attitude_colors)
+
+        self.setWindowTitle("Project geological attitudes")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.point_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.idFldNmComboBox.clear()
+        self.idFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeAzimAngleFldNmComboBox.clear()
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeDipAngleFldNmcomboBox.clear()
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.projectAxesTrendFldNmComboBox.clear()
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+
+        self.projectAxesPlungeFldNmComboBox.clear()
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+
+class LinesIntersectionDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+        plugin_name: str,
+        line_layers: List
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/line_intersections.ui', self)
+
+        self.line_layers = line_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.line_layers)
+
+        self.inputLayercomboBox.insertItems(0, data_sources)
+        self.inputLayercomboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.line_layers[0]
+        fields = start_layer.data.columns
+
+        self.labelFieldcomboBox.insertItems(0, fields)
+
+        self.setWindowTitle("Line intersections")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.line_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.labelFieldcomboBox.clear()
+        self.labelFieldcomboBox.insertItems(0, fields)
+
+
+class PolygonsIntersectionDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+                 plugin_name: str,
+                 polygon_layers: List
+                 ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/polygons_intersections.ui', self)
+
+        self.polygon_layers = polygon_layers
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.polygon_layers)
+
+        self.polygonLayercomboBox.insertItems(0, data_sources)
+        self.polygonLayercomboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.polygon_layers[0]
+        fields = start_layer.data.columns
+
+        self.classificationFieldcomboBox.insertItems(0, fields)
+
+        self.setWindowTitle("Polygon intersections")
+
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.polygon_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.classificationFieldcomboBox.clear()
+        self.classificationFieldcomboBox.insertItems(0, fields)
+
+
+class EPSGCodeDefineWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+        plugin_name: str
+    ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        uic.loadUi('./widgets/define_epsg_code.ui', self)
+
+
+if __name__ == "__main__":
     
-            line_shape.SetField('dip_dir', srcPlaneAttitude._dipdir)
-            line_shape.SetField('dip_ang', srcPlaneAttitude._dipangle)             
-    
-            # add the feature to the output layer
-            out_layer.CreateFeature(line_shape)            
-            
-            # destroy no longer used objects
-            line.Destroy()
-            line_shape.Destroy()
-                            
-        # destroy output geometry
-        out_shape.Destroy()
-
-        QtWidgets.QMessageBox.information(self, "Result", "Saved to shapefile: %s" % fileName)
-
-    def helpAbout(self):
-        """
-        Visualize an About window.
-        """
-        QtWidgets.QMessageBox.about(self, "About gSurf",
-        """
-            <p>gSurf version 0.2.0 for Python 3 / Qt5</p>
-            <p>M. Alberti, <a href="http://www.malg.eu">www.malg.eu</a></p> 
-            <p>This program calculates the intersection between a plane and a DEM in an interactive way.
-            The result can be saved as a point/linear shapefile.</p>            
-             <p>Report any bug to <a href="mailto:alberti.m65@gmail.com">alberti.m65@gmail.com</a></p>
-        """)        
-
-    def openHelp(self):
-        """
-        Open an Help HTML file
-        from CADTOOLS module in QGIS
-        """
-        help_path = os.path.join(os.path.dirname(__file__), 'help', 'help.html')         
-        webbrowser.open(help_path)
- 
- 
-class AnchoredText(AnchoredOffsetbox):
-    """
-    Creation of an info box in the plot
-    
-    """
-    def __init__(self, s, loc, pad=0.4, borderpad=0.5, prop=None, frameon=True):
-
-        self.txt = TextArea(s, minimumdescent=False)
-
-        super(AnchoredText, self).__init__(loc, pad=pad, borderpad=borderpad,
-                                           child=self.txt,
-                                           prop=prop,
-                                           frameon=frameon)
-
-
-if __name__ == '__main__':
-
     app = QtWidgets.QApplication(sys.argv)
-
-    form = MainWindow()
-    form.show()
+    mainWindow = MainWindow()
     sys.exit(app.exec_())
-
-
 
 
