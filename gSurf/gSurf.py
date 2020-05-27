@@ -9,7 +9,7 @@ import fiona
 
 
 from PyQt5.QtCore import Qt
-from PyQt5 import QtWidgets, uic
+from PyQt5 import QtWidgets #, uic
 
 from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
@@ -74,15 +74,75 @@ def get_selected_layer_index(
         return treewidget_data_list.selectedIndexes()[0].row()
 
 
+class Ui_MainWindow(object):
+
+    def setupUi(self, MainWindow):
+
+        self.menubar = QtWidgets.QMenuBar(MainWindow)
+
+        self.menuFile = QtWidgets.QMenu(self.menubar)
+        self.menuFile.setTitle("File")
+
+        self.menuProcessing = QtWidgets.QMenu(self.menubar)
+        self.menuProcessing.setTitle("Processing")
+
+        self.menuHelp = QtWidgets.QMenu(self.menubar)
+        self.menuHelp.setTitle("Help")
+
+        MainWindow.setMenuBar(self.menubar)
+
+        self.statusbar = QtWidgets.QStatusBar(MainWindow)
+
+        MainWindow.setStatusBar(self.statusbar)
+
+        self.actionInput_DEM = QtWidgets.QAction(MainWindow)
+        self.actionInput_DEM.setText("Open DEM")
+
+        self.actionInput_line_shapefile = QtWidgets.QAction(MainWindow)
+        self.actionInput_line_shapefile.setText("Open line shapefile")
+
+        self.actionQuit = QtWidgets.QAction(MainWindow)
+        self.actionQuit.setText("Quit")
+
+        self.actionHelp = QtWidgets.QAction(MainWindow)
+        self.actionHelp.setText("Help")
+
+        self.actionAbout = QtWidgets.QAction(MainWindow)
+        self.actionAbout.setText("About")
+
+        self.actionPoints = QtWidgets.QAction(MainWindow)
+        self.actionPoints.setObjectName("actionPoints")
+        self.actionLines = QtWidgets.QAction(MainWindow)
+        self.actionLines.setObjectName("actionLines")
+
+        self.menuFile.addAction(self.actionInput_DEM)
+        self.menuFile.addAction(self.actionInput_line_shapefile)
+        self.menuFile.addSeparator()
+        self.menuFile.addAction(self.actionQuit)
+
+        self.menuHelp.addAction(self.actionHelp)
+        self.menuHelp.addAction(self.actionAbout)
+
+        self.menubar.addAction(self.menuFile.menuAction())
+        self.menubar.addAction(self.menuProcessing.menuAction())
+        self.menubar.addAction(self.menuHelp.menuAction())
+
+
 class MainWindow(QtWidgets.QMainWindow):
 
-    def __init__(self):
+    def __init__(self, parent=None):
 
-        super().__init__()
+        super().__init__(parent)
+
+        '''
         uic.loadUi(
             './widgets/gSurf_0.3.0.ui',
             self
         )
+        '''
+
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
 
         self.plugin_name = "gSurf"
         self.chosen_dem = None
@@ -90,6 +150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chosen_profile_data = None
         self.fig = None
 
+        """
         # File menu
 
         self.actLoadDem.triggered.connect(self.load_dem)
@@ -119,6 +180,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.selected_dem_index = []
         self.selected_profile_index = []
+        
+        """
 
         # window visibility
 
