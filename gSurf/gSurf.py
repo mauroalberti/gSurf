@@ -83,49 +83,61 @@ class Ui_MainWindow(object):
         self.menuFile = QtWidgets.QMenu(self.menubar)
         self.menuFile.setTitle("File")
 
-        self.menuProcessing = QtWidgets.QMenu(self.menubar)
-        self.menuProcessing.setTitle("Processing")
+        self.actLoadDem = QtWidgets.QAction(MainWindow)
+        self.actLoadDem.setText("Load DEM")
+        self.menuFile.addAction(self.actLoadDem)
 
-        self.menuHelp = QtWidgets.QMenu(self.menubar)
-        self.menuHelp.setTitle("Help")
+        self.actLoadVectorLayer = QtWidgets.QAction(MainWindow)
+        self.actLoadVectorLayer.setText("Load vector layer")
+        self.menuFile.addAction(self.actLoadVectorLayer)
 
-        MainWindow.setMenuBar(self.menubar)
-
-        self.statusbar = QtWidgets.QStatusBar(MainWindow)
-
-        MainWindow.setStatusBar(self.statusbar)
-
-        self.actionInput_DEM = QtWidgets.QAction(MainWindow)
-        self.actionInput_DEM.setText("Open DEM")
-
-        self.actionInput_line_shapefile = QtWidgets.QAction(MainWindow)
-        self.actionInput_line_shapefile.setText("Open line shapefile")
+        self.menuFile.addSeparator()
 
         self.actionQuit = QtWidgets.QAction(MainWindow)
         self.actionQuit.setText("Quit")
+        self.menuFile.addAction(self.actionQuit)
+
+        self.menubar.addAction(self.menuFile.menuAction())
+
+        self.menuProcessing = QtWidgets.QMenu(self.menubar)
+        self.menuProcessing.setTitle("Processing")
+
+        self.actOpenDemIntersection = QtWidgets.QAction(MainWindow)
+        self.actOpenDemIntersection.setText("Plane-DEM intersections")
+        self.menuProcessing.addAction(self.actOpenDemIntersection)
+
+        self.menuProfiles = QtWidgets.QMenu(self.menuProcessing)
+        self.menuProfiles.setTitle("Profiles")
+
+        self.actChooseDEMs = QtWidgets.QAction(MainWindow)
+        self.actChooseDEMs.setText("Choose DEM")
+        self.menuProfiles.addAction(self.actChooseDEMs)
+
+        self.menuProcessing.addAction(self.menuProfiles.menuAction())
+
+        self.actOpenStereoplot = QtWidgets.QAction(MainWindow)
+        self.actOpenStereoplot.setText("Stereoplot")
+        self.menuProcessing.addAction(self.actOpenStereoplot)
+
+        self.menubar.addAction(self.menuProcessing.menuAction())
+
+        self.menuInfo = QtWidgets.QMenu(self.menubar)
+        self.menuInfo.setTitle("Info")
 
         self.actionHelp = QtWidgets.QAction(MainWindow)
         self.actionHelp.setText("Help")
+        self.menuInfo.addAction(self.actionHelp)
 
         self.actionAbout = QtWidgets.QAction(MainWindow)
         self.actionAbout.setText("About")
+        self.menuInfo.addAction(self.actionAbout)
 
-        self.actionPoints = QtWidgets.QAction(MainWindow)
-        self.actionPoints.setObjectName("actionPoints")
-        self.actionLines = QtWidgets.QAction(MainWindow)
-        self.actionLines.setObjectName("actionLines")
+        self.menubar.addAction(self.menuInfo.menuAction())
 
-        self.menuFile.addAction(self.actionInput_DEM)
-        self.menuFile.addAction(self.actionInput_line_shapefile)
-        self.menuFile.addSeparator()
-        self.menuFile.addAction(self.actionQuit)
+        self.statusbar = QtWidgets.QStatusBar(MainWindow)
+        MainWindow.setStatusBar(self.statusbar)
 
-        self.menuHelp.addAction(self.actionHelp)
-        self.menuHelp.addAction(self.actionAbout)
-
-        self.menubar.addAction(self.menuFile.menuAction())
-        self.menubar.addAction(self.menuProcessing.menuAction())
-        self.menubar.addAction(self.menuHelp.menuAction())
+        MainWindow.setMenuBar(self.menubar)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -150,26 +162,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chosen_profile_data = None
         self.fig = None
 
-        """
         # File menu
 
-        self.actLoadDem.triggered.connect(self.load_dem)
-        self.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
+        self.ui.actLoadDem.triggered.connect(self.load_dem)
+        self.ui.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
 
         # Plane-DEM intersections menu
 
-        self.actOpenDemIntersection.triggered.connect(self.open_dem_intersection_win)
+        self.ui.actOpenDemIntersection.triggered.connect(self.open_dem_intersection_win)
 
         # Profiles menu
 
-        self.actChooseDEMs.triggered.connect(self.define_used_dem)
-        self.actChooseLines.triggered.connect(self.define_used_profile_dataset)
-
+        self.ui.actChooseDEMs.triggered.connect(self.define_used_dem)
+        #self.actChooseLines.triggered.connect(self.define_used_profile_dataset)
+        """
         self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
         self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
         self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
         self.actIntersectLineLayer.triggered.connect(self.intersect_lines)
         self.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
+        """
 
         # data storage
 
@@ -180,8 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.selected_dem_index = []
         self.selected_profile_index = []
-        
-        """
+
 
         # window visibility
 
