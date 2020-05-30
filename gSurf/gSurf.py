@@ -7,9 +7,8 @@ from collections import namedtuple
 import pyproj
 import fiona
 
-
 from PyQt5.QtCore import Qt
-from PyQt5 import QtWidgets #, uic
+from PyQt5 import QtWidgets, QtGui, uic
 
 from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
@@ -113,6 +112,34 @@ class Ui_MainWindow(object):
         self.actChooseDEMs.setText("Choose DEM")
         self.menuProfiles.addAction(self.actChooseDEMs)
 
+        self.actChooseLines = QtWidgets.QAction(MainWindow)
+        self.actChooseLines.setText("Choose profile dataset")
+        self.menuProfiles.addAction(self.actChooseLines)
+
+        self.menuProfiles.addSeparator()
+
+        self.actCreateSingleProfile = QtWidgets.QAction(MainWindow)
+        self.actCreateSingleProfile.setText("Create single profile")
+        self.menuProfiles.addAction(self.actCreateSingleProfile)
+
+        self.actCreateParallelProfiles = QtWidgets.QAction(MainWindow)
+        self.actCreateParallelProfiles.setText("Create parallel profiles")
+        self.menuProfiles.addAction(self.actCreateParallelProfiles)
+
+        self.menuProfiles.addSeparator()
+
+        self.actProjectGeolAttitudes = QtWidgets.QAction(MainWindow)
+        self.actProjectGeolAttitudes.setText("Project geological attitudes")
+        self.menuProfiles.addAction(self.actProjectGeolAttitudes)
+
+        self.actIntersectLineLayer = QtWidgets.QAction(MainWindow)
+        self.actIntersectLineLayer.setText("Intersect line layer")
+        self.menuProfiles.addAction(self.actIntersectLineLayer)
+
+        self.actIntersectPolygonLayer = QtWidgets.QAction(MainWindow)
+        self.actIntersectPolygonLayer.setText("Intersect polygon layer")
+        self.menuProfiles.addAction(self.actIntersectPolygonLayer)
+
         self.menuProcessing.addAction(self.menuProfiles.menuAction())
 
         self.actOpenStereoplot = QtWidgets.QAction(MainWindow)
@@ -174,14 +201,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Profiles menu
 
         self.ui.actChooseDEMs.triggered.connect(self.define_used_dem)
-        #self.actChooseLines.triggered.connect(self.define_used_profile_dataset)
-        """
-        self.actionCreateSingleProfile.triggered.connect(self.create_single_profile)
-        self.actionCreateMultipleParallelProfiles.triggered.connect(self.create_multi_parallel_profiles)
-        self.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
-        self.actIntersectLineLayer.triggered.connect(self.intersect_lines)
-        self.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
-        """
+        self.ui.actChooseLines.triggered.connect(self.define_used_profile_dataset)
+
+        self.ui.actCreateSingleProfile.triggered.connect(self.create_single_profile)
+        self.ui.actCreateParallelProfiles.triggered.connect(self.create_parallel_profiles)
+        self.ui.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
+        self.ui.actIntersectLineLayer.triggered.connect(self.intersect_lines)
+        self.ui.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
+
 
         # data storage
 
@@ -453,7 +480,7 @@ class MainWindow(QtWidgets.QMainWindow):
                  )
             return
 
-    def create_multi_parallel_profiles(self):
+    def create_parallel_profiles(self):
 
         dialog = MultiProfilesDefWindow()
 
@@ -520,7 +547,7 @@ class MainWindow(QtWidgets.QMainWindow):
                  "No point layer available")
             return
 
-        dialog = ProjectAttitudesDefWindow(
+        dialog = ProjectGeologicalAttitudesDefineWindow(
             self.plugin_name,
             point_layers
         )
@@ -1109,6 +1136,149 @@ class EPSGCodeDefineWindow(QtWidgets.QDialog):
         self.plugin_name = plugin_name
 
         uic.loadUi('./widgets/define_epsg_code.ui', self)
+
+
+class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+                 plugin_name: str,
+                 point_layers: List
+                 ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        self.point_layers = point_layers
+
+        vertical_box_layout = QtWidgets.QVBoxLayout()
+
+        # input section
+
+        input_group_box = QtWidgets.QGroupBox(self)
+        input_group_box.setTitle('Input')
+
+        input_grid_layout = QtWidgets.QGridLayout()
+
+        # input point geological layer
+
+        input_grid_layout.addWidget(QtWidgets.QLabel("Layer "), 0, 0, 1, 1)
+        self.inputPtLayerComboBox = QtWidgets.QComboBox()
+        self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
+
+        input_grid_layout.addWidget(self.inputPtLayerComboBox, 0, 1, 1, 5)
+        self.struct_point_refresh_lyr_combobox()
+
+        input_grid_layout.addWidget(QtWidgets.QLabel("Id"), 1, 1, 1, 1)
+
+        self.azimuthDipDirRadioButton = QtWidgets.QRadioButton("Dip dir.")
+        self.azimuthDipDirRadioButton.setChecked(True)
+        input_grid_layout.addWidget(self.azimuthDipDirRadioButton, 1, 2, 1, 1)
+
+        self.azimuthRHRStrikeRadioButton = QtWidgets.QRadioButton("RHR str.")
+        input_grid_layout.addWidget(self.azimuthRHRStrikeRadioButton, 1, 3, 1, 1)
+
+        input_grid_layout.addWidget(QtWidgets.QLabel("Dip angle"), 1, 4, 1, 1)
+
+        #
+
+        input_grid_layout.addWidget(QtWidgets.QLabel("Fields"), 2, 0, 1, 1)
+
+        self.idFldNmComboBox = QtWidgets.QComboBox()
+        input_grid_layout.addWidget(self.idFldNmComboBox, 2, 1, 1, 1)
+
+        self.qcbxProjPointOrientFld = QtWidgets.QComboBox()
+        input_grid_layout.addWidget(self.qcbxProjPointOrientFld, 2, 2, 1, 2)
+
+        self.attitudeDipAngleFldNmcomboBox = QtWidgets.QComboBox()
+        input_grid_layout.addWidget(self.attitudeDipAngleFldNmcomboBox, 2, 4, 1, 2)
+
+        input_group_box.setLayout(input_grid_layout)
+        vertical_box_layout.addWidget(input_group_box)
+
+        # projection choice
+
+        project_along_group_box = QtWidgets.QGroupBox(self)
+        project_along_group_box.setTitle('Project along')
+
+        project_along_grid_layout = QtWidgets.QGridLayout()
+
+        self.projectNearestIntersectionRadioButton = QtWidgets.QRadioButton("nearest intersection")
+        self.projectNearestIntersectionRadioButton.setChecked(True)
+        project_along_grid_layout.addWidget(self.projectNearestIntersectionRadioButton, 0, 0, 1, 3)
+
+        self.projectAxisWithTrendRadioButton = QtWidgets.QRadioButton("constant axis with trend")
+        project_along_grid_layout.addWidget(self.projectAxisWithTrendRadioButton, 1, 0, 1, 1)
+
+        self.projectAxisTrendAngDblSpinBox = QtWidgets.QDoubleSpinBox()
+        self.projectAxisTrendAngDblSpinBox.setMinimum(0.0)
+        self.projectAxisTrendAngDblSpinBox.setMaximum(359.9)
+        self.projectAxisTrendAngDblSpinBox.setDecimals(1)
+        project_along_grid_layout.addWidget(self.projectAxisTrendAngDblSpinBox, 1, 1, 1, 1)
+
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge"), 1, 2, 1, 1)
+
+        self.projectAxisPlungeAngDblSpinBox = QtWidgets.QDoubleSpinBox()
+        self.projectAxisPlungeAngDblSpinBox.setMinimum(0.0)
+        self.projectAxisPlungeAngDblSpinBox.setMaximum(89.9)
+        self.projectAxisPlungeAngDblSpinBox.setDecimals(1)
+
+        project_along_grid_layout.addWidget(self.projectAxisPlungeAngDblSpinBox, 1, 3, 1, 1)
+
+        self.projectAxesFromFieldsRadioButton = QtWidgets.QRadioButton("axes from fields")
+        project_along_grid_layout.addWidget(self.projectAxesFromFieldsRadioButton, 2, 0, 1, 1)
+
+        self.projectAxesTrendFldNmComboBox = QtWidgets.QComboBox()
+        project_along_grid_layout.addWidget(self.projectAxesTrendFldNmComboBox, 2, 1, 1, 1)
+
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge field"), 2, 2, 1, 1)
+        self.projectAxesPlungeFldNmComboBox = QtWidgets.QComboBox()
+        project_along_grid_layout.addWidget(self.projectAxesPlungeFldNmComboBox, 2, 3, 1, 1)
+
+        project_along_group_box.setLayout(project_along_grid_layout)
+        vertical_box_layout.addWidget(project_along_group_box)
+
+        # plot section
+
+        plot_group_box = QtWidgets.QGroupBox(self)
+        plot_group_box.setTitle('Plot geological attitudes')
+
+        plot_grid_layout = QtWidgets.QGridLayout()
+
+        plot_grid_layout.addWidget(QtWidgets.QLabel("Labels"), 0, 0, 1, 1)
+
+        self.labelsOrDipCheckBox = QtWidgets.QCheckBox("or./dip")
+        plot_grid_layout.addWidget(self.labelsOrDipCheckBox, 0, 1, 1, 1)
+
+        self.labelsIdCheckBox = QtWidgets.QCheckBox("id")
+        plot_grid_layout.addWidget(self.labelsIdCheckBox, 0, 2, 1, 1)
+
+        self.attitudesColorComboBox = QtWidgets.QPushButton("Define color") #QtWidgets.QColorDialog(QtGui.QColor('orange'))
+        plot_grid_layout.addWidget(self.attitudesColorComboBox, 0, 3, 1, 2)
+
+        self.project_point_pushbutton = QtWidgets.QPushButton(self.tr("Plot"))
+        self.project_point_pushbutton.clicked.connect(self.create_struct_point_projection)
+        plot_grid_layout.addWidget(self.project_point_pushbutton, 1, 0, 1, 3)
+
+        self.reset_point_pushbutton = QtWidgets.QPushButton(self.tr("Reset plot"))
+        self.reset_point_pushbutton.clicked.connect(self.reset_struct_point_projection)
+
+        plot_grid_layout.addWidget(self.reset_point_pushbutton, 1, 3, 1, 2)
+
+        plot_group_box.setLayout(plot_grid_layout)
+        vertical_box_layout.addWidget(plot_group_box)
+
+        self.flds_prj_point_comboBoxes = [self.idFldNmComboBox,
+                                          self.qcbxProjPointOrientFld,
+                                          self.attitudeDipAngleFldNmcomboBox,
+                                          self.projectAxesTrendFldNmComboBox,
+                                          self.projectAxesPlungeFldNmComboBox]
+
+        #
+
+        self.setLayout(vertical_box_layout)
+
+        self.setWindowTitle("Project geological attitudes")
 
 
 if __name__ == "__main__":
