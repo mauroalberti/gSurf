@@ -2,7 +2,7 @@ import sys
 
 from typing import List
 
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 
 import pyproj
 import fiona
@@ -14,6 +14,7 @@ from pygsf.spatial.rasters.io import *
 from pygsf.spatial.vectorial.io import try_read_as_geodataframe
 from pygsf.spatial.vectorial.geodataframes import *
 from pygsf.utils.qt.tools import *
+from pygsf.utils.mpl.utils import *
 
 from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
 from pygsf.spatial.geology.profiles.profilers import *
@@ -89,12 +90,6 @@ class Ui_MainWindow(object):
         self.actLoadVectorLayer = QtWidgets.QAction(MainWindow)
         self.actLoadVectorLayer.setText("Load vector layer")
         self.menuFile.addAction(self.actLoadVectorLayer)
-
-        self.menuFile.addSeparator()
-
-        self.actionQuit = QtWidgets.QAction(MainWindow)
-        self.actionQuit.setText("Quit")
-        self.menuFile.addAction(self.actionQuit)
 
         self.menubar.addAction(self.menuFile.menuAction())
 
@@ -172,13 +167,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
 
         super().__init__(parent)
-
-        '''
-        uic.loadUi(
-            './widgets/gSurf_0.3.0.ui',
-            self
-        )
-        '''
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -539,19 +527,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def project_attitudes(self):
 
-        point_layers = list(filter(lambda dataset: containsPoints(dataset.data), self.vector_datasets))
+        self.point_layers = list(filter(lambda dataset: containsPoints(dataset.data), self.vector_datasets))
 
-        if not point_layers:
+        if not self.point_layers:
             warn(self,
                  self.plugin_name,
                  "No point layer available")
             return
 
-        dialog = ProjectGeologicalAttitudesDefineWindow(
+        self.attitudes_dialog = ProjectGeologicalAttitudesDefineWindow(
             self.plugin_name,
-            point_layers
+            self.chosen_dem,
+            self.profiler,
+            self.geoprofiles,
+            self.superposed_profiles,
+            self.point_layers
         )
 
+        self.attitudes_dialog.show()
+
+        '''
         if dialog.exec_():
 
             input_layer_index = dialog.inputPtLayerComboBox.currentIndex()
@@ -655,6 +650,91 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plugin_name,
                 "Unable to create figure"
             )
+    '''
+
+    '''
+    def create_struct_point_projection_QPROF(self):
+
+        if not self.check_struct_point_proj_parameters():
+            return
+
+        # get color for projected points
+        color = qcolor2rgbmpl(self.proj_point_color_QgsColorButton.color())
+
+        # define structural layer
+        prj_struct_point_qgis_ndx = self.prj_struct_point_comboBox.currentIndex() - 1  # minus 1 to account for initial text in combo box
+        structural_layer = self.pointLayers[prj_struct_point_qgis_ndx]
+        structural_layer_crs = structural_layer.crs()
+        structural_field_list = self.get_current_combobox_values(self.flds_prj_point_comboBoxes)
+        isRHRStrike = self.qrbtPlotPrjUseRhrStrike.isChecked()
+
+        # retrieve selected structural points with their attributes
+        structural_pts_attrs = pt_geoms_attrs(structural_layer, structural_field_list)
+
+        # list of structural points with original crs
+        struct_pts_in_orig_crs = [Point(float(rec[0]), float(rec[1])) for rec in structural_pts_attrs]
+
+        # IDs of structural points
+        struct_pts_ids = [rec[2] for rec in structural_pts_attrs]
+
+        # - geological planes (3D), as geological planes
+        try:
+            structural_planes = [GPlane(float(rec[3]), float(rec[4]), isRHRStrike) for rec in structural_pts_attrs]
+        except:
+            warn(self,
+                 self.plugin_name,
+                 "Check defined fields for possible errors")
+            return
+
+        geoprofile = self.input_geoprofiles.geoprofile(0)
+        struct_pts_3d = calculate_projected_3d_pts(self.canvas,
+                                                   struct_pts_in_orig_crs,
+                                                   structural_layer_crs,
+                                                   geoprofile.profile_elevations.dem_params[0])
+
+        # - zip together the point value data sets
+        assert len(struct_pts_3d) == len(structural_planes)
+        structural_data = list(zip(struct_pts_3d, structural_planes, struct_pts_ids))
+
+        ### map points onto section ###
+
+        # calculation of Cartesian plane expressing section plane
+        self.section_data = self.calculate_section_data()
+
+        # calculation of projected structural points
+
+        # get chosen mapping method
+        mapping_method = self.struct_prjct_get_mapping_method()
+        if mapping_method['method'] == 'individual axes':
+            trend_field_name, plunge_field_name = mapping_method['trend field'], mapping_method['plunge field']
+            # retrieve structural points mapping axes
+            mapping_method['individual_axes_values'] = vect_attrs(structural_layer,
+                                                                  [trend_field_name, plunge_field_name])
+
+        geoprofile.add_plane_attitudes(map_struct_pts_on_section(structural_data, self.section_data, mapping_method))
+        self.plane_attitudes_colors.append(color)
+
+        # plot profiles
+
+        plot_addit_params = dict()
+        plot_addit_params["add_trendplunge_label"] = self.plot_prj_add_trendplunge_label.isChecked()
+        plot_addit_params["add_ptid_label"] = self.plot_prj_add_pt_id_label.isChecked()
+        plot_addit_params["polygon_class_colors"] = self.polygon_classification_colors
+        plot_addit_params["plane_attitudes_colors"] = self.plane_attitudes_colors
+
+        profile_window = plot_geoprofiles(self.input_geoprofiles,
+                                          plot_addit_params)
+        self.profile_windows.append(profile_window)
+
+    def reset_struct_point_projection_QPROF(self):
+
+        try:
+            geoprofile = self.input_geoprofiles.geoprofile(0)
+            geoprofile.geoplane_attitudes = []
+            self.plane_attitudes_colors = []
+        except:
+            pass
+    '''
 
     def intersect_lines(self):
 
@@ -698,7 +778,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             print(index, row)
 
-            geom_cat = row[category_fldnm]
+            category = row[category_fldnm]
             mline_geometry = row["geometry"]
 
             if mline_geometry:
@@ -711,7 +791,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 print(geometry)
 
                 toprocess_geometries.append(
-                    (geom_cat, geometry)
+                    (category, geometry)
                 )
 
         if isinstance(self.profiler, LinearProfiler):
@@ -720,19 +800,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
             intersections_cat_geom = []
 
-            for geom_cat, geometry in toprocess_geometries:
+            for category, geometry in toprocess_geometries:
 
                 ptsegm_intersections = self.profiler.intersect_line(
                     mline=geometry
                 )
 
-                print(geom_cat, ptsegm_intersections)
+                #print(category, ptsegm_intersections)
 
                 if ptsegm_intersections:
 
-                    intersections_cat_geom.append((geom_cat, ptsegm_intersections))
+                    intersections_cat_geom.append((category if category is not None else '', ptsegm_intersections))
 
-            profile_intersections = PointSegmentCollections(intersections_cat_geom)
+            try:
+                profile_intersections = PointSegmentCollections(intersections_cat_geom)
+            except Exception as e:
+                error(
+                    self,
+                    "Profile intersection",
+                    f"Error: {e}"
+                )
+                return
 
             self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
 
@@ -744,10 +832,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 intersections_cat_geom = []
 
-                for geom_cat, geometry in toprocess_geometries:
+                for category, geometry in toprocess_geometries:
 
                     pt_segm_collection = PointSegmentCollection(
-                        element_id=geom_cat,
+                        element_id=category,
                         geoms=profile.intersect_line(geometry)
                     )
 
@@ -821,7 +909,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for index, row in mpolygons_geoms.iterrows():
 
-            geom_cat = row[category_fldnm]
+            category = row[category_fldnm]
             mpolygon_geometry = row["geometry"]
 
             if mpolygon_geometry:
@@ -832,25 +920,63 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
 
                 toprocess_geometries.append(
-                    (geom_cat, geometry)
+                    (category, geometry)
                 )
 
         pt_segment_intersections = []
 
         if isinstance(self.profiler, LinearProfiler):
 
-            for geom_cat, geometry in toprocess_geometries:
+            for category, geometry in toprocess_geometries:
 
-                #print(type(geometry))
                 intersections = self.profiler.intersect_polygon(
                     mpolygon=geometry
                 )
 
                 if intersections:
-                    pt_segment_intersections.append((geom_cat, intersections))
+                    pt_segment_intersections.append((category, intersections))
 
+        categories = defaultdict(list)
         for cat, inters in pt_segment_intersections:
-            print(cat, inters)
+            pointsegments = list(itertools.chain.from_iterable(map(lambda rec: rec.as_segments() if isinstance(rec, Line) else rec, inters)))
+            categories[cat].extend(pointsegments)
+
+        intersections = [(cat, PointSegmentCollection(values)) for cat, values in categories.items()]
+
+        try:
+            profile_intersections = PointSegmentCollections(intersections)
+        except Exception as e:
+            error(
+                self,
+                "Profile intersection",
+                f"Error: {e}"
+            )
+            return
+
+        print(type(profile_intersections))
+
+        self.geoprofiles.polygons_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
+
+        #self.geoprofiles.polygons_intersections_set = polygons_intersections_set
+        #print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            inters_label=add_labels
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
 
         """
         for cat, intersections in imported_polygons:
@@ -1142,14 +1268,52 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
 
     def __init__(self,
                  plugin_name: str,
+                 dem: GeoArray,
+                 profiler: Union[LinearProfiler, ParallelProfiler],
+                 geoprofiles: Union[GeoProfile, GeoProfileSet],
+                 superposed_profiles,
                  point_layers: List
                  ):
 
         super().__init__()
 
+        self.setup_ui()
+
         self.plugin_name = plugin_name
 
+        self.chosen_dem = dem
+        self.profiler = profiler
+        self.geoprofiles = geoprofiles
+        self.superposed_profiles = superposed_profiles
         self.point_layers = point_layers
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.point_layers)
+
+        ##self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
+        ##self.struct_point_refresh_lyr_combobox()
+        ##self.project_point_pushbutton.clicked.connect(self.create_struct_point_projection)
+        ##self.reset_point_pushbutton.clicked.connect(self.reset_struct_point_projection)
+
+        self.inputPtLayerComboBox.insertItems(0, data_sources)
+        self.inputPtLayerComboBox.currentIndexChanged.connect(self.layer_index_changed)
+
+        start_layer = self.point_layers[0]
+        fields = start_layer.data.columns
+
+        self.idFldNmComboBox.insertItems(0, fields)
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.azimuthDipDirRadioButton.setChecked(True)
+        self.projectNearestIntersectionRadioButton.setChecked(True)
+
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+        self.attitudes_color = 'orange' #QtGui.QColor('orange')
+
+        #self.attitudesColorComboBox.insertItems(0, attitude_colors)
+
+    def setup_ui(self):
 
         vertical_box_layout = QtWidgets.QVBoxLayout()
 
@@ -1164,10 +1328,10 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
 
         input_grid_layout.addWidget(QtWidgets.QLabel("Layer "), 0, 0, 1, 1)
         self.inputPtLayerComboBox = QtWidgets.QComboBox()
-        self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
+        ##self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
 
         input_grid_layout.addWidget(self.inputPtLayerComboBox, 0, 1, 1, 5)
-        self.struct_point_refresh_lyr_combobox()
+        ##self.struct_point_refresh_lyr_combobox()
 
         input_grid_layout.addWidget(QtWidgets.QLabel("Id"), 1, 1, 1, 1)
 
@@ -1187,8 +1351,8 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
         self.idFldNmComboBox = QtWidgets.QComboBox()
         input_grid_layout.addWidget(self.idFldNmComboBox, 2, 1, 1, 1)
 
-        self.qcbxProjPointOrientFld = QtWidgets.QComboBox()
-        input_grid_layout.addWidget(self.qcbxProjPointOrientFld, 2, 2, 1, 2)
+        self.attitudeAzimAngleFldNmComboBox = QtWidgets.QComboBox()
+        input_grid_layout.addWidget(self.attitudeAzimAngleFldNmComboBox, 2, 2, 1, 2)
 
         self.attitudeDipAngleFldNmcomboBox = QtWidgets.QComboBox()
         input_grid_layout.addWidget(self.attitudeDipAngleFldNmcomboBox, 2, 4, 1, 2)
@@ -1207,33 +1371,47 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
         self.projectNearestIntersectionRadioButton.setChecked(True)
         project_along_grid_layout.addWidget(self.projectNearestIntersectionRadioButton, 0, 0, 1, 3)
 
-        self.projectAxisWithTrendRadioButton = QtWidgets.QRadioButton("constant axis with trend")
+        self.projectAxisWithTrendRadioButton = QtWidgets.QRadioButton("constant axis")
         project_along_grid_layout.addWidget(self.projectAxisWithTrendRadioButton, 1, 0, 1, 1)
+
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("trend"), 1, 1, 1, 1)
 
         self.projectAxisTrendAngDblSpinBox = QtWidgets.QDoubleSpinBox()
         self.projectAxisTrendAngDblSpinBox.setMinimum(0.0)
         self.projectAxisTrendAngDblSpinBox.setMaximum(359.9)
         self.projectAxisTrendAngDblSpinBox.setDecimals(1)
-        project_along_grid_layout.addWidget(self.projectAxisTrendAngDblSpinBox, 1, 1, 1, 1)
+        project_along_grid_layout.addWidget(self.projectAxisTrendAngDblSpinBox, 1, 2, 1, 1)
 
-        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge"), 1, 2, 1, 1)
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge"), 1, 3, 1, 1)
 
         self.projectAxisPlungeAngDblSpinBox = QtWidgets.QDoubleSpinBox()
         self.projectAxisPlungeAngDblSpinBox.setMinimum(0.0)
         self.projectAxisPlungeAngDblSpinBox.setMaximum(89.9)
         self.projectAxisPlungeAngDblSpinBox.setDecimals(1)
 
-        project_along_grid_layout.addWidget(self.projectAxisPlungeAngDblSpinBox, 1, 3, 1, 1)
+        project_along_grid_layout.addWidget(self.projectAxisPlungeAngDblSpinBox, 1, 4, 1, 1)
 
         self.projectAxesFromFieldsRadioButton = QtWidgets.QRadioButton("axes from fields")
         project_along_grid_layout.addWidget(self.projectAxesFromFieldsRadioButton, 2, 0, 1, 1)
 
-        self.projectAxesTrendFldNmComboBox = QtWidgets.QComboBox()
-        project_along_grid_layout.addWidget(self.projectAxesTrendFldNmComboBox, 2, 1, 1, 1)
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("trend"), 2, 1, 1, 1)
 
-        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge field"), 2, 2, 1, 1)
+        self.projectAxesTrendFldNmComboBox = QtWidgets.QComboBox()
+        project_along_grid_layout.addWidget(self.projectAxesTrendFldNmComboBox, 2, 2, 1, 1)
+
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("plunge"), 2, 3, 1, 1)
         self.projectAxesPlungeFldNmComboBox = QtWidgets.QComboBox()
-        project_along_grid_layout.addWidget(self.projectAxesPlungeFldNmComboBox, 2, 3, 1, 1)
+        project_along_grid_layout.addWidget(self.projectAxesPlungeFldNmComboBox, 2, 4, 1, 1)
+
+        project_along_grid_layout.addWidget(QtWidgets.QLabel("Max distance from profile"), 3, 0, 1, 2)
+
+        self.maxDistFromProfDoubleSpinBox = QtWidgets.QDoubleSpinBox()
+        self.maxDistFromProfDoubleSpinBox.setMinimum(0.0)
+        self.maxDistFromProfDoubleSpinBox.setMaximum(999999.000000)
+        self.maxDistFromProfDoubleSpinBox.setDecimals(1)
+        self.maxDistFromProfDoubleSpinBox.setValue(500.000000)
+
+        project_along_grid_layout.addWidget(self.maxDistFromProfDoubleSpinBox, 3, 2, 1, 3)
 
         project_along_group_box.setLayout(project_along_grid_layout)
         vertical_box_layout.addWidget(project_along_group_box)
@@ -1253,33 +1431,163 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
         self.labelsIdCheckBox = QtWidgets.QCheckBox("id")
         plot_grid_layout.addWidget(self.labelsIdCheckBox, 0, 2, 1, 1)
 
-        self.attitudesColorComboBox = QtWidgets.QPushButton("Define color") #QtWidgets.QColorDialog(QtGui.QColor('orange'))
-        plot_grid_layout.addWidget(self.attitudesColorComboBox, 0, 3, 1, 2)
+        self.attitudesColorQPushButton = QtWidgets.QPushButton("Define color") #QtWidgets.QColorDialog(QtGui.QColor('orange'))
+        self.attitudesColorQPushButton.clicked.connect(self.define_color)
+        plot_grid_layout.addWidget(self.attitudesColorQPushButton, 0, 3, 1, 2)
 
         self.project_point_pushbutton = QtWidgets.QPushButton(self.tr("Plot"))
         self.project_point_pushbutton.clicked.connect(self.create_struct_point_projection)
-        plot_grid_layout.addWidget(self.project_point_pushbutton, 1, 0, 1, 3)
-
-        self.reset_point_pushbutton = QtWidgets.QPushButton(self.tr("Reset plot"))
-        self.reset_point_pushbutton.clicked.connect(self.reset_struct_point_projection)
-
-        plot_grid_layout.addWidget(self.reset_point_pushbutton, 1, 3, 1, 2)
+        plot_grid_layout.addWidget(self.project_point_pushbutton, 1, 0, 1, 5)
 
         plot_group_box.setLayout(plot_grid_layout)
         vertical_box_layout.addWidget(plot_group_box)
 
         self.flds_prj_point_comboBoxes = [self.idFldNmComboBox,
-                                          self.qcbxProjPointOrientFld,
+                                          self.attitudeAzimAngleFldNmComboBox,
                                           self.attitudeDipAngleFldNmcomboBox,
                                           self.projectAxesTrendFldNmComboBox,
                                           self.projectAxesPlungeFldNmComboBox]
-
-        #
 
         self.setLayout(vertical_box_layout)
 
         self.setWindowTitle("Project geological attitudes")
 
+    def layer_index_changed(self, ndx: numbers.Integral):
+        """
+
+        :param ndx:
+        :return:
+        """
+
+        current_lyr = self.point_layers[ndx]
+        fields = current_lyr.data.columns
+
+        self.idFldNmComboBox.clear()
+        self.idFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeAzimAngleFldNmComboBox.clear()
+        self.attitudeAzimAngleFldNmComboBox.insertItems(0, fields)
+
+        self.attitudeDipAngleFldNmcomboBox.clear()
+        self.attitudeDipAngleFldNmcomboBox.insertItems(0, fields)
+
+        self.projectAxesTrendFldNmComboBox.clear()
+        self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
+
+        self.projectAxesPlungeFldNmComboBox.clear()
+        self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
+
+    def define_color(self):
+
+        self.attitudes_color = qcolor2rgbmpl(QColorDialog.getColor())
+
+    def create_struct_point_projection(self):
+
+        input_layer_index = self.inputPtLayerComboBox.currentIndex()
+
+        azimuth_is_dipdir = self.azimuthDipDirRadioButton.isChecked()
+        azimuth_is_strikerhr = self.azimuthRHRStrikeRadioButton.isChecked()
+
+        attitude_id_fldnm = self.idFldNmComboBox.currentText()
+        attitude_azimuth_angle_fldnm = self.attitudeAzimAngleFldNmComboBox.currentText()
+        attitude_dip_angle_fldnm = self.attitudeDipAngleFldNmcomboBox.currentText()
+
+        projection_nearest_intersection = self.projectNearestIntersectionRadioButton.isChecked()
+        projection_constant_axis = self.projectAxisWithTrendRadioButton.isChecked()
+        projection_axes_from_fields = self.projectAxesFromFieldsRadioButton.isChecked()
+
+        projection_axis_trend_angle = self.projectAxisTrendAngDblSpinBox.value()
+        projection_axis_plunge_angle = self.projectAxisPlungeAngDblSpinBox.value()
+
+        projection_axes_trend_fldnm = self.projectAxesTrendFldNmComboBox.currentText()
+        projection_axes_plunge_fldnm = self.projectAxesPlungeFldNmComboBox.currentText()
+
+        projection_max_distance_from_profile = self.maxDistFromProfDoubleSpinBox.value()
+
+        labels_add_orientdip = self.labelsOrDipCheckBox.isChecked()
+        labels_add_id = self.labelsIdCheckBox.isChecked()
+
+        #self.attitudes_color = self.attitudesColorQPushButton.currentText()
+
+        attitudes = self.point_layers[input_layer_index].data
+
+        success, result = try_extract_georeferenced_attitudes(
+            geodataframe=attitudes,
+            azim_fldnm=attitude_azimuth_angle_fldnm,
+            dip_ang_fldnm=attitude_dip_angle_fldnm,
+            id_fldnm=attitude_id_fldnm,
+            is_rhrstrike=azimuth_is_strikerhr
+        )
+
+        if not success:
+            msg = result
+            warn(
+                self,
+                self.plugin_name,
+                "Error with georeferenced attitudes extraction: {}".format(msg)
+            )
+            return
+
+        georef_attitudes = result
+
+        mapping_method = {}
+        if projection_nearest_intersection:
+            mapping_method['method'] = 'nearest'
+        elif projection_constant_axis:
+            mapping_method['method'] = 'common axis'
+            mapping_method['trend'] = projection_axis_trend_angle
+            mapping_method['plunge'] = projection_axis_plunge_angle
+        elif projection_axes_from_fields:
+            mapping_method['method'] = 'individual axes'
+            axes_values = []
+            for projection_axes_trend, projection_axes_plunge in zip(attitudes[projection_axes_trend_fldnm], attitudes[projection_axes_plunge_fldnm]):
+                axes_values.append((projection_axes_trend, projection_axes_plunge))
+            mapping_method['individual_axes_values'] = axes_values
+        else:
+            raise Exception("Debug_ mapping method not correctly defined")
+
+        attitudes_3d = georef_attitudes_3d_from_grid(
+            structural_data=georef_attitudes,
+            height_source=self.chosen_dem,
+        )
+
+        att_projs = self.profiler.map_georef_attitudes_to_section(
+            attitudes_3d=attitudes_3d,
+            mapping_method=mapping_method,
+            max_profile_distance=projection_max_distance_from_profile
+        )
+
+        if att_projs is None:
+            warn(
+                self,
+                "Attribute projection",
+                "No attitude selected"
+            )
+            return
+
+        self.geoprofiles.profile_attitudes = att_projs
+
+        print("Plotting")
+
+        self.fig = plot(
+            self.geoprofiles,
+            superposed=self.superposed_profiles,
+            attitude_color=self.attitudes_color,
+            labels_add_orientdip=labels_add_orientdip,
+            labels_add_id=labels_add_id
+        )
+
+        if self.fig:
+
+            self.fig.show()
+
+        else:
+
+            warn(
+                self,
+                self.plugin_name,
+                "Unable to create figure"
+            )
 
 if __name__ == "__main__":
     
