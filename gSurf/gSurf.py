@@ -433,42 +433,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def create_single_profile(self):
 
-        self.superposed_profiles = False
-
-        pts = extract_line_points(
-            geodataframe=self.chosen_profile.data,
-            ndx=0,
-            epsg_code=self.chosen_profile.epsg_code
-        )
-
-        if len(pts) != 2:
-            warn(self,
-                 self.plugin_name,
-                 "Input must be a line with two points")
+        if self.chosen_dem is None:
+            warn(
+                self,
+                "Creating single profile",
+                "No defined DEM source for profile"
+            )
             return
 
-        self.geoprofiles = GeoProfile()
-        self.profiler = LinearProfiler(
-            start_pt=pts[0],
-            end_pt=pts[1],
-            densify_distance=5
+        if self.chosen_profile is None:
+            warn(
+                self,
+                "Creating single profile",
+                "No defined source for profile"
+            )
+            return
+
+        self.single_profile_dialog = PlotSingleProfileDefWindow(
+            self.plugin_name,
+            self.chosen_dem,
+            self.chosen_profile
         )
 
-        topo_profile = self.profiler.profile_grid(self.chosen_dem)
-        self.geoprofiles.topo_profile = topo_profile
-
-        self.fig = plot(self.geoprofiles)
-
-        if self.fig:
-            self.fig.show()
-        else:
-            warn(self,
-                 self.plugin_name,
-                 "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
-                 )
-            return
+        self.single_profile_dialog.show()
 
     def create_parallel_profiles(self):
+
+        if self.chosen_dem is None:
+            warn(
+                self,
+                "Creating single profile",
+                "No defined DEM source for profile"
+            )
+            return
+
+        if self.chosen_profile is None:
+            warn(
+                self,
+                "Creating single profile",
+                "No defined source for profile"
+            )
+            return
 
         dialog = MultiProfilesDefWindow()
 
@@ -535,7 +540,7 @@ class MainWindow(QtWidgets.QMainWindow):
                  "No point layer available")
             return
 
-        self.attitudes_dialog = ProjectGeologicalAttitudesDefineWindow(
+        self.attitudes_dialog = ProjectGeolAttitudesDefWindow(
             self.plugin_name,
             self.chosen_dem,
             self.profiler,
@@ -546,195 +551,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.attitudes_dialog.show()
 
-        '''
-        if dialog.exec_():
-
-            input_layer_index = dialog.inputPtLayerComboBox.currentIndex()
-
-            azimuth_is_dipdir = dialog.azimuthDipDirRadioButton.isChecked()
-            azimuth_is_strikerhr = dialog.azimuthRHRStrikeRadioButton.isChecked()
-
-            attitude_id_fldnm = dialog.idFldNmComboBox.currentText()
-            attitude_azimuth_angle_fldnm = dialog.attitudeAzimAngleFldNmComboBox.currentText()
-            attitude_dip_angle_fldnm = dialog.attitudeDipAngleFldNmcomboBox.currentText()
-
-            projection_nearest_intersection = dialog.projectNearestIntersectionRadioButton.isChecked()
-            projection_constant_axis = dialog.projectAxisWithTrendRadioButton.isChecked()
-            projection_axes_from_fields = dialog.projectAxesFromFieldsRadioButton.isChecked()
-
-            projection_axis_trend_angle = dialog.projectAxisTrendAngDblSpinBox.value()
-            projection_axis_plunge_angle = dialog.projectAxisPlungeAngDblSpinBox.value()
-
-            projection_axes_trend_fldnm = dialog.projectAxesTrendFldNmComboBox.currentText()
-            projection_axes_plunge_fldnm = dialog.projectAxesPlungeFldNmComboBox.currentText()
-
-            projection_max_distance_from_profile = dialog.maxDistFromProfDoubleSpinBox.value()
-
-            labels_add_orientdip = dialog.labelsOrDipCheckBox.isChecked()
-            labels_add_id = dialog.labelsIdCheckBox.isChecked()
-
-            attitudes_color = dialog.attitudesColorComboBox.currentText()
-
-        else:
-
-            return
-
-        attitudes = point_layers[input_layer_index].data
-
-        success, result = try_extract_georeferenced_attitudes(
-            geodataframe=attitudes,
-            azim_fldnm=attitude_azimuth_angle_fldnm,
-            dip_ang_fldnm=attitude_dip_angle_fldnm,
-            id_fldnm=attitude_id_fldnm,
-            is_rhrstrike=azimuth_is_strikerhr
-        )
-
-        if not success:
-            msg = result
-            warn(
-                self,
-                self.plugin_name,
-                "Error with georeferenced attitudes extraction: {}".format(msg)
-            )
-            return
-
-        georef_attitudes = result
-
-        mapping_method = {}
-        if projection_nearest_intersection:
-            mapping_method['method'] = 'nearest'
-        elif projection_constant_axis:
-            mapping_method['method'] = 'common axis'
-            mapping_method['trend'] = projection_axis_trend_angle
-            mapping_method['plunge'] = projection_axis_plunge_angle
-        elif projection_axes_from_fields:
-            mapping_method['method'] = 'individual axes'
-            axes_values = []
-            for projection_axes_trend, projection_axes_plunge in zip(attitudes[projection_axes_trend_fldnm], attitudes[projection_axes_plunge_fldnm]):
-                axes_values.append((projection_axes_trend, projection_axes_plunge))
-            mapping_method['individual_axes_values'] = axes_values
-        else:
-            raise Exception("Debug_ mapping method not correctly defined")
-
-        attitudes_3d = georef_attitudes_3d_from_grid(
-            structural_data=georef_attitudes,
-            height_source=self.chosen_dem,
-        )
-
-        att_projs = self.profiler.map_georef_attitudes_to_section(
-            attitudes_3d=attitudes_3d,
-            mapping_method=mapping_method,
-            max_profile_distance=projection_max_distance_from_profile
-        )
-
-        self.geoprofiles.profile_attitudes = att_projs
-
-        print("Plotting")
-
-        self.fig = plot(
-            self.geoprofiles,
-            superposed=self.superposed_profiles,
-            attitude_color=attitudes_color,
-            labels_add_orientdip=labels_add_orientdip,
-            labels_add_id=labels_add_id
-        )
-
-        if self.fig:
-
-            self.fig.show()
-
-        else:
-
-            warn(
-                self,
-                self.plugin_name,
-                "Unable to create figure"
-            )
-    '''
-
-    '''
-    def create_struct_point_projection_QPROF(self):
-
-        if not self.check_struct_point_proj_parameters():
-            return
-
-        # get color for projected points
-        color = qcolor2rgbmpl(self.proj_point_color_QgsColorButton.color())
-
-        # define structural layer
-        prj_struct_point_qgis_ndx = self.prj_struct_point_comboBox.currentIndex() - 1  # minus 1 to account for initial text in combo box
-        structural_layer = self.pointLayers[prj_struct_point_qgis_ndx]
-        structural_layer_crs = structural_layer.crs()
-        structural_field_list = self.get_current_combobox_values(self.flds_prj_point_comboBoxes)
-        isRHRStrike = self.qrbtPlotPrjUseRhrStrike.isChecked()
-
-        # retrieve selected structural points with their attributes
-        structural_pts_attrs = pt_geoms_attrs(structural_layer, structural_field_list)
-
-        # list of structural points with original crs
-        struct_pts_in_orig_crs = [Point(float(rec[0]), float(rec[1])) for rec in structural_pts_attrs]
-
-        # IDs of structural points
-        struct_pts_ids = [rec[2] for rec in structural_pts_attrs]
-
-        # - geological planes (3D), as geological planes
-        try:
-            structural_planes = [GPlane(float(rec[3]), float(rec[4]), isRHRStrike) for rec in structural_pts_attrs]
-        except:
-            warn(self,
-                 self.plugin_name,
-                 "Check defined fields for possible errors")
-            return
-
-        geoprofile = self.input_geoprofiles.geoprofile(0)
-        struct_pts_3d = calculate_projected_3d_pts(self.canvas,
-                                                   struct_pts_in_orig_crs,
-                                                   structural_layer_crs,
-                                                   geoprofile.profile_elevations.dem_params[0])
-
-        # - zip together the point value data sets
-        assert len(struct_pts_3d) == len(structural_planes)
-        structural_data = list(zip(struct_pts_3d, structural_planes, struct_pts_ids))
-
-        ### map points onto section ###
-
-        # calculation of Cartesian plane expressing section plane
-        self.section_data = self.calculate_section_data()
-
-        # calculation of projected structural points
-
-        # get chosen mapping method
-        mapping_method = self.struct_prjct_get_mapping_method()
-        if mapping_method['method'] == 'individual axes':
-            trend_field_name, plunge_field_name = mapping_method['trend field'], mapping_method['plunge field']
-            # retrieve structural points mapping axes
-            mapping_method['individual_axes_values'] = vect_attrs(structural_layer,
-                                                                  [trend_field_name, plunge_field_name])
-
-        geoprofile.add_plane_attitudes(map_struct_pts_on_section(structural_data, self.section_data, mapping_method))
-        self.plane_attitudes_colors.append(color)
-
-        # plot profiles
-
-        plot_addit_params = dict()
-        plot_addit_params["add_trendplunge_label"] = self.plot_prj_add_trendplunge_label.isChecked()
-        plot_addit_params["add_ptid_label"] = self.plot_prj_add_pt_id_label.isChecked()
-        plot_addit_params["polygon_class_colors"] = self.polygon_classification_colors
-        plot_addit_params["plane_attitudes_colors"] = self.plane_attitudes_colors
-
-        profile_window = plot_geoprofiles(self.input_geoprofiles,
-                                          plot_addit_params)
-        self.profile_windows.append(profile_window)
-
-    def reset_struct_point_projection_QPROF(self):
-
-        try:
-            geoprofile = self.input_geoprofiles.geoprofile(0)
-            geoprofile.geoplane_attitudes = []
-            self.plane_attitudes_colors = []
-        except:
-            pass
-    '''
 
     def intersect_lines(self):
 
@@ -1105,7 +921,7 @@ class MultiProfilesDefWindow(QtWidgets.QDialog):
 
         self.setWindowTitle("Multiple parallel profiles")
 
-
+'''
 class ProjectAttitudesDefWindow(QtWidgets.QDialog):
 
     def __init__(self,
@@ -1167,7 +983,7 @@ class ProjectAttitudesDefWindow(QtWidgets.QDialog):
 
         self.projectAxesPlungeFldNmComboBox.clear()
         self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
-
+'''
 
 class LinesIntersectionDefWindow(QtWidgets.QDialog):
 
@@ -1264,7 +1080,7 @@ class EPSGCodeDefineWindow(QtWidgets.QDialog):
         uic.loadUi('./widgets/define_epsg_code.ui', self)
 
 
-class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
+class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
 
     def __init__(self,
                  plugin_name: str,
@@ -1309,7 +1125,7 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
         self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
         self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
 
-        self.attitudes_color = 'orange' #QtGui.QColor('orange')
+        self.data_color = 'orange' #QtGui.QColor('orange')
 
         #self.attitudesColorComboBox.insertItems(0, attitude_colors)
 
@@ -1479,7 +1295,7 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
 
     def define_color(self):
 
-        self.attitudes_color = qcolor2rgbmpl(QColorDialog.getColor())
+        self.data_color = qcolor2rgbmpl(QColorDialog.getColor())
 
     def create_struct_point_projection(self):
 
@@ -1572,7 +1388,7 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
         self.fig = plot(
             self.geoprofiles,
             superposed=self.superposed_profiles,
-            attitude_color=self.attitudes_color,
+            attitude_color=self.data_color,
             labels_add_orientdip=labels_add_orientdip,
             labels_add_id=labels_add_id
         )
@@ -1588,6 +1404,173 @@ class ProjectGeologicalAttitudesDefineWindow(QtWidgets.QDialog):
                 self.plugin_name,
                 "Unable to create figure"
             )
+
+
+class PlotSingleProfileDefWindow(QtWidgets.QDialog):
+
+    def __init__(self,
+                 plugin_name: str,
+                 dem: GeoArray,
+                 chosen_profile: DataParameters
+                 ):
+
+        super().__init__()
+
+        self.plugin_name = plugin_name
+
+        self.chosen_dem = dem
+        self.chosen_profile = chosen_profile
+
+        self.superposed_profiles = False
+
+        pts = extract_line_points(
+            geodataframe=self.chosen_profile.data,
+            ndx=0,
+            epsg_code=self.chosen_profile.epsg_code
+        )
+
+        if len(pts) != 2:
+            warn(self,
+                 self.plugin_name,
+                 "Input must be a line with two points")
+            return
+
+        self.geoprofiles = GeoProfile()
+        self.profiler = LinearProfiler(
+            start_pt=pts[0],
+            end_pt=pts[1],
+            densify_distance=5
+        )
+
+        topo_profile = self.profiler.profile_grid(self.chosen_dem)
+        self.geoprofiles.topo_profile = topo_profile
+
+        # pre-process input data to account for multi.profiles
+
+        profile_length = topo_profile.profile_length()
+        natural_elev_min = topo_profile.z_min()
+        natural_elev_max = topo_profile.z_max()
+
+        # pre-process elevation values
+
+        # suggested plot elevation range
+
+        z_padding = 0.5
+        delta_z = natural_elev_max - natural_elev_min
+        if delta_z < 0.0:
+            warn(self,
+                 self.plugin_name,
+                 "Error: min elevation larger then max elevation")
+            return
+        elif delta_z == 0.0:
+            plot_z_min = floor(natural_elev_min) - 10
+            plot_z_max = ceil(natural_elev_max) + 10
+        else:
+            plot_z_min = floor(natural_elev_min - delta_z * z_padding)
+            plot_z_max = ceil(natural_elev_max + delta_z * z_padding)
+        delta_plot_z = plot_z_max - plot_z_min
+
+        # suggested exaggeration value
+
+        w_to_h_rat = float(profile_length) / float(delta_plot_z)
+        sugg_ve = 0.2*w_to_h_rat
+
+        # suggested sample distance
+
+        sugg_sample_distance = round(self.chosen_dem.mean_cellsize, 2)
+
+        #
+
+        self.setup_ui(
+            sugg_ve,
+            sugg_sample_distance
+        )
+
+    def plot_topographic_profile(self):
+
+        try:
+            sample_distance = float(self.qledProfileDensifyDistance.text())
+        except Exception as e:
+            warn(self,
+                 self.plugin_name,
+                 "Sample distance value not correct: {}".format(e.message))
+            return
+
+        if sample_distance <= 0.0:
+            warn(self,
+                 self.plugin_name,
+                 f"Sample distance must be positive, not {sample_distance}")
+            return
+
+        set_vertical_exaggeration = self.qcbxSetVerticalExaggeration.isChecked()
+        vertical_exaggeration_value = self.qledtDemExagerationRatio.text()
+
+        data_color = self.data_color
+
+        self.fig = plot(
+            self.geoprofiles,
+            line_density_distance=sample_distance,
+            set_vertical_exaggeration=set_vertical_exaggeration,
+            vertical_exaggeration_value=vertical_exaggeration_value,
+            topo_profile_color=data_color
+        )
+
+        if self.fig:
+            self.fig.show()
+        else:
+            warn(self,
+                 self.plugin_name,
+                 "Figure cannot be generated.\nPossible DEM-profile extent mismatch?"
+                 )
+            return
+
+    def setup_ui(self,
+                 sugg_ve,
+                 sugg_sample_distance
+                 ):
+
+        vertical_box_layout = QtWidgets.QVBoxLayout()
+
+        # input section
+
+        parameters_group_box = QtWidgets.QGroupBox(self)
+        parameters_group_box.setTitle('Parameters')
+
+        parameters_grid_layout = QtWidgets.QGridLayout()
+
+        # parameters
+
+        parameters_grid_layout.addWidget(QtWidgets.QLabel("Line densify distance "), 0, 0, 1, 1)
+        self.qledProfileDensifyDistance = QtWidgets.QLineEdit()
+        self.qledProfileDensifyDistance.setText(str(sugg_sample_distance))
+        parameters_grid_layout.addWidget(self.qledProfileDensifyDistance, 0, 1, 1, 1)
+
+        self.qcbxSetVerticalExaggeration = QCheckBox("Set vertical exaggeration")
+        self.qcbxSetVerticalExaggeration.setChecked(True)
+        parameters_grid_layout.addWidget(self.qcbxSetVerticalExaggeration, 1, 0, 1, 1)
+        self.qledtDemExagerationRatio = QLineEdit()
+        self.qledtDemExagerationRatio.setText("%f" % sugg_ve)
+        parameters_grid_layout.addWidget(self.qledtDemExagerationRatio, 1, 1, 1, 1)
+
+        self.attitudesColorQPushButton = QtWidgets.QPushButton("Define color") #QtWidgets.QColorDialog(QtGui.QColor('orange'))
+        self.attitudesColorQPushButton.clicked.connect(self.define_color)
+        parameters_grid_layout.addWidget(self.attitudesColorQPushButton, 2, 0, 1, 2)
+
+        self.project_point_pushbutton = QtWidgets.QPushButton(self.tr("Plot"))
+        self.project_point_pushbutton.clicked.connect(self.plot_topographic_profile)
+        parameters_grid_layout.addWidget(self.project_point_pushbutton, 3, 0, 1, 2)
+
+        parameters_group_box.setLayout(parameters_grid_layout)
+        vertical_box_layout.addWidget(parameters_group_box)
+
+        self.setLayout(vertical_box_layout)
+
+        self.setWindowTitle("Plot topographic profile")
+
+    def define_color(self):
+
+        self.data_color = qcolor2rgbmpl(QColorDialog.getColor())
+
 
 if __name__ == "__main__":
     
