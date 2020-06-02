@@ -177,6 +177,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chosen_profile_data = None
         self.fig = None
 
+        self.profiler = None
+        self.geoprofiles = None
+        self.aspect = None
+        self.topo_profile_color = None
+        self.superposed_profiles = False
+        self.attitude_color = None
+
+        self.attitude_labels_add_orientdip = None
+        self.attitude_labels_add_id = None
+        self.intersline_add_labels = None
+
         # File menu
 
         self.ui.actLoadDem.triggered.connect(self.load_dem)
@@ -455,7 +466,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chosen_profile
         )
 
+        if self.single_profile_dialog.exec():
+
+            self.profiler = self.single_profile_dialog.profiler
+            self.geoprofiles = self.single_profile_dialog.geoprofiles
+            self.aspect = self.single_profile_dialog.aspect
+            print(f"self.aspect is {self.aspect}")
+            self.topo_profile_color = self.single_profile_dialog.topo_profile_color
+
+        '''
+        self.single_profile_dialog.setModal(True)
         self.single_profile_dialog.show()
+        '''
+
+
+
 
     def create_parallel_profiles(self):
 
@@ -518,7 +543,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig = plot(
             self.geoprofiles,
-            superposed=self.superposed_profiles
+            aspect=self.aspect,
+            topo_profile_color=self.topo_profile_color,
+            superposed=self.superposed_profiles,
         )
 
         if self.fig:
@@ -546,11 +573,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.profiler,
             self.geoprofiles,
             self.superposed_profiles,
-            self.point_layers
+            self.point_layers,
+            self.aspect,
+            self.topo_profile_color,
+            self.intersline_add_labels
         )
 
         self.attitudes_dialog.show()
-
 
     def intersect_lines(self):
 
@@ -622,8 +651,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     mline=geometry
                 )
 
-                #print(category, ptsegm_intersections)
-
                 if ptsegm_intersections:
 
                     intersections_cat_geom.append((category if category is not None else '', ptsegm_intersections))
@@ -671,8 +698,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fig = plot(
             self.geoprofiles,
+            aspect=self.aspect,
+            topo_profile_color=self.topo_profile_color,
             superposed=self.superposed_profiles,
-            inters_label=add_labels
+            attitude_color=self.attitude_color,
+            attitude_labels_add_orientdip=self.attitude_labels_add_orientdip,
+            attitude_labels_add_id=self.attitude_labels_add_id,
+            intersline_add_labels=self.intersline_add_labels
         )
 
         if self.fig:
@@ -769,17 +801,17 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
-        print(type(profile_intersections))
-
         self.geoprofiles.polygons_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
-
-        #self.geoprofiles.polygons_intersections_set = polygons_intersections_set
-        #print("Plotting")
 
         self.fig = plot(
             self.geoprofiles,
+            aspect=self.aspect,
+            topo_profile_color=self.topo_profile_color,
             superposed=self.superposed_profiles,
-            inters_label=add_labels
+            attitude_color=self.attitude_color,
+            attitude_labels_add_orientdip=self.attitude_labels_add_orientdip,
+            attitide_labels_add_id=self.attitude_labels_add_id,
+            intersline_add_labels=self.intersline_add_labels
         )
 
         if self.fig:
@@ -1088,7 +1120,10 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
                  profiler: Union[LinearProfiler, ParallelProfiler],
                  geoprofiles: Union[GeoProfile, GeoProfileSet],
                  superposed_profiles,
-                 point_layers: List
+                 point_layers: List,
+                 aspect,
+                 topo_profile_color,
+                 intersline_add_labels
                  ):
 
         super().__init__()
@@ -1102,12 +1137,14 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
         self.geoprofiles = geoprofiles
         self.superposed_profiles = superposed_profiles
         self.point_layers = point_layers
-        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.point_layers)
 
-        ##self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
-        ##self.struct_point_refresh_lyr_combobox()
-        ##self.project_point_pushbutton.clicked.connect(self.create_struct_point_projection)
-        ##self.reset_point_pushbutton.clicked.connect(self.reset_struct_point_projection)
+        self.aspect = aspect
+        self.topo_profile_color = topo_profile_color
+        self.intersline_add_labels = intersline_add_labels
+
+        self.attitude_color = "red"
+
+        data_sources = map(lambda data_par: os.path.basename(data_par.filePath), self.point_layers)
 
         self.inputPtLayerComboBox.insertItems(0, data_sources)
         self.inputPtLayerComboBox.currentIndexChanged.connect(self.layer_index_changed)
@@ -1125,9 +1162,7 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
         self.projectAxesTrendFldNmComboBox.insertItems(0, fields)
         self.projectAxesPlungeFldNmComboBox.insertItems(0, fields)
 
-        self.data_color = 'orange' #QtGui.QColor('orange')
-
-        #self.attitudesColorComboBox.insertItems(0, attitude_colors)
+        self.data_color = 'orange'
 
     def setup_ui(self):
 
@@ -1144,10 +1179,8 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
 
         input_grid_layout.addWidget(QtWidgets.QLabel("Layer "), 0, 0, 1, 1)
         self.inputPtLayerComboBox = QtWidgets.QComboBox()
-        ##self.inputPtLayerComboBox.currentIndexChanged[int].connect(self.update_point_layers_boxes)
 
         input_grid_layout.addWidget(self.inputPtLayerComboBox, 0, 1, 1, 5)
-        ##self.struct_point_refresh_lyr_combobox()
 
         input_grid_layout.addWidget(QtWidgets.QLabel("Id"), 1, 1, 1, 1)
 
@@ -1295,7 +1328,7 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
 
     def define_color(self):
 
-        self.data_color = qcolor2rgbmpl(QColorDialog.getColor())
+        self.attitude_color = qcolor2rgbmpl(QColorDialog.getColor())
 
     def create_struct_point_projection(self):
 
@@ -1320,10 +1353,8 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
 
         projection_max_distance_from_profile = self.maxDistFromProfDoubleSpinBox.value()
 
-        labels_add_orientdip = self.labelsOrDipCheckBox.isChecked()
-        labels_add_id = self.labelsIdCheckBox.isChecked()
-
-        #self.attitudes_color = self.attitudesColorQPushButton.currentText()
+        self.attitude_labels_add_orientdip = self.labelsOrDipCheckBox.isChecked()
+        self.attitude_labels_add_id = self.labelsIdCheckBox.isChecked()
 
         attitudes = self.point_layers[input_layer_index].data
 
@@ -1360,7 +1391,7 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
                 axes_values.append((projection_axes_trend, projection_axes_plunge))
             mapping_method['individual_axes_values'] = axes_values
         else:
-            raise Exception("Debug_ mapping method not correctly defined")
+            raise Exception("Debug: mapping method not correctly defined")
 
         attitudes_3d = georef_attitudes_3d_from_grid(
             structural_data=georef_attitudes,
@@ -1387,10 +1418,13 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
 
         self.fig = plot(
             self.geoprofiles,
+            aspect=self.aspect,
+            topo_profile_color=self.topo_profile_color,
             superposed=self.superposed_profiles,
-            attitude_color=self.data_color,
-            labels_add_orientdip=labels_add_orientdip,
-            labels_add_id=labels_add_id
+            attitude_color=self.attitude_color,
+            attitude_labels_add_orientdip=self.attitude_labels_add_orientdip,
+            attitude_labels_add_id=self.attitude_labels_add_id,
+            intersline_add_labels=self.intersline_add_labels
         )
 
         if self.fig:
@@ -1417,11 +1451,14 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
         super().__init__()
 
         self.plugin_name = plugin_name
+        self.topo_profile_color = None
 
         self.chosen_dem = dem
         self.chosen_profile = chosen_profile
 
         self.superposed_profiles = False
+
+        self.aspect = 1.0
 
         pts = extract_line_points(
             geodataframe=self.chosen_profile.data,
@@ -1439,7 +1476,7 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
         self.profiler = LinearProfiler(
             start_pt=pts[0],
             end_pt=pts[1],
-            densify_distance=5
+            densify_distance=self.chosen_dem.mean_cellsize/2.0
         )
 
         topo_profile = self.profiler.profile_grid(self.chosen_dem)
@@ -1475,44 +1512,22 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
         w_to_h_rat = float(profile_length) / float(delta_plot_z)
         sugg_ve = 0.2*w_to_h_rat
 
-        # suggested sample distance
-
-        sugg_sample_distance = round(self.chosen_dem.mean_cellsize, 2)
-
         #
 
         self.setup_ui(
-            sugg_ve,
-            sugg_sample_distance
+            sugg_ve
         )
 
     def plot_topographic_profile(self):
 
-        try:
-            sample_distance = float(self.qledProfileDensifyDistance.text())
-        except Exception as e:
-            warn(self,
-                 self.plugin_name,
-                 "Sample distance value not correct: {}".format(e.message))
-            return
-
-        if sample_distance <= 0.0:
-            warn(self,
-                 self.plugin_name,
-                 f"Sample distance must be positive, not {sample_distance}")
-            return
-
         set_vertical_exaggeration = self.qcbxSetVerticalExaggeration.isChecked()
-        vertical_exaggeration_value = self.qledtDemExagerationRatio.text()
-
-        data_color = self.data_color
+        self.aspect = float(self.qledtDemExagerationRatio.text()) if set_vertical_exaggeration else 1.0
 
         self.fig = plot(
             self.geoprofiles,
-            line_density_distance=sample_distance,
-            set_vertical_exaggeration=set_vertical_exaggeration,
-            vertical_exaggeration_value=vertical_exaggeration_value,
-            topo_profile_color=data_color
+            aspect=self.aspect,
+            topo_profile_color=self.topo_profile_color,
+            superposed=self.superposed_profiles
         )
 
         if self.fig:
@@ -1525,8 +1540,7 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
             return
 
     def setup_ui(self,
-                 sugg_ve,
-                 sugg_sample_distance
+                 sugg_ve
                  ):
 
         vertical_box_layout = QtWidgets.QVBoxLayout()
@@ -1540,25 +1554,24 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
 
         # parameters
 
-        parameters_grid_layout.addWidget(QtWidgets.QLabel("Line densify distance "), 0, 0, 1, 1)
-        self.qledProfileDensifyDistance = QtWidgets.QLineEdit()
-        self.qledProfileDensifyDistance.setText(str(sugg_sample_distance))
-        parameters_grid_layout.addWidget(self.qledProfileDensifyDistance, 0, 1, 1, 1)
-
         self.qcbxSetVerticalExaggeration = QCheckBox("Set vertical exaggeration")
         self.qcbxSetVerticalExaggeration.setChecked(True)
-        parameters_grid_layout.addWidget(self.qcbxSetVerticalExaggeration, 1, 0, 1, 1)
+        parameters_grid_layout.addWidget(self.qcbxSetVerticalExaggeration, 0, 0, 1, 1)
         self.qledtDemExagerationRatio = QLineEdit()
         self.qledtDemExagerationRatio.setText("%f" % sugg_ve)
-        parameters_grid_layout.addWidget(self.qledtDemExagerationRatio, 1, 1, 1, 1)
+        parameters_grid_layout.addWidget(self.qledtDemExagerationRatio, 0, 1, 1, 1)
 
-        self.attitudesColorQPushButton = QtWidgets.QPushButton("Define color") #QtWidgets.QColorDialog(QtGui.QColor('orange'))
+        self.attitudesColorQPushButton = QtWidgets.QPushButton("Define color")
         self.attitudesColorQPushButton.clicked.connect(self.define_color)
-        parameters_grid_layout.addWidget(self.attitudesColorQPushButton, 2, 0, 1, 2)
+        parameters_grid_layout.addWidget(self.attitudesColorQPushButton, 1, 0, 1, 1)
 
         self.project_point_pushbutton = QtWidgets.QPushButton(self.tr("Plot"))
         self.project_point_pushbutton.clicked.connect(self.plot_topographic_profile)
-        parameters_grid_layout.addWidget(self.project_point_pushbutton, 3, 0, 1, 2)
+        parameters_grid_layout.addWidget(self.project_point_pushbutton, 1, 1, 1, 1)
+
+        self.done_pushbutton = QtWidgets.QPushButton(self.tr("Done"))
+        self.done_pushbutton.clicked.connect(self.accept)
+        parameters_grid_layout.addWidget(self.done_pushbutton, 2, 0, 1, 2)
 
         parameters_group_box.setLayout(parameters_grid_layout)
         vertical_box_layout.addWidget(parameters_group_box)
@@ -1569,7 +1582,7 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
 
     def define_color(self):
 
-        self.data_color = qcolor2rgbmpl(QColorDialog.getColor())
+        self.topo_profile_color = qcolor2rgbmpl(QColorDialog.getColor())
 
 
 if __name__ == "__main__":
