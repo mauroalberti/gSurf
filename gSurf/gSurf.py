@@ -8,18 +8,18 @@ import pyproj
 import fiona
 
 from PyQt5.QtCore import Qt
-from PyQt5 import QtWidgets, QtGui, uic
+from PyQt5 import QtWidgets, uic
 
-from pygsf.spatial.rasters.io import *
-from pygsf.spatial.vectorial.io import try_read_as_geodataframe
-from pygsf.spatial.vectorial.geodataframes import *
+from pygsf.spatial.space3d.rasters.io import *
+from pygsf.spatial.space3d.vectorial.io import try_read_as_geodataframe
+from pygsf.spatial.space3d.vectorial.geodataframes import *
 from pygsf.utils.qt.tools import *
 from pygsf.utils.mpl.utils import *
 
-from pygsf.spatial.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
-from pygsf.spatial.geology.profiles.profilers import *
-from pygsf.spatial.geology.profiles.plot import plot
-from pygsf.spatial.geology.convert import try_extract_georeferenced_attitudes
+from pygsf.spatial.space3d.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
+from pygsf.spatial.space3d.geology.profiles.profilers import *
+from pygsf.spatial.space3d.geology.profiles import plot
+from pygsf.spatial.space3d.geology import try_extract_georeferenced_attitudes
 
 
 DataPametersFldNms = [
