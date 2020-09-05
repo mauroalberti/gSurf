@@ -468,9 +468,9 @@ class SaveFigureDlg(QDialog):
         self.cmbFileFormat.setCurrentIndex(iCurrFileFrmtNdx)
         lytFormatSettings.addWidget(self.cmbFileFormat, 0, 1, 1, 1)
 
-        # dpi (for rasters)
+        # dpi (for io)
 
-        lytFormatSettings.addWidget(QLabel("Dpi (for rasters"), 1, 0, 1, 1)
+        lytFormatSettings.addWidget(QLabel("Dpi (for io"), 1, 0, 1, 1)
         self.cmbDpiResolution = QComboBox()
         self.cmbDpiResolution.insertItems(0, liDpiResolutions)
         iCurrDpiResolution = self.dPlotStyles["dpi_resolution"]

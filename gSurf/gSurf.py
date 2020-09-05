@@ -2,7 +2,7 @@ import sys
 
 from typing import List
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 
 import pyproj
 import fiona
@@ -10,16 +10,16 @@ import fiona
 from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets, uic
 
-from pygsf.spatial.space3d.rasters.io import *
-from pygsf.spatial.space3d.vectorial.io import try_read_as_geodataframe
-from pygsf.spatial.space3d.vectorial.geodataframes import *
+from pygsf.spatial.space3d.rasters.rasters import *
+from pygsf.io.vectorial import try_read_as_geodataframe
+from pygsf.geodataframes.geodataframes import *
 from pygsf.utils.qt.tools import *
 from pygsf.utils.mpl.utils import *
 
-from pygsf.spatial.space3d.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
-from pygsf.spatial.space3d.geology.profiles.profilers import *
-from pygsf.spatial.space3d.geology.profiles import plot
-from pygsf.spatial.space3d.geology import try_extract_georeferenced_attitudes
+from pygsf.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
+from pygsf.geology.profiles.profilers import *
+from pygsf.geology.profiles import plot
+from pygsf.geology import try_extract_georeferenced_attitudes
 
 
 DataPametersFldNms = [
