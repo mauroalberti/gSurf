@@ -656,7 +656,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     intersections_cat_geom.append((category if category is not None else '', ptsegm_intersections))
 
             try:
-                profile_intersections = PointSegmentCollections(intersections_cat_geom)
+                profile_intersections = GeoPointSegmentCollections(intersections_cat_geom)
             except Exception as e:
                 error(
                     self,
@@ -677,14 +677,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 for category, geometry in toprocess_geometries:
 
-                    pt_segm_collection = PointSegmentCollection(
+                    pt_segm_collection = GeoPointSegmentCollection(
                         element_id=category,
                         geoms=profile.intersect_line(geometry)
                     )
 
                     intersections_cat_geom.append(pt_segm_collection)
 
-                profile_intersections = PointSegmentCollections(intersections_cat_geom)
+                profile_intersections = GeoPointSegmentCollections(intersections_cat_geom)
                 profiles_intersections.append(profile_intersections)
 
             lines_intersections_set = PointSegmentCollectionsSet(profiles_intersections)
@@ -789,10 +789,10 @@ class MainWindow(QtWidgets.QMainWindow):
             pointsegments = list(itertools.chain.from_iterable(map(lambda rec: rec.as_segments() if isinstance(rec, Line) else rec, inters)))
             categories[cat].extend(pointsegments)
 
-        intersections = [(cat, PointSegmentCollection(values)) for cat, values in categories.items()]
+        intersections = [(cat, GeoPointSegmentCollection(values)) for cat, values in categories.items()]
 
         try:
-            profile_intersections = PointSegmentCollections(intersections)
+            profile_intersections = GeoPointSegmentCollections(intersections)
         except Exception as e:
             error(
                 self,
