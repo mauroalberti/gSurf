@@ -563,7 +563,7 @@ class StereoplotWidget(QWidget):
                                                  color=line_color,
                                                  alpha=line_alpha)
                         elif plot_setts["tPlotPlanesFormat"] == "normal axes":
-                            line_rec = GPlane(*plane).normDirect().d
+                            line_rec = GPlane(*plane).normal_direction().d
                             l = aLin(*line_rec)
                             self.stereonet.line(l,
                                                 marker=marker_style,
