@@ -1,8 +1,9 @@
 import sys
 
-from typing import List
+from typing import List, Optional
+import numbers
 
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 import pyproj
 import fiona
@@ -10,17 +11,24 @@ import fiona
 from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets, uic
 
+from pygsf.geometries.grids.rasters import *
+from pygsf.profiles.profilers import *
+from pygsf.profiles.geoprofiles import *
+
+from gst.qt.tools import *
+
+"""
 from pygsf.spatial.space3d.rasters.rasters import *
 from pygsf.io.vectorial import try_read_as_geodataframe
 from pygsf.geodataframes.geodataframes import *
 from pygsf.utils.qt.tools import *
 from pygsf.utils.mpl.utils import *
 
-from pygsf.geology.profiles.geoprofiles import GeoProfile, GeoProfileSet
+from pygsf.geology.profiles.geoprofiles import GeoProfile, GeoProfiles
 from pygsf.geology.profiles.profilers import *
 from pygsf.geology.profiles import plot
 from pygsf.geology import try_extract_georeferenced_attitudes
-
+"""
 
 DataPametersFldNms = [
     "filePath",
@@ -96,50 +104,29 @@ class Ui_MainWindow(object):
         self.menuProcessing = QtWidgets.QMenu(self.menubar)
         self.menuProcessing.setTitle("Processing")
 
-        self.actOpenDemIntersection = QtWidgets.QAction(MainWindow)
-        self.actOpenDemIntersection.setText("Plane-DEM intersections")
-        self.menuProcessing.addAction(self.actOpenDemIntersection)
+        self.actOpenSimSurf = QtWidgets.QAction(MainWindow)
+        self.actOpenSimSurf.setText("Simulate geosurface")
+        self.menuProcessing.addAction(self.actOpenSimSurf)
 
-        self.menuProfiles = QtWidgets.QMenu(self.menuProcessing)
-        self.menuProfiles.setTitle("Profiles")
+        self.actCalcSurfDEMInters = QtWidgets.QAction(MainWindow)
+        self.actCalcSurfDEMInters.setText("Calculate DEM-geosurface intersections")
+        self.menuProcessing.addAction(self.actCalcSurfDEMInters)
 
-        self.actChooseDEMs = QtWidgets.QAction(MainWindow)
-        self.actChooseDEMs.setText("Choose DEM")
-        self.menuProfiles.addAction(self.actChooseDEMs)
+        self.actRestoreSurf = QtWidgets.QAction(MainWindow)
+        self.actRestoreSurf.setText("Restore geosurface from trace on DEM")
+        self.menuProcessing.addAction(self.actRestoreSurf)
 
-        self.actChooseLines = QtWidgets.QAction(MainWindow)
-        self.actChooseLines.setText("Choose profile dataset")
-        self.menuProfiles.addAction(self.actChooseLines)
-
-        self.menuProfiles.addSeparator()
-
-        self.actCreateSingleProfile = QtWidgets.QAction(MainWindow)
-        self.actCreateSingleProfile.setText("Create single profile")
-        self.menuProfiles.addAction(self.actCreateSingleProfile)
-
-        self.actCreateParallelProfiles = QtWidgets.QAction(MainWindow)
-        self.actCreateParallelProfiles.setText("Create parallel profiles")
-        self.menuProfiles.addAction(self.actCreateParallelProfiles)
-
-        self.menuProfiles.addSeparator()
-
-        self.actProjectGeolAttitudes = QtWidgets.QAction(MainWindow)
-        self.actProjectGeolAttitudes.setText("Project geological attitudes")
-        self.menuProfiles.addAction(self.actProjectGeolAttitudes)
-
-        self.actIntersectLineLayer = QtWidgets.QAction(MainWindow)
-        self.actIntersectLineLayer.setText("Intersect line layer")
-        self.menuProfiles.addAction(self.actIntersectLineLayer)
-
-        self.actIntersectPolygonLayer = QtWidgets.QAction(MainWindow)
-        self.actIntersectPolygonLayer.setText("Intersect polygon layer")
-        self.menuProfiles.addAction(self.actIntersectPolygonLayer)
-
-        self.menuProcessing.addAction(self.menuProfiles.menuAction())
+        self.actOpenProfiles = QtWidgets.QAction(MainWindow)
+        self.actOpenProfiles.setText("Geoprofiler")
+        self.menuProcessing.addAction(self.actOpenProfiles)
 
         self.actOpenStereoplot = QtWidgets.QAction(MainWindow)
         self.actOpenStereoplot.setText("Stereoplot")
         self.menuProcessing.addAction(self.actOpenStereoplot)
+
+        self.actOpenDemIntersection = QtWidgets.QAction(MainWindow)
+        self.actOpenDemIntersection.setText("Plane-DEM intersections")
+        self.menuProcessing.addAction(self.actOpenDemIntersection)
 
         self.menubar.addAction(self.menuProcessing.menuAction())
 
@@ -196,18 +183,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Plane-DEM intersections menu
 
         self.ui.actOpenDemIntersection.triggered.connect(self.open_dem_intersection_win)
-
-        # Profiles menu
-
-        self.ui.actChooseDEMs.triggered.connect(self.define_used_dem)
-        self.ui.actChooseLines.triggered.connect(self.define_used_profile_dataset)
-
-        self.ui.actCreateSingleProfile.triggered.connect(self.create_single_profile)
-        self.ui.actCreateParallelProfiles.triggered.connect(self.create_parallel_profiles)
-        self.ui.actProjectGeolAttitudes.triggered.connect(self.project_attitudes)
-        self.ui.actIntersectLineLayer.triggered.connect(self.intersect_lines)
-        self.ui.actIntersectPolygonLayer.triggered.connect(self.intersect_polygons)
-
 
         # data storage
 
@@ -523,14 +498,14 @@ class MainWindow(QtWidgets.QMainWindow):
                  "Input must be a line with two points")
             return
 
-        self.geoprofiles = GeoProfileSet()
-        base_profiler = LinearProfiler(
+        self.geoprofiles = GeoProfiles()
+        base_profiler = LineProfiler(
             start_pt=pts[0],
             end_pt=pts[1],
             densify_distance=densify_distance
         )
 
-        self.profiler = ParallelProfiler.fromBaseProfiler(
+        self.profiler = Profiler.fromBaseProfiler(
             base_profiler=base_profiler,
             profs_num=total_profiles_number,
             profs_offset=profiles_offset,
@@ -639,7 +614,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     (category, geometry)
                 )
 
-        if isinstance(self.profiler, LinearProfiler):
+        if isinstance(self.profiler, LineProfiler):
 
             print("Intersections")
 
@@ -667,7 +642,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.geoprofiles.lines_intersections = self.profiler.parse_intersections_for_profile(profile_intersections)
 
-        elif isinstance(self.profiler, ParallelProfiler):
+        elif isinstance(self.profiler, Profiler):
 
             profiles_intersections = []
 
@@ -692,7 +667,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         else:
 
-            raise Exception("Expected LinearProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
+            raise Exception("Expected LineProfiler or ParallelProfiles, got {}".format(type(self.profiler)))
 
         print("Plotting")
 
@@ -773,7 +748,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         pt_segment_intersections = []
 
-        if isinstance(self.profiler, LinearProfiler):
+        if isinstance(self.profiler, LineProfiler):
 
             for category, geometry in toprocess_geometries:
 
@@ -1117,8 +1092,8 @@ class ProjectGeolAttitudesDefWindow(QtWidgets.QDialog):
     def __init__(self,
                  plugin_name: str,
                  dem: GeoArray,
-                 profiler: Union[LinearProfiler, ParallelProfiler],
-                 geoprofiles: Union[GeoProfile, GeoProfileSet],
+                 profiler: Union[LineProfiler, Profiler],
+                 geoprofiles: Union[GeoProfile, GeoProfiles],
                  superposed_profiles,
                  point_layers: List,
                  aspect,
@@ -1473,7 +1448,7 @@ class PlotSingleProfileDefWindow(QtWidgets.QDialog):
             return
 
         self.geoprofiles = GeoProfile()
-        self.profiler = LinearProfiler(
+        self.profiler = LineProfiler(
             start_pt=pts[0],
             end_pt=pts[1],
             densify_distance=self.chosen_dem.mean_cellsize/2.0
