@@ -5,11 +5,13 @@ import numbers
 
 from collections import defaultdict, namedtuple
 
-import pyproj
-import fiona
+#import pyproj
+#import fiona
 
-from PyQt5.QtCore import Qt
-from PyQt5 import QtWidgets, uic
+from PyQt6.QtCore import Qt
+from PyQt6 import QtWidgets, uic, QtGui
+
+import pygmt
 
 from pygsf.geometries.grids.rasters import *
 from pygsf.profiles.profilers import *
@@ -91,11 +93,11 @@ class Ui_MainWindow(object):
         self.menuFile = QtWidgets.QMenu(self.menubar)
         self.menuFile.setTitle("File")
 
-        self.actLoadDem = QtWidgets.QAction(MainWindow)
+        self.actLoadDem = QtGui.QAction(MainWindow)
         self.actLoadDem.setText("Load DEM")
         self.menuFile.addAction(self.actLoadDem)
 
-        self.actLoadVectorLayer = QtWidgets.QAction(MainWindow)
+        self.actLoadVectorLayer = QtGui.QAction(MainWindow)
         self.actLoadVectorLayer.setText("Load vector layer")
         self.menuFile.addAction(self.actLoadVectorLayer)
 
@@ -104,27 +106,27 @@ class Ui_MainWindow(object):
         self.menuProcessing = QtWidgets.QMenu(self.menubar)
         self.menuProcessing.setTitle("Processing")
 
-        self.actOpenSimSurf = QtWidgets.QAction(MainWindow)
+        self.actOpenSimSurf = QtGui.QAction(MainWindow)
         self.actOpenSimSurf.setText("Simulate geosurface")
         self.menuProcessing.addAction(self.actOpenSimSurf)
 
-        self.actCalcSurfDEMInters = QtWidgets.QAction(MainWindow)
+        self.actCalcSurfDEMInters = QtGui.QAction(MainWindow)
         self.actCalcSurfDEMInters.setText("Calculate DEM-geosurface intersections")
         self.menuProcessing.addAction(self.actCalcSurfDEMInters)
 
-        self.actRestoreSurf = QtWidgets.QAction(MainWindow)
+        self.actRestoreSurf = QtGui.QAction(MainWindow)
         self.actRestoreSurf.setText("Restore geosurface from trace on DEM")
         self.menuProcessing.addAction(self.actRestoreSurf)
 
-        self.actOpenProfiles = QtWidgets.QAction(MainWindow)
+        self.actOpenProfiles = QtGui.QAction(MainWindow)
         self.actOpenProfiles.setText("Geoprofiler")
         self.menuProcessing.addAction(self.actOpenProfiles)
 
-        self.actOpenStereoplot = QtWidgets.QAction(MainWindow)
+        self.actOpenStereoplot = QtGui.QAction(MainWindow)
         self.actOpenStereoplot.setText("Stereoplot")
         self.menuProcessing.addAction(self.actOpenStereoplot)
 
-        self.actOpenDemIntersection = QtWidgets.QAction(MainWindow)
+        self.actOpenDemIntersection = QtGui.QAction(MainWindow)
         self.actOpenDemIntersection.setText("Plane-DEM intersections")
         self.menuProcessing.addAction(self.actOpenDemIntersection)
 
@@ -133,11 +135,11 @@ class Ui_MainWindow(object):
         self.menuInfo = QtWidgets.QMenu(self.menubar)
         self.menuInfo.setTitle("Info")
 
-        self.actionHelp = QtWidgets.QAction(MainWindow)
+        self.actionHelp = QtGui.QAction(MainWindow)
         self.actionHelp.setText("Help")
         self.menuInfo.addAction(self.actionHelp)
 
-        self.actionAbout = QtWidgets.QAction(MainWindow)
+        self.actionAbout = QtGui.QAction(MainWindow)
         self.actionAbout.setText("About")
         self.menuInfo.addAction(self.actionAbout)
 
@@ -209,7 +211,7 @@ class MainWindow(QtWidgets.QMainWindow):
             line_layers
         )
 
-        dialog.exec_()
+        dialog.exec()
 
     def load_dem(self):
 
@@ -244,7 +246,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plugin_name
             )
 
-            if dialog.exec_():
+            if dialog.exec():
 
                 epsg_code = dialog.EPSGCodeSpinBox.value()
 
@@ -326,7 +328,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plugin_name
             )
 
-            if dialog.exec_():
+            if dialog.exec():
 
                 epsg_code = dialog.EPSGCodeSpinBox.value()
 
@@ -372,7 +374,7 @@ class MainWindow(QtWidgets.QMainWindow):
             data_sources=list(map(lambda pth: os.path.basename(pth), datasets_paths))
         )
 
-        if dialog.exec_():
+        if dialog.exec():
             return get_selected_layer_index(dialog.listData_treeWidget)
         else:
             return None
@@ -477,7 +479,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dialog = MultiProfilesDefWindow()
 
-        if dialog.exec_():
+        if dialog.exec():
             densify_distance = dialog.densifyDistanceDoubleSpinBox.value()
             total_profiles_number = dialog.numberOfProfilesSpinBox.value()
             profiles_offset = dialog.profilesOffsetDoubleSpinBox.value()
@@ -571,7 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
             mline_layers
         )
 
-        if dialog.exec_():
+        if dialog.exec():
 
             input_layer_index = dialog.inputLayercomboBox.currentIndex()
             category_fldnm = dialog.labelFieldcomboBox.currentText()
@@ -709,7 +711,7 @@ class MainWindow(QtWidgets.QMainWindow):
             mpolygon_layers
         )
 
-        if dialog.exec_():
+        if dialog.exec():
 
             input_layer_index = dialog.polygonLayercomboBox.currentIndex()
             category_fldnm = dialog.classificationFieldcomboBox.currentText()
@@ -1564,6 +1566,6 @@ if __name__ == "__main__":
     
     app = QtWidgets.QApplication(sys.argv)
     mainWindow = MainWindow()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
