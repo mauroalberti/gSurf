@@ -17,7 +17,8 @@ from pygsf.geometries.grids.rasters import *
 from pygsf.profiles.profilers import *
 from pygsf.profiles.geoprofiles import *
 
-from gst.qt.tools import *
+from gst.qt6.tools import *
+from gst.io.rasters.gdal_io import *
 
 """
 from pygsf.spatial.space3d.rasters.rasters import *
@@ -88,6 +89,8 @@ class Ui_MainWindow(object):
 
     def setupUi(self, MainWindow):
 
+        # file
+
         self.menubar = QtWidgets.QMenuBar(MainWindow)
 
         self.menuFile = QtWidgets.QMenu(self.menubar)
@@ -100,6 +103,12 @@ class Ui_MainWindow(object):
         self.actLoadVectorLayer = QtGui.QAction(MainWindow)
         self.actLoadVectorLayer.setText("Load vector layer")
         self.menuFile.addAction(self.actLoadVectorLayer)
+
+        self.actViewData = QtGui.QAction(MainWindow)
+        self.actViewData.setText("View data")
+        self.menuFile.addAction(self.actViewData)
+
+        # processings
 
         self.menubar.addAction(self.menuFile.menuAction())
 
@@ -225,20 +234,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not filePath:
             return
 
-        success, result = try_read_rasterio_band(
-            filePath
-        )
+        result, err = read_raster_band_with_projection(
+            raster_source=filePath,
+        ) #-> Tuple[Union[type(None), Tuple[GeoTransform, numbers.Integral, Dict, np.ndarray, 'gdal.Projection']], Error]:
 
-        if not success:
-            msg = result
+        if err:
             QMessageBox.warning(
                 None,
                 "Raster input",
-                "Error: {}".format(msg)
+                f"Error: {repr(err)}"
              )
             return
 
-        array, affine_transform, epsg_code = result
+        geotransform, epsg_code, band_params, array, gdal_projection = result
 
         if epsg_code == -1:
 
@@ -259,10 +267,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 return
 
-        ga = GeoArray.fromRasterio(
+        ga = Grid(
             array=array,
-            affine_transform=affine_transform,
-            epsg_code=epsg_code
+            geotransform=geotransform,
+            epsg_code=epsg_code,
+            projection=gdal_projection
         )
 
         self.dems.append(
