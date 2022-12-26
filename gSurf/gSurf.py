@@ -17,6 +17,8 @@ from pygsf.geometries.grids.rasters import *
 from pygsf.profiles.profilers import *
 from pygsf.profiles.geoprofiles import *
 
+from gst.plots.parameters import *
+from gst.plots.mpl import *
 from gst.qt6.tools import *
 from gst.io.rasters.gdal_io import *
 
@@ -190,6 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.ui.actLoadDem.triggered.connect(self.load_dem)
         self.ui.actLoadVectorLayer.triggered.connect(self.load_vector_layer)
+        self.ui.actViewData.triggered.connect(self.view_map)
 
         # Plane-DEM intersections menu
 
@@ -364,6 +367,23 @@ class MainWindow(QtWidgets.QMainWindow):
             "Input",
             "Dataset read"
         )
+
+    def view_map(self):
+
+        figure_parameters = FigurePlotParams(
+            width=12,
+            height=8
+        )
+
+        grid = self.dems[-1].data
+
+        fig = maps(
+            grid,
+            fig_params=figure_parameters
+        )
+
+        if fig is not None:
+            fig.show()
 
     def choose_dataset_index(
         self,
