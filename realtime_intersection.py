@@ -8,7 +8,8 @@ disegno e fps a ogni frame, cosi' il costo resta visibile durante l'uso.
 
 Uso:
     python realtime_intersection.py <dem.tif> [--geologia <geology.gpkg>]
-                                    [--finestra N] [--assetto <file.json>]
+                                    [--categorie CAMPO] [--finestra N]
+                                    [--assetto <file.json>]
 
 Il DEM puo' essere grande quanto si vuole: non viene caricato in memoria. Lo
 sfondo e' una overview decimata, mentre il kernel gira su una finestra a piena
@@ -29,7 +30,13 @@ Nella finestra:
       del punto stesso (da fare con pan e zoom disattivati, altrimenti i due
       gesti sono lo stesso);
     - schermata negli appunti o su file, assetto corrente in JSON, traccia
-      calcolata in shapefile.
+      calcolata in shapefile. Il punto di appoggio esce in entrambi nelle due
+      forme, proiettata e geografica.
+
+Gli affioramenti poligonali sono colorati per unita' -- il campo lo decide
+--categorie, di default `code`. I colori escono dall'elenco completo del layer
+e non da quali unita' inquadri, cosi' la stessa formazione tiene il suo colore
+mentre ti sposti.
 """
 
 from __future__ import annotations
@@ -98,6 +105,7 @@ class MeridianConvergence:
 
     def __init__(self, crs):
         self.available = False
+        self._to_geographic = None
 
         if crs is None:
             return
@@ -127,6 +135,30 @@ class MeridianConvergence:
 
     def to_grid(self, true_azimuth, x, y):
         return (true_azimuth - self.at(x, y)) % 360.0
+
+    def geographic(self, x, y):
+        """
+        Longitudine e latitudine del punto, o None senza un CRS utilizzabile.
+
+        La trasformazione esiste gia' perche' serve alla convergenza a ogni
+        frame: qui viene solo esposta, perche' un punto scritto nelle sole
+        coordinate proiettate e' inutilizzabile fuori dal suo EPSG -- in un
+        taccuino, in un GPS, in un articolo.
+
+        Fuori dal dominio della proiezione pyproj restituisce infinito invece
+        di sollevare: il controllo sui finiti e' quello che distingue il fuori
+        campo da una coordinata buona.
+        """
+
+        if self._to_geographic is None:
+            return None
+
+        lon, lat = self._to_geographic.transform(x, y)
+
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            return None
+
+        return lon, lat
 
 
 class ComputeWindow:
@@ -301,12 +333,17 @@ class Dem:
 
 class GeologyOverlay:
     """
-    Faglie e carbonati come facilitatori di posizionamento.
+    Faglie e affioramenti come facilitatori di posizionamento.
 
     Sono statici, quindi vanno disegnati una volta e finiscono nel fondale che
     il blitting ricattura: per frame costano zero. Il geopackage tiene i layer
     in CRS diversi fra loro (i carbonati in UTM 32N, le faglie in geografiche),
     quindi ognuno va riproiettato per conto suo su quello del DEM.
+
+    I poligoni si colorano per unita' invece che in blocco: appoggiare un piano
+    a un contatto vuol dire sapere quali due unita' lo fanno, e un campo verde
+    uniforme quel contatto non lo mostra. Le linee restano di un colore solo --
+    quattrocento faglie divise in ventitre colori non si leggono.
     """
 
     STYLES = {
@@ -314,14 +351,39 @@ class GeologyOverlay:
         "faults": dict(color="#1f4fd8", linewidth=1.0),
     }
 
-    def __init__(self, path, crs, bounds, layers=("carbonates", "faults")):
+    CATEGORY_STYLE = dict(edgecolor="#333333", linewidth=0.4, alpha=0.38)
+
+    # Per un layer che non e' in STYLES e che la categorizzazione non prende:
+    # un grigio qualsiasi disegnato e' meglio di un KeyError a meta' mappa.
+    DEFAULT_STYLE = dict(facecolor="#9e9e9e", edgecolor="#5e5e5e", alpha=0.25, linewidth=0.5)
+
+    # Il campo che tappa i buchi di quello scelto: in geology.gpkg cinque
+    # poligoni non hanno `code`, e senza fallback finirebbero tutti in un'unica
+    # categoria "n.d." che ne mescola tre di diverse.
+    CATEGORY_FALLBACK = "name"
+
+    # Oltre una dozzina di voci la legenda mangia la mappa che dovrebbe
+    # spiegare; le unita' in eccesso restano colorate, solo non elencate.
+    MAX_LEGEND_ENTRIES = 12
+
+    def __init__(
+        self,
+        path,
+        crs,
+        bounds,
+        layers=("carbonates", "faults"),
+        category_field="code",
+    ):
         import geopandas as gpd  # pesante da importare: solo se serve davvero
         from shapely.geometry import box
 
         window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
 
+        self.category_field = category_field
         self.layers = {}
         self.skipped = {}
+        self.category_colors = {}
+        self.category_labels = {}
 
         for name in layers:
             try:
@@ -341,7 +403,62 @@ class GeologyOverlay:
                 self.skipped[name] = "nessun elemento nella finestra"
                 continue
 
-            self.layers[name] = visible
+            self.layers[name] = self._categorize(name, data, visible)
+
+    @property
+    def is_categorized(self):
+        return bool(self.category_colors)
+
+    def _values(self, frame):
+        """La colonna su cui distinguere, con i buchi tappati dal nome."""
+
+        if not self.category_field or self.category_field not in frame.columns:
+            return None
+
+        values = frame[self.category_field].astype("string")
+
+        if self.CATEGORY_FALLBACK in frame.columns:
+            values = values.fillna(frame[self.CATEGORY_FALLBACK].astype("string"))
+
+        return values.fillna("n.d.").astype(str)
+
+    def _categorize(self, layer, complete, visible):
+        """
+        Assegna un colore per unita', deciso sull'elenco completo del layer.
+
+        Sull'elenco completo e non su quello visibile di proposito: se i colori
+        uscissero da quali unita' capitano nella finestra, la stessa formazione
+        cambierebbe colore spostandosi o cambiando DEM, ed e' l'unica cosa che
+        una legenda non puo' permettersi.
+        """
+
+        if not visible.geom_type.astype(str).str.endswith("Polygon").any():
+            return visible
+
+        values = self._values(complete)
+
+        if values is None:
+            return visible
+
+        from matplotlib import colormaps
+
+        # Venti piu' venti: le unita' cartografate qui sono ventitre, e con la
+        # sola tab20 due di esse uscirebbero identiche.
+        wheel = list(colormaps["tab20"].colors) + list(colormaps["tab20b"].colors)
+        order = sorted(values.unique())
+
+        self.category_colors[layer] = {
+            value: wheel[i % len(wheel)] for i, value in enumerate(order)
+        }
+
+        if self.CATEGORY_FALLBACK in complete.columns and self.category_field != self.CATEGORY_FALLBACK:
+            named = complete[self.CATEGORY_FALLBACK].astype("string")
+            self.category_labels[layer] = {
+                value: (group.dropna().iloc[0] if len(group.dropna()) else "")
+                for value, group in named.groupby(values)
+            }
+
+        return visible.assign(_gsurf_category=self._values(visible))
 
     def draw(self, axes):
         """Disegna sugli assi, senza lasciare che geopandas riscali la vista."""
@@ -349,10 +466,31 @@ class GeologyOverlay:
         limits = axes.get_xlim(), axes.get_ylim()
 
         for name, data in self.layers.items():
-            data.plot(ax=axes, zorder=2, label=name, **self.STYLES[name])
+            colors = self.category_colors.get(name)
+
+            if colors:
+                data.plot(
+                    ax=axes,
+                    zorder=2,
+                    color=[colors[v] for v in data["_gsurf_category"]],
+                    **self.CATEGORY_STYLE,
+                )
+            else:
+                data.plot(
+                    ax=axes,
+                    zorder=2,
+                    label=name,
+                    **self.STYLES.get(name, self.DEFAULT_STYLE),
+                )
 
         axes.set_xlim(limits[0])
         axes.set_ylim(limits[1])
+
+    def _legend_label(self, layer, value, width=28):
+        name = self.category_labels.get(layer, {}).get(value, "")
+        text = f"{value} - {name}" if name and name != value else str(value)
+
+        return text if len(text) <= width else text[: width - 1] + "…"
 
     def legend_handles(self):
         """
@@ -366,18 +504,64 @@ class GeologyOverlay:
 
         handles = []
 
-        for name in self.layers:
-            style = self.STYLES[name]
+        for name, data in self.layers.items():
+            colors = self.category_colors.get(name)
 
-            if "facecolor" in style:
-                handles.append(Patch(label=name, **style))
-            else:
-                handles.append(Line2D([], [], label=name, **style))
+            if not colors:
+                style = self.STYLES.get(name, self.DEFAULT_STYLE)
+
+                if "facecolor" in style:
+                    handles.append(Patch(label=name, **style))
+                else:
+                    handles.append(Line2D([], [], label=name, **style))
+
+                continue
+
+            # In legenda solo le unita' che si vedono davvero, e in ordine di
+            # superficie affiorante: in ordine alfabetico il taglio a dodici
+            # butterebbe fuori Qt, PL e Op -- che sono meta' della mappa --
+            # per far posto ad AV, che e' un poligono solo.
+            present = list(
+                data.assign(_gsurf_area=data.area)
+                .groupby("_gsurf_category")["_gsurf_area"]
+                .sum()
+                .sort_values(ascending=False)
+                .index
+            )
+
+            for value in present[: self.MAX_LEGEND_ENTRIES]:
+                handles.append(
+                    Patch(
+                        facecolor=colors[value],
+                        label=self._legend_label(name, value),
+                        **self.CATEGORY_STYLE,
+                    )
+                )
+
+            if len(present) > self.MAX_LEGEND_ENTRIES:
+                handles.append(
+                    Patch(
+                        facecolor="none",
+                        edgecolor="none",
+                        label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} altre unita'",
+                    )
+                )
 
         return handles
 
     def summary(self):
-        found = ", ".join(f"{n} {len(g)}" for n, g in self.layers.items())
+        parts = []
+
+        for name, data in self.layers.items():
+            colors = self.category_colors.get(name)
+
+            if colors:
+                distinct = len(set(data["_gsurf_category"]))
+                parts.append(f"{name} {len(data)} in {distinct} unita' ({self.category_field})")
+            else:
+                parts.append(f"{name} {len(data)}")
+
+        found = ", ".join(parts)
         missing = ", ".join(f"{n} ({why})" for n, why in self.skipped.items())
 
         if found and missing:
@@ -668,9 +852,19 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             Line2D([], [], color="red", linewidth=1.2, label="intersezione"),
             Patch(facecolor="none", edgecolor="orange", linestyle="--", label="finestra di calcolo"),
         ]
+        categorized = self.overlay is not None and self.overlay.is_categorized
+
         if self.overlay is not None:
             handles.extend(self.overlay.legend_handles())
-        self.axes.legend(handles=handles, loc="upper right", fontsize="small", framealpha=0.85)
+
+        # Con le unita' distinte le voci sono una dozzina invece di tre: al
+        # corpo normale la legenda coprirebbe un quarto della mappa.
+        self.axes.legend(
+            handles=handles,
+            loc="upper right",
+            fontsize="x-small" if categorized else "small",
+            framealpha=0.85,
+        )
 
         self.canvas.draw()
 
@@ -784,6 +978,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def convergence_here(self):
         return self.convergence.at(self.source_point[0], self.source_point[1])
+
+    def source_geographic(self):
+        """Il punto di appoggio in longitudine e latitudine, o None."""
+
+        return self.convergence.geographic(self.source_point[0], self.source_point[1])
 
     def dip_angle(self):
         return float(self.dip_angle_spin.value())
@@ -1024,6 +1223,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         # Il riferimento va scritto per esteso: un'immersione senza il nord a
         # cui si appoggia e' ambigua di quasi un grado, da queste parti.
+        #
+        # E il punto va in entrambe le forme. Le proiettate sono quelle su cui
+        # gira il kernel, ma senza le geografiche il file non si legge fuori
+        # dal suo EPSG -- e l'EPSG e' proprio la riga che si perde per prima.
+        lon_lat = self.source_geographic()
+
         settings = {
             "dem": str(self.dem.path),
             "dip_dir": self.dip_direction(),
@@ -1032,6 +1237,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             "convergenza_meridiani": self.convergence_here(),
             "dip_angle": self.dip_angle(),
             "source_point": [float(v) for v in self.source_point],
+            "source_point_riferimento": (
+                f"EPSG:{self.dem.crs.to_epsg()}" if self.dem.crs else "sconosciuto"
+            ),
+            "source_lon": lon_lat[0] if lon_lat else None,
+            "source_lat": lon_lat[1] if lon_lat else None,
+            "source_lon_lat_riferimento": "EPSG:4326",
             "finestra_px": int(self.side),
             "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
         }
@@ -1060,6 +1271,10 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         # Nomi entro i dieci caratteri che lo shapefile concede, e i due azimut
         # entrambi presenti: chi riapre il file non deve indovinare quale nord.
+        # Stessa ragione per le due coppie di coordinate: il .prj dice in che
+        # EPSG stanno src_x e src_y, ma il .prj e' il file che si perde.
+        lon_lat = self.source_geographic()
+
         frame = gpd.GeoDataFrame(
             {
                 "dip_dir": [dip_dir] * len(traces),
@@ -1069,6 +1284,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
                 "src_x": [self.source_point[0]] * len(traces),
                 "src_y": [self.source_point[1]] * len(traces),
                 "src_z": [self.source_point[2]] * len(traces),
+                "src_lon": [lon_lat[0] if lon_lat else None] * len(traces),
+                "src_lat": [lon_lat[1] if lon_lat else None] * len(traces),
             },
             geometry=traces,
             crs=self.dem.crs,
@@ -1090,7 +1307,16 @@ def main():
     parser.add_argument(
         "--geologia",
         metavar="GPKG",
-        help="geopackage da cui prendere faglie e carbonati come riferimento",
+        help="geopackage da cui prendere faglie e affioramenti come riferimento",
+    )
+    parser.add_argument(
+        "--categorie",
+        metavar="CAMPO",
+        default="code",
+        help=(
+            "campo su cui colorare gli affioramenti poligonali (default 'code'); "
+            "'nessuna' per il colore unico di prima"
+        ),
     )
     parser.add_argument(
         "--finestra",
@@ -1126,7 +1352,12 @@ def main():
 
     overlay = None
     if args.geologia:
-        overlay = GeologyOverlay(args.geologia, dem.crs, dem.bounds)
+        overlay = GeologyOverlay(
+            args.geologia,
+            dem.crs,
+            dem.bounds,
+            category_field=None if args.categorie == "nessuna" else args.categorie,
+        )
         print(f"geologia: {overlay.summary()}")
 
     app = QtWidgets.QApplication(sys.argv)
