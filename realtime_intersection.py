@@ -7,14 +7,29 @@ mano e a vedere il risultato mentre si muove. La barra di stato riporta kernel,
 disegno e fps a ogni frame, cosi' il costo resta visibile durante l'uso.
 
 Uso:
-    python realtime_intersection.py <dem.tif> [--geologia <geology.gpkg>]
-                                    [--categorie CAMPO] [--finestra N]
-                                    [--assetto <file.json>]
+    python realtime_intersection.py
+    python realtime_intersection.py <dem.tif> [--poligoni PATH[:LAYER]]
+                                    [--linee PATH[:LAYER]] [--punti PATH[:LAYER]]
+                                    [--categorie CAMPO] [--x E] [--y N] [--z Q]
+                                    [--finestra N] [--assetto <file.json>]
+
+Senza argomenti si apre un dialogo che chiede le stesse cose. L'unica
+obbligatoria e' il DEM: i tre slot vettoriali -- poligoni, linee, punti --
+servono a sapere dove si sta appoggiando il piano, che e' una domanda diversa
+dal calcolo. I layer offerti in ciascuno slot sono filtrati sulla geometria,
+letta dai metadati, quindi fra i poligoni le faglie non compaiono.
 
 Il DEM puo' essere grande quanto si vuole: non viene caricato in memoria. Lo
 sfondo e' una overview decimata, mentre il kernel gira su una finestra a piena
 risoluzione centrata sul punto di appoggio, il cui lato --finestra decide la
 fluidita' (1000 px stanno sui 38 fps, 500 px sui 100).
+
+Il punto di appoggio si fissa componente per componente, e cio' che si lascia
+vuoto lo decide il DEM: senza --x e --y si va al centro, senza --z si prende la
+quota del suolo. Una quota data invece resta quella anche spostando il punto --
+e' cosi' che si appoggia un piano a un orizzonte che passa sopra o sotto la
+topografia di oggi. La spunta "quota dal DEM" nel pannello fa e disfa il legame
+in qualsiasi momento.
 
 L'immersione si legge e si scrive in **azimut vero**, come la si misura sul
 terreno. Il DEM pero' e' sulla griglia della proiezione, e i due nord non
@@ -38,6 +53,10 @@ Gli affioramenti poligonali sono colorati per unita' -- il campo lo decide
 e non da quali unita' inquadri, cosi' la stessa formazione tiene il suo colore
 mentre ti sposti.
 """
+
+# Gli slot vettoriali sono tre e generici, ma questo strumento e' nato con un
+# geopackage solo: `--geologia` resta come scorciatoia per quello, e mette
+# `carbonates` fra i poligoni e `faults` fra le linee.
 
 from __future__ import annotations
 
@@ -331,83 +350,136 @@ class Dem:
         )
 
 
-class GeologyOverlay:
+class VectorSource:
     """
-    Faglie e affioramenti come facilitatori di posizionamento.
+    Un layer vettoriale di sfondo, nel ruolo che gli si e' dato.
 
-    Sono statici, quindi vanno disegnati una volta e finiscono nel fondale che
-    il blitting ricattura: per frame costano zero. Il geopackage tiene i layer
-    in CRS diversi fra loro (i carbonati in UTM 32N, le faglie in geografiche),
-    quindi ognuno va riproiettato per conto suo su quello del DEM.
+    I ruoli sono tre -- poligoni, linee, punti -- e non sono una scelta di
+    stile: decidono che cosa ha senso chiedere al layer. Un campo di poligoni
+    colorato per unita' dice a quali due formazioni appartiene un contatto; le
+    stesse ventitre tinte spalmate su quattrocento faglie non si leggono.
+    Quindi la categorizzazione parte accesa sui poligoni e spenta sul resto,
+    ed e' comunque l'utente a decidere.
 
-    I poligoni si colorano per unita' invece che in blocco: appoggiare un piano
-    a un contatto vuol dire sapere quali due unita' lo fanno, e un campo verde
-    uniforme quel contatto non lo mostra. Le linee restano di un colore solo --
-    quattrocento faglie divise in ventitre colori non si leggono.
+    I layer sono statici: si disegnano una volta e finiscono nel fondale che il
+    blitting ricattura, quindi per frame costano zero. Ognuno porta il proprio
+    CRS -- in geology.gpkg i carbonati sono in UTM 32N e le faglie in
+    geografiche -- e va riproiettato per conto suo su quello del DEM, mai il
+    file in blocco.
     """
 
-    STYLES = {
-        "carbonates": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.22, linewidth=0.5),
-        "faults": dict(color="#1f4fd8", linewidth=1.0),
+    ROLES = ("poligoni", "linee", "punti")
+
+    # Il suffisso del tipo OGR: 'Polygon' e 'MultiPolygon' finiscono entrambi
+    # in 'Polygon', e cosi' le altre due coppie. Un layer senza geometria --
+    # `fault_attitudes` in geology.gpkg e' una tabella pura -- non ha suffisso
+    # e resta fuori da tutti e tre i ruoli, che e' dove deve stare.
+    GEOMETRY_SUFFIX = {
+        "poligoni": "Polygon",
+        "linee": "LineString",
+        "punti": "Point",
     }
 
-    CATEGORY_STYLE = dict(edgecolor="#333333", linewidth=0.4, alpha=0.38)
+    FLAT_STYLE = {
+        "poligoni": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.25, linewidth=0.5),
+        "linee": dict(color="#1f4fd8", linewidth=1.0),
+        "punti": dict(color="#d95f02", markersize=26, marker="^", edgecolor="#4a2200"),
+    }
 
-    # Per un layer che non e' in STYLES e che la categorizzazione non prende:
-    # un grigio qualsiasi disegnato e' meglio di un KeyError a meta' mappa.
-    DEFAULT_STYLE = dict(facecolor="#9e9e9e", edgecolor="#5e5e5e", alpha=0.25, linewidth=0.5)
+    CATEGORY_STYLE = {
+        "poligoni": dict(edgecolor="#333333", linewidth=0.4, alpha=0.38),
+        "linee": dict(linewidth=1.3),
+        "punti": dict(markersize=30, marker="^", edgecolor="#222222"),
+    }
+
+    # I punti sopra le linee, le linee sopra i poligoni: l'ordine in cui una
+    # carta si legge. Con lo zorder unico di prima un affioramento disegnato
+    # dopo copriva le faglie che servivano a orientarsi.
+    ZORDER = {"poligoni": 2, "linee": 3, "punti": 4}
 
     # Il campo che tappa i buchi di quello scelto: in geology.gpkg cinque
-    # poligoni non hanno `code`, e senza fallback finirebbero tutti in un'unica
+    # poligoni non hanno `code`, e senza fallback finirebbero in un'unica
     # categoria "n.d." che ne mescola tre di diverse.
     CATEGORY_FALLBACK = "name"
 
     # Oltre una dozzina di voci la legenda mangia la mappa che dovrebbe
-    # spiegare; le unita' in eccesso restano colorate, solo non elencate.
+    # spiegare; le categorie in eccesso restano colorate, solo non elencate.
     MAX_LEGEND_ENTRIES = 12
 
-    def __init__(
-        self,
-        path,
-        crs,
-        bounds,
-        layers=("carbonates", "faults"),
-        category_field="code",
-    ):
+    def __init__(self, path, role, crs, bounds, layer=None, category_field=None):
         import geopandas as gpd  # pesante da importare: solo se serve davvero
         from shapely.geometry import box
 
-        window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
-
+        self.path = Path(path)
+        self.role = role
+        self.layer = layer
         self.category_field = category_field
-        self.layers = {}
-        self.skipped = {}
-        self.category_colors = {}
-        self.category_labels = {}
+        self.colors = {}
+        self.labels = {}
+        self.frame = None
+        self.problem = None
 
-        for name in layers:
-            try:
-                data = gpd.read_file(path, layer=name)
-            except Exception as err:
-                self.skipped[name] = str(err).split("\n")[0]
-                continue
+        try:
+            complete = gpd.read_file(path, layer=layer) if layer else gpd.read_file(path)
+        except Exception as err:
+            self.problem = str(err).split("\n")[0]
+            return
 
-            if data.crs is None:
-                self.skipped[name] = "CRS assente"
-                continue
+        if complete.crs is None:
+            self.problem = "CRS assente"
+            return
 
-            visible = data.to_crs(crs)
-            visible = visible[visible.intersects(window)]
+        window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
+        visible = complete.to_crs(crs)
+        visible = visible[visible.intersects(window)]
 
-            if visible.empty:
-                self.skipped[name] = "nessun elemento nella finestra"
-                continue
+        if visible.empty:
+            self.problem = "nessun elemento sul DEM"
+            return
 
-            self.layers[name] = self._categorize(name, data, visible)
+        self.frame = self._categorize(complete, visible)
+
+    # -- lettura del contenitore, senza caricare i dati -------------------
+
+    @staticmethod
+    def candidate_layers(path, role):
+        """
+        I layer del file che hanno la geometria giusta per il ruolo.
+
+        Si legge dai soli metadati, quindi elencare i layer di un geopackage
+        da mezzo giga costa quanto elencarne uno vuoto -- ed e' cio' che
+        permette al dialogo di filtrare mentre l'utente sceglie.
+        """
+
+        import pyogrio
+
+        suffix = VectorSource.GEOMETRY_SUFFIX[role]
+
+        return [
+            str(name)
+            for name, geometry in pyogrio.list_layers(path)
+            if geometry is not None and str(geometry).endswith(suffix)
+        ]
+
+    @staticmethod
+    def text_fields(path, layer=None):
+        """I campi testuali del layer: gli unici su cui categorizzare abbia senso."""
+
+        import pyogrio
+
+        info = pyogrio.read_info(path, layer=layer) if layer else pyogrio.read_info(path)
+
+        return [
+            str(field)
+            for field, dtype in zip(info["fields"], info["dtypes"])
+            if str(dtype) == "object"
+        ]
+
+    # -- categorie ---------------------------------------------------------
 
     @property
-    def is_categorized(self):
-        return bool(self.category_colors)
+    def is_loaded(self):
+        return self.frame is not None
 
     def _values(self, frame):
         """La colonna su cui distinguere, con i buchi tappati dal nome."""
@@ -422,18 +494,15 @@ class GeologyOverlay:
 
         return values.fillna("n.d.").astype(str)
 
-    def _categorize(self, layer, complete, visible):
+    def _categorize(self, complete, visible):
         """
-        Assegna un colore per unita', deciso sull'elenco completo del layer.
+        Assegna un colore per categoria, deciso sull'elenco completo del layer.
 
         Sull'elenco completo e non su quello visibile di proposito: se i colori
-        uscissero da quali unita' capitano nella finestra, la stessa formazione
-        cambierebbe colore spostandosi o cambiando DEM, ed e' l'unica cosa che
-        una legenda non puo' permettersi.
+        uscissero da quali categorie capitano nella finestra, la stessa
+        formazione cambierebbe colore spostandosi o cambiando DEM, ed e'
+        l'unica cosa che una legenda non puo' permettersi.
         """
-
-        if not visible.geom_type.astype(str).str.endswith("Polygon").any():
-            return visible
 
         values = self._values(complete)
 
@@ -442,132 +511,183 @@ class GeologyOverlay:
 
         from matplotlib import colormaps
 
-        # Venti piu' venti: le unita' cartografate qui sono ventitre, e con la
-        # sola tab20 due di esse uscirebbero identiche.
+        # Venti piu' venti: le unita' cartografate in geology.gpkg sono
+        # ventitre, e con la sola tab20 due di esse uscirebbero identiche.
         wheel = list(colormaps["tab20"].colors) + list(colormaps["tab20b"].colors)
         order = sorted(values.unique())
 
-        self.category_colors[layer] = {
-            value: wheel[i % len(wheel)] for i, value in enumerate(order)
-        }
+        self.colors = {value: wheel[i % len(wheel)] for i, value in enumerate(order)}
 
         if self.CATEGORY_FALLBACK in complete.columns and self.category_field != self.CATEGORY_FALLBACK:
             named = complete[self.CATEGORY_FALLBACK].astype("string")
-            self.category_labels[layer] = {
+            self.labels = {
                 value: (group.dropna().iloc[0] if len(group.dropna()) else "")
                 for value, group in named.groupby(values)
             }
 
         return visible.assign(_gsurf_category=self._values(visible))
 
+    # -- disegno -----------------------------------------------------------
+
     def draw(self, axes):
-        """Disegna sugli assi, senza lasciare che geopandas riscali la vista."""
+        table = self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE
+        style = dict(table[self.role])
 
-        limits = axes.get_xlim(), axes.get_ylim()
+        if self.colors:
+            style["color"] = [self.colors[v] for v in self.frame["_gsurf_category"]]
+        else:
+            style.setdefault("label", self.layer or self.path.stem)
 
-        for name, data in self.layers.items():
-            colors = self.category_colors.get(name)
+        self.frame.plot(ax=axes, zorder=self.ZORDER[self.role], **style)
 
-            if colors:
-                data.plot(
-                    ax=axes,
-                    zorder=2,
-                    color=[colors[v] for v in data["_gsurf_category"]],
-                    **self.CATEGORY_STYLE,
-                )
-            else:
-                data.plot(
-                    ax=axes,
-                    zorder=2,
-                    label=name,
-                    **self.STYLES.get(name, self.DEFAULT_STYLE),
-                )
-
-        axes.set_xlim(limits[0])
-        axes.set_ylim(limits[1])
-
-    def _legend_label(self, layer, value, width=28):
-        name = self.category_labels.get(layer, {}).get(value, "")
+    def _legend_label(self, value, width=28):
+        name = self.labels.get(value, "")
         text = f"{value} - {name}" if name and name != value else str(value)
 
         return text if len(text) <= width else text[: width - 1] + "…"
 
-    def legend_handles(self):
+    def _handle(self, label, color=None):
         """
-        Artisti fittizi per la legenda: geopandas disegna i poligoni con una
-        collection che matplotlib non sa rappresentare da sola, e senza questi
-        i carbonati sparirebbero dalla legenda in silenzio.
+        L'artista fittizio per una voce di legenda.
+
+        Serve perche' geopandas disegna con collection che matplotlib non sa
+        rappresentare da sola: senza questi, i poligoni sparirebbero dalla
+        legenda in silenzio. La forma segue il ruolo, cosi' fra tre layer
+        categorizzati si capisce comunque quale voce e' di chi.
         """
 
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
-        handles = []
+        style = dict((self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE)[self.role])
+        style.pop("markersize", None)
+        style.pop("color", None)
 
-        for name, data in self.layers.items():
-            colors = self.category_colors.get(name)
+        if self.role == "poligoni":
+            return Patch(facecolor=color or style.pop("facecolor", "#4daf7c"), label=label, **style)
 
-            if not colors:
-                style = self.STYLES.get(name, self.DEFAULT_STYLE)
+        if self.role == "linee":
+            return Line2D([], [], color=color or "#1f4fd8", label=label, **style)
 
-                if "facecolor" in style:
-                    handles.append(Patch(label=name, **style))
-                else:
-                    handles.append(Line2D([], [], label=name, **style))
+        marker = style.pop("marker", "^")
+        edge = style.pop("edgecolor", "#222222")
 
-                continue
+        return Line2D(
+            [], [],
+            linestyle="none",
+            marker=marker,
+            markerfacecolor=color or "#d95f02",
+            markeredgecolor=edge,
+            markersize=7,
+            label=label,
+        )
 
-            # In legenda solo le unita' che si vedono davvero, e in ordine di
-            # superficie affiorante: in ordine alfabetico il taglio a dodici
-            # butterebbe fuori Qt, PL e Op -- che sono meta' della mappa --
-            # per far posto ad AV, che e' un poligono solo.
-            present = list(
-                data.assign(_gsurf_area=data.area)
-                .groupby("_gsurf_category")["_gsurf_area"]
-                .sum()
-                .sort_values(ascending=False)
-                .index
+    def legend_handles(self):
+        if not self.colors:
+            return [self._handle(self.layer or self.path.stem)]
+
+        # In legenda solo le categorie che si vedono davvero, e in ordine di
+        # peso: alfabeticamente il taglio a dodici butterebbe fuori Qt, PL e
+        # Op -- che sono meta' della mappa -- per far posto ad AV, che e' un
+        # poligono solo. Il peso e' l'area per i poligoni, la lunghezza per le
+        # linee, il conteggio per i punti.
+        frame = self.frame
+
+        if self.role == "poligoni":
+            weight = frame.area
+        elif self.role == "linee":
+            weight = frame.length
+        else:
+            weight = 1.0
+
+        present = list(
+            frame.assign(_gsurf_weight=weight)
+            .groupby("_gsurf_category")["_gsurf_weight"]
+            .sum()
+            .sort_values(ascending=False)
+            .index
+        )
+
+        handles = [
+            self._handle(self._legend_label(value), self.colors[value])
+            for value in present[: self.MAX_LEGEND_ENTRIES]
+        ]
+
+        if len(present) > self.MAX_LEGEND_ENTRIES:
+            from matplotlib.patches import Patch
+
+            handles.append(
+                Patch(
+                    facecolor="none",
+                    edgecolor="none",
+                    label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} altre in {self.role}",
+                )
             )
-
-            for value in present[: self.MAX_LEGEND_ENTRIES]:
-                handles.append(
-                    Patch(
-                        facecolor=colors[value],
-                        label=self._legend_label(name, value),
-                        **self.CATEGORY_STYLE,
-                    )
-                )
-
-            if len(present) > self.MAX_LEGEND_ENTRIES:
-                handles.append(
-                    Patch(
-                        facecolor="none",
-                        edgecolor="none",
-                        label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} altre unita'",
-                    )
-                )
 
         return handles
 
     def summary(self):
-        parts = []
+        where = self.layer or self.path.name
 
-        for name, data in self.layers.items():
-            colors = self.category_colors.get(name)
+        if not self.is_loaded:
+            return f"{self.role}: {where} saltato ({self.problem})"
 
-            if colors:
-                distinct = len(set(data["_gsurf_category"]))
-                parts.append(f"{name} {len(data)} in {distinct} unita' ({self.category_field})")
-            else:
-                parts.append(f"{name} {len(data)}")
+        if self.colors:
+            distinct = len(set(self.frame["_gsurf_category"]))
 
-        found = ", ".join(parts)
-        missing = ", ".join(f"{n} ({why})" for n, why in self.skipped.items())
+            return (
+                f"{self.role}: {where}, {len(self.frame)} in {distinct} "
+                f"categorie ({self.category_field})"
+            )
 
-        if found and missing:
-            return f"{found} -- saltati: {missing}"
+        return f"{self.role}: {where}, {len(self.frame)}"
 
-        return found or f"nessun layer usabile: {missing}"
+
+class Overlay:
+    """
+    I layer vettoriali di sfondo tenuti insieme, nell'ordine in cui si leggono.
+
+    Nessuno di essi e' necessario: il DEM da solo basta a intersecare un piano.
+    Servono a sapere dove si sta appoggiando quel piano, che e' una domanda
+    diversa dal calcolo e a cui il DEM non risponde.
+    """
+
+    def __init__(self, sources=()):
+        sources = list(sources)
+
+        self.sources = [s for s in sources if s.is_loaded]
+        self.rejected = [s for s in sources if not s.is_loaded]
+
+    def __bool__(self):
+        return bool(self.sources)
+
+    @property
+    def is_categorized(self):
+        return any(source.colors for source in self.sources)
+
+    def draw(self, axes):
+        """Disegna sugli assi, senza lasciare che geopandas riscali la vista."""
+
+        limits = axes.get_xlim(), axes.get_ylim()
+
+        for source in sorted(self.sources, key=lambda s: VectorSource.ZORDER[s.role]):
+            source.draw(axes)
+
+        axes.set_xlim(limits[0])
+        axes.set_ylim(limits[1])
+
+    def legend_handles(self):
+        handles = []
+
+        for source in sorted(self.sources, key=lambda s: VectorSource.ZORDER[s.role]):
+            handles.extend(source.legend_handles())
+
+        return handles
+
+    def summary(self):
+        lines = [s.summary() for s in self.sources] + [s.summary() for s in self.rejected]
+
+        return "; ".join(lines) if lines else "nessun layer vettoriale"
 
 
 def merged_traces(points, segments):
@@ -633,6 +753,358 @@ class Toolbar(NavigationToolbar2QT):
         self._view_changed()
 
 
+VECTOR_FILTER = (
+    "Vettoriali (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
+    "Tutti i file (*)"
+)
+
+RASTER_FILTER = "Raster (*.tif *.tiff *.vrt *.asc *.img *.dt2 *.hgt);;Tutti i file (*)"
+
+
+def as_number(text):
+    """Il testo come numero, o None se e' vuoto o non lo e'.
+
+    La virgola vale il punto: la tastiera italiana mette la virgola sul
+    tastierino, e rifiutare '1187,4' sarebbe una piccola crudelta'."""
+
+    text = (text or "").strip().replace(",", ".")
+
+    if not text:
+        return None
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+class VectorPicker(QtWidgets.QGroupBox):
+    """
+    La scelta di un layer per un ruolo: file, layer dentro il file, categorie.
+
+    I layer offerti sono filtrati sulla geometria del ruolo, letta dai soli
+    metadati: nello slot dei poligoni le faglie non compaiono proprio, e una
+    tabella senza geometria non compare da nessuna parte. E' un errore in meno
+    da diagnosticare a valle, al costo di una lettura che non tocca i dati.
+    """
+
+    # I nomi con cui una colonna di categoria si presenta di solito. Sui
+    # poligoni la categorizzazione parte accesa perche' e' quasi sempre cio'
+    # che si vuole; su linee e punti parte spenta, che venti tinte su
+    # quattrocento faglie non si leggono.
+    PREFERRED_FIELDS = ("code", "sigla", "unit", "unita", "type", "tipo", "name", "nome")
+
+    def __init__(self, role, parent=None):
+        super().__init__(role.capitalize(), parent)
+
+        self.role = role
+        self._path = None
+
+        self.path_label = QtWidgets.QLineEdit()
+        self.path_label.setReadOnly(True)
+        self.path_label.setPlaceholderText("nessuno (opzionale)")
+
+        browse = QtWidgets.QPushButton("Sfoglia...")
+        browse.clicked.connect(self._browse)
+
+        self.clear_button = QtWidgets.QPushButton("Togli")
+        self.clear_button.clicked.connect(self.clear)
+        self.clear_button.setEnabled(False)
+
+        self.layer_combo = QtWidgets.QComboBox()
+        self.layer_combo.setEnabled(False)
+        self.layer_combo.currentTextChanged.connect(self._on_layer_changed)
+
+        self.category_combo = QtWidgets.QComboBox()
+        self.category_combo.setEnabled(False)
+
+        grid = QtWidgets.QGridLayout(self)
+        grid.addWidget(self.path_label, 0, 0, 1, 2)
+        grid.addWidget(browse, 0, 2)
+        grid.addWidget(self.clear_button, 0, 3)
+        grid.addWidget(QtWidgets.QLabel("layer"), 1, 0)
+        grid.addWidget(self.layer_combo, 1, 1, 1, 3)
+        grid.addWidget(QtWidgets.QLabel("categorie"), 2, 0)
+        grid.addWidget(self.category_combo, 2, 1, 1, 3)
+        grid.setColumnStretch(1, 1)
+
+    def _browse(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, f"Scegli il file: {self.role}", "", VECTOR_FILTER
+        )
+
+        if path:
+            self.set_path(path)
+
+    def set_path(self, path, layer=None, category_field=None):
+        """Carica l'elenco dei layer adatti al ruolo. Torna False se non ce ne sono."""
+
+        try:
+            candidates = VectorSource.candidate_layers(path, self.role)
+        except Exception as err:
+            QtWidgets.QMessageBox.warning(
+                self, "File illeggibile", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
+            )
+            return False
+
+        if not candidates:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Nessun layer adatto",
+                f"{Path(path).name} non contiene layer di tipo {self.role}.",
+            )
+            return False
+
+        self._path = Path(path)
+        self.path_label.setText(str(path))
+        self.path_label.setToolTip(str(path))
+        self.clear_button.setEnabled(True)
+
+        with QtCore.QSignalBlocker(self.layer_combo):
+            self.layer_combo.clear()
+            self.layer_combo.addItems(candidates)
+
+            if layer and layer in candidates:
+                self.layer_combo.setCurrentText(layer)
+
+        self.layer_combo.setEnabled(True)
+        self._on_layer_changed(self.layer_combo.currentText(), preferred=category_field)
+
+        return True
+
+    def _on_layer_changed(self, layer, preferred=None):
+        if not self._path or not layer:
+            return
+
+        try:
+            fields = VectorSource.text_fields(self._path, layer)
+        except Exception:
+            fields = []
+
+        with QtCore.QSignalBlocker(self.category_combo):
+            self.category_combo.clear()
+            self.category_combo.addItem("(nessuna)")
+            self.category_combo.addItems(fields)
+
+            chosen = None
+
+            if preferred and preferred in fields:
+                chosen = preferred
+            elif self.role == "poligoni":
+                chosen = next((f for f in self.PREFERRED_FIELDS if f in fields), None)
+
+            self.category_combo.setCurrentText(chosen or "(nessuna)")
+
+        self.category_combo.setEnabled(bool(fields))
+
+    def clear(self):
+        self._path = None
+        self.path_label.clear()
+        self.path_label.setToolTip("")
+        self.clear_button.setEnabled(False)
+        self.layer_combo.clear()
+        self.layer_combo.setEnabled(False)
+        self.category_combo.clear()
+        self.category_combo.setEnabled(False)
+
+    def value(self):
+        """Il ruolo scelto come dizionario, o None se lo slot e' vuoto."""
+
+        if self._path is None:
+            return None
+
+        field = self.category_combo.currentText()
+
+        return dict(
+            path=str(self._path),
+            role=self.role,
+            layer=self.layer_combo.currentText() or None,
+            category_field=None if field in ("", "(nessuna)") else field,
+        )
+
+
+class SourcesDialog(QtWidgets.QDialog):
+    """
+    Che cosa aprire, chiesto prima di aprire la finestra di lavoro.
+
+    Il DEM e' l'unico obbligatorio, perche' e' l'unico di cui il kernel ha
+    bisogno: gli altri tre servono a sapere dove si sta appoggiando il piano,
+    che e' una domanda diversa dal calcolo.
+
+    Anche il punto di appoggio si puo' fissare qui, componente per componente:
+    lasciando vuoto si va al centro del DEM con la quota del suolo, e una
+    quota scritta a mano vale piu' del suolo -- e' cosi' che si appoggia un
+    piano a un orizzonte che passa sopra la topografia di oggi.
+    """
+
+    def __init__(self, parent=None, dem=None, vectors=(), point=(None, None, None)):
+        super().__init__(parent)
+
+        self.setWindowTitle("gSurf - sorgenti")
+        self.setMinimumWidth(560)
+
+        self.dem_label = QtWidgets.QLineEdit()
+        self.dem_label.setReadOnly(True)
+        self.dem_label.setPlaceholderText("obbligatorio")
+
+        dem_browse = QtWidgets.QPushButton("Sfoglia...")
+        dem_browse.clicked.connect(self._browse_dem)
+
+        self.dem_info = QtWidgets.QLabel()
+        self.dem_info.setStyleSheet("color: gray; font-size: 10px;")
+
+        dem_box = QtWidgets.QGroupBox("DEM")
+        dem_grid = QtWidgets.QGridLayout(dem_box)
+        dem_grid.addWidget(self.dem_label, 0, 0)
+        dem_grid.addWidget(dem_browse, 0, 1)
+        dem_grid.addWidget(self.dem_info, 1, 0, 1, 2)
+        dem_grid.setColumnStretch(0, 1)
+
+        self.pickers = {role: VectorPicker(role) for role in VectorSource.ROLES}
+
+        # Le caselle restano di testo e non spinbox: una spinbox non sa stare
+        # vuota, e "vuoto" e' proprio il valore che qui vuol dire "decidi tu".
+        numeric = QtGui.QDoubleValidator()
+        numeric.setLocale(QtCore.QLocale.c())
+
+        self.easting_edit = QtWidgets.QLineEdit()
+        self.northing_edit = QtWidgets.QLineEdit()
+        self.elevation_edit = QtWidgets.QLineEdit()
+
+        for edit in (self.easting_edit, self.northing_edit, self.elevation_edit):
+            edit.setValidator(numeric)
+
+        self.easting_edit.setPlaceholderText("centro del DEM")
+        self.northing_edit.setPlaceholderText("centro del DEM")
+        self.elevation_edit.setPlaceholderText("quota del DEM")
+
+        point_box = QtWidgets.QGroupBox("Punto di appoggio (opzionale)")
+        point_grid = QtWidgets.QGridLayout(point_box)
+        for column, (caption, edit) in enumerate(
+            (
+                ("E", self.easting_edit),
+                ("N", self.northing_edit),
+                ("Z", self.elevation_edit),
+            )
+        ):
+            point_grid.addWidget(QtWidgets.QLabel(caption), 0, column * 2)
+            point_grid.addWidget(edit, 0, column * 2 + 1)
+            point_grid.setColumnStretch(column * 2 + 1, 1)
+
+        note = QtWidgets.QLabel(
+            "Una quota scritta qui non segue il DEM: il piano si appoggia a quella."
+        )
+        note.setStyleSheet("color: gray; font-size: 10px;")
+        point_grid.addWidget(note, 1, 0, 1, 6)
+
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Open
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        # I pulsanti standard di Qt prendono la lingua da un file di traduzione
+        # che qui non c'e', e uscirebbero in inglese in mezzo a un'interfaccia
+        # italiana. Scriverli a mano costa meno che installare un traduttore.
+        for button, text in (
+            (QtWidgets.QDialogButtonBox.StandardButton.Open, "Apri"),
+            (QtWidgets.QDialogButtonBox.StandardButton.Cancel, "Annulla"),
+        ):
+            self.buttons.button(button).setText(text)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(dem_box)
+        for role in VectorSource.ROLES:
+            layout.addWidget(self.pickers[role])
+        layout.addWidget(point_box)
+        layout.addWidget(self.buttons)
+
+        self._dem_path = None
+        self._set_dem(dem)
+
+        for spec in vectors or ():
+            picker = self.pickers.get(spec.get("role"))
+
+            if picker is not None:
+                picker.set_path(spec["path"], spec.get("layer"), spec.get("category_field"))
+
+        for edit, value in zip(
+            (self.easting_edit, self.northing_edit, self.elevation_edit), point
+        ):
+            if value is not None:
+                edit.setText(f"{float(value):g}")
+
+    def _browse_dem(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Scegli il DEM", "", RASTER_FILTER
+        )
+
+        if path:
+            self._set_dem(path)
+
+    def _set_dem(self, path):
+        """
+        Apre il DEM per i soli metadati, e con quelli spiega che cosa e'.
+
+        Serve anche a scoprire subito che il file non e' un raster, invece che
+        dopo aver chiuso il dialogo -- e a scrivere nei segnaposto le
+        coordinate vere del centro, che sono il valore che si otterrebbe
+        lasciando vuoto.
+        """
+
+        self._refresh_ok()
+
+        if not path:
+            return
+
+        try:
+            with rasterio.open(path) as src:
+                epsg = src.crs.to_epsg() if src.crs else None
+                centre_x = (src.bounds.left + src.bounds.right) / 2.0
+                centre_y = (src.bounds.bottom + src.bounds.top) / 2.0
+                info = (
+                    f"{src.width}x{src.height} "
+                    f"({src.width * src.height / 1e6:.1f} Mpx), "
+                    f"EPSG:{epsg or '?'}, cella {abs(src.transform.a):g} m"
+                )
+        except Exception as err:
+            QtWidgets.QMessageBox.warning(
+                self, "DEM illeggibile", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
+            )
+            return
+
+        self._dem_path = str(path)
+        self.dem_label.setText(str(path))
+        self.dem_label.setToolTip(str(path))
+        self.dem_info.setText(info)
+
+        self.easting_edit.setPlaceholderText(f"centro: {centre_x:.0f}")
+        self.northing_edit.setPlaceholderText(f"centro: {centre_y:.0f}")
+
+        self._refresh_ok()
+
+    def _refresh_ok(self):
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Open).setEnabled(
+            self._dem_path is not None
+        )
+
+    def choices(self):
+        """DEM, layer vettoriali e punto, nella forma che `main` sa usare."""
+
+        vectors = [p.value() for p in self.pickers.values()]
+
+        return dict(
+            dem=self._dem_path,
+            vectors=[v for v in vectors if v],
+            point=(
+                as_number(self.easting_edit.text()),
+                as_number(self.northing_edit.text()),
+                as_number(self.elevation_edit.text()),
+            ),
+        )
+
+
 class RealtimeWindow(QtWidgets.QMainWindow):
 
     PICK_RADIUS_PX = 12
@@ -644,7 +1116,15 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # scala del widget e l'immersione geologica c'e' solo mezzo giro di scarto.
     DIAL_NORTH_OFFSET = 180
 
-    def __init__(self, dem, overlay=None, side=1000, attitude=(90.0, 30.0), source=None):
+    def __init__(
+        self,
+        dem,
+        overlay=None,
+        side=1000,
+        attitude=(90.0, 30.0),
+        source=None,
+        z_follows_dem=None,
+    ):
         super().__init__()
 
         self.dem = dem
@@ -655,10 +1135,25 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.convergence = MeridianConvergence(dem.crs)
         self.last_result = ([], [])
 
-        if source is None:
-            cx, cy = dem.center()
-            source = [cx, cy, dem.elevation_at(cx, cy) or dem.z_median]
-        self.source_point = list(source)
+        # Le tre componenti sono indipendenti: si puo' fissare la sola quota e
+        # lasciare che il punto stia al centro, o il contrario.
+        x, y, z = (tuple(source) + (None, None, None))[:3] if source else (None, None, None)
+        centre_x, centre_y = dem.center()
+
+        x = centre_x if x is None else float(x)
+        y = centre_y if y is None else float(y)
+
+        # Una quota data esplicitamente vuole restare quella: e' il caso di un
+        # orizzonte proiettato, o di una misura presa sopra o sotto il suolo.
+        # Darla e' quindi anche il modo di dire che non deve seguire il DEM,
+        # salvo che qualcuno lo chieda esplicitamente.
+        self.z_follows_dem = (z is None) if z_follows_dem is None else bool(z_follows_dem)
+
+        if z is None:
+            surface = dem.elevation_at(x, y)
+            z = dem.z_median if surface is None else surface
+
+        self.source_point = [x, y, float(z)]
 
         self.side = min(side, dem.width, dem.height)
         self.window = dem.window_at(self.source_point[0], self.source_point[1], self.side)
@@ -748,6 +1243,56 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.side_label = QtWidgets.QLabel()
         self.side_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
+        # Il punto di appoggio, scrivibile oltre che trascinabile: sul terreno
+        # una stazione ha delle coordinate, e ridigitarle cercandole con il
+        # mouse e' un modo di perderle.
+        # L'intervallo esce dal DEM di una sua larghezza per lato, invece di
+        # fermarsi al bordo: il piano e' illimitato e il punto che lo regge non
+        # deve starci sopra. Fermarsi al bordo vorrebbe dire che un --x fuori
+        # DEM verrebbe silenziosamente riportato dentro, e la casella direbbe
+        # una cosa diversa dal punto che sta calcolando.
+        span_x = self.dem.bounds.right - self.dem.bounds.left
+        span_y = self.dem.bounds.top - self.dem.bounds.bottom
+
+        self.easting_spin = QtWidgets.QDoubleSpinBox()
+        self.easting_spin.setDecimals(1)
+        self.easting_spin.setSingleStep(50.0)
+        self.easting_spin.setRange(self.dem.bounds.left - span_x, self.dem.bounds.right + span_x)
+        self.easting_spin.setPrefix("E ")
+
+        self.northing_spin = QtWidgets.QDoubleSpinBox()
+        self.northing_spin.setDecimals(1)
+        self.northing_spin.setSingleStep(50.0)
+        self.northing_spin.setRange(self.dem.bounds.bottom - span_y, self.dem.bounds.top + span_y)
+        self.northing_spin.setPrefix("N ")
+
+        # La quota va sotto il livello del mare -- qui l'avanfossa ci arriva --
+        # e sopra la cima piu' alta, perche' un piano puo' appoggiarsi a un
+        # orizzonte che sta in aria sopra la topografia attuale.
+        self.elevation_spin = QtWidgets.QDoubleSpinBox()
+        self.elevation_spin.setDecimals(1)
+        self.elevation_spin.setSingleStep(10.0)
+        self.elevation_spin.setRange(-6000.0, 9000.0)
+        self.elevation_spin.setPrefix("Z ")
+        self.elevation_spin.setSuffix(" m")
+
+        # Acceso, il punto striscia sulla topografia. Spento, la quota resta
+        # quella scritta e il piano si stacca dal suolo: e' cio' che serve per
+        # un orizzonte proiettato, o per una misura presa in parete.
+        self.follow_dem_check = QtWidgets.QCheckBox("quota dal DEM")
+        self.follow_dem_check.setChecked(self.z_follows_dem)
+
+        self.elevation_label = QtWidgets.QLabel()
+        self.elevation_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.elevation_label.setStyleSheet("color: gray; font-size: 10px;")
+
+        self._sync_point_boxes()
+
+        self.easting_spin.valueChanged.connect(self._on_point_typed)
+        self.northing_spin.valueChanged.connect(self._on_point_typed)
+        self.elevation_spin.valueChanged.connect(self._on_elevation_typed)
+        self.follow_dem_check.toggled.connect(self._on_follow_dem_toggled)
+
         controls = QtWidgets.QWidget()
         controls.setMaximumWidth(200)
         layout = QtWidgets.QVBoxLayout(controls)
@@ -759,6 +1304,14 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.dip_angle_spin)
         layout.addWidget(self.attitude_label)
         layout.addWidget(self.convergence_label)
+
+        layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("Punto di appoggio"))
+        layout.addWidget(self.easting_spin)
+        layout.addWidget(self.northing_spin)
+        layout.addWidget(self.elevation_spin)
+        layout.addWidget(self.follow_dem_check)
+        layout.addWidget(self.elevation_label)
 
         layout.addSpacing(8)
         layout.addWidget(QtWidgets.QLabel("Finestra di calcolo"))
@@ -782,10 +1335,19 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         map_layout.addWidget(self.toolbar)
         map_layout.addWidget(self.canvas, stretch=1)
 
+        # Il pannello ha cinque gruppi e non ci sta piu' su uno schermo basso:
+        # dentro un'area scorrevole si accorcia invece di tagliare i bottoni.
+        panel = QtWidgets.QScrollArea()
+        panel.setWidget(controls)
+        panel.setWidgetResizable(True)
+        panel.setMaximumWidth(224)
+        panel.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        panel.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
         central = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout(central)
         main_layout.addWidget(map_side, stretch=1)
-        main_layout.addWidget(controls)
+        main_layout.addWidget(panel)
         self.setCentralWidget(central)
 
         self.statusBar().showMessage(
@@ -896,15 +1458,87 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return math.hypot(event.x - px, event.y - py) <= self.PICK_RADIUS_PX
 
     def _move_source(self, x, y):
-        z = self.dem.elevation_at(x, y)
+        surface = self.dem.elevation_at(x, y)
 
-        # Su nodata si tiene la quota precedente invece di rifiutare lo
+        # Con la spunta tolta la quota non si tocca: chi l'ha scritta la vuole
+        # dov'e', e un trascinamento in mappa e' un gesto sul piano orizzontale.
+        # Su nodata si tiene comunque la precedente invece di rifiutare lo
         # spostamento: interrompere un trascinamento a meta' e' peggio che
         # appoggiare il piano a una quota vecchia di qualche pixel.
-        self.source_point = [x, y, z if z is not None else self.source_point[2]]
-        self.source_marker.set_data([x], [y])
+        if self.z_follows_dem and surface is not None:
+            z = surface
+        else:
+            z = self.source_point[2]
 
-        return z is not None
+        self.source_point = [x, y, z]
+        self.source_marker.set_data([x], [y])
+        self._sync_point_boxes()
+
+        return surface is not None
+
+    def _sync_point_boxes(self):
+        """Riporta le tre caselle sul punto, senza farle rispondere."""
+
+        for box, value in (
+            (self.easting_spin, self.source_point[0]),
+            (self.northing_spin, self.source_point[1]),
+            (self.elevation_spin, self.source_point[2]),
+        ):
+            with QtCore.QSignalBlocker(box):
+                box.setValue(value)
+
+        self.elevation_spin.setEnabled(not self.z_follows_dem)
+        self._report_elevation()
+
+    def _report_elevation(self):
+        """Lo scarto dal suolo, che e' l'unica cosa che la quota da sola non dice."""
+
+        surface = self.dem.elevation_at(self.source_point[0], self.source_point[1])
+
+        if surface is None:
+            self.elevation_label.setText("fuori DEM")
+            return
+
+        if self.z_follows_dem:
+            self.elevation_label.setText(f"suolo {surface:.0f} m")
+            return
+
+        gap = self.source_point[2] - surface
+        self.elevation_label.setText(f"suolo {surface:.0f} m\n{gap:+.0f} m dal suolo")
+
+    def _on_point_typed(self, value):
+        """Coordinate scritte a mano: il punto va dove dicono, e la finestra lo segue."""
+
+        x = float(self.easting_spin.value())
+        y = float(self.northing_spin.value())
+
+        self._move_source(x, y)
+        self._recenter_window()
+        self.update_intersection()
+
+    def _on_elevation_typed(self, value):
+        self.source_point[2] = float(value)
+        self._report_elevation()
+        self.update_intersection()
+
+    def _on_follow_dem_toggled(self, checked):
+        """
+        Riagganciare la quota al DEM la riporta subito sul suolo.
+
+        Il contrario no: togliendo la spunta la quota resta quella che era, che
+        e' il punto di partenza naturale per spostarla di poco.
+        """
+
+        self.z_follows_dem = bool(checked)
+
+        if checked:
+            surface = self.dem.elevation_at(self.source_point[0], self.source_point[1])
+
+            if surface is not None:
+                self.source_point[2] = surface
+
+        self._sync_point_boxes()
+        self.update_intersection()
 
     def _recenter_window(self):
         """Rilegge la finestra se il punto ne e' uscito. Torna True se cambiata."""
@@ -1243,6 +1877,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             "source_lon": lon_lat[0] if lon_lat else None,
             "source_lat": lon_lat[1] if lon_lat else None,
             "source_lon_lat_riferimento": "EPSG:4326",
+            # Senza queste due righe una quota staccata dal suolo si rilegge
+            # come un errore di lettura del DEM, invece che come la scelta che
+            # era: va detto che il distacco e' voluto e di quanto.
+            "source_z_dal_dem": bool(self.z_follows_dem),
+            "quota_dem": self.dem.elevation_at(self.source_point[0], self.source_point[1]),
             "finestra_px": int(self.side),
             "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
         }
@@ -1273,7 +1912,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         # entrambi presenti: chi riapre il file non deve indovinare quale nord.
         # Stessa ragione per le due coppie di coordinate: il .prj dice in che
         # EPSG stanno src_x e src_y, ma il .prj e' il file che si perde.
+        # `src_z_dem` e' la quota del suolo sotto il punto: se differisce da
+        # `src_z` il piano e' stato staccato apposta, e senza il confronto
+        # sembrerebbe uno sbaglio.
         lon_lat = self.source_geographic()
+        surface = self.dem.elevation_at(self.source_point[0], self.source_point[1])
 
         frame = gpd.GeoDataFrame(
             {
@@ -1286,6 +1929,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
                 "src_z": [self.source_point[2]] * len(traces),
                 "src_lon": [lon_lat[0] if lon_lat else None] * len(traces),
                 "src_lat": [lon_lat[1] if lon_lat else None] * len(traces),
+                "src_z_dem": [surface] * len(traces),
+                "z_da_dem": [bool(self.z_follows_dem)] * len(traces),
             },
             geometry=traces,
             crs=self.dem.crs,
@@ -1301,21 +1946,68 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return self.dem.path.with_name(f"{stem}_{attitude}{suffix}")
 
 
+def split_layer(spec, role):
+    """
+    `percorso` oppure `percorso:layer`, sciolto senza indovinare.
+
+    Un percorso puo' contenere due punti per conto suo, quindi la regola e'
+    guardare il disco invece di leggere la stringa: se il tutto e' un file
+    esistente, e' un percorso; altrimenti si prova a staccare l'ultimo pezzo.
+    """
+
+    if spec is None:
+        return None
+
+    if Path(spec).exists():
+        return dict(path=spec, role=role, layer=None)
+
+    head, _, tail = spec.rpartition(":")
+
+    if head and Path(head).exists():
+        return dict(path=head, role=role, layer=tail)
+
+    return dict(path=spec, role=role, layer=None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dem", help="DEM in un formato leggibile da rasterio")
+    parser.add_argument(
+        "dem",
+        nargs="?",
+        help="DEM in un formato leggibile da rasterio; se manca lo chiede un dialogo",
+    )
+    for role, explanation in (
+        ("poligoni", "affioramenti, unita', qualunque campitura"),
+        ("linee", "faglie, contatti, tracce"),
+        ("punti", "stazioni, misure, campioni"),
+    ):
+        parser.add_argument(
+            f"--{role}",
+            metavar="PATH[:LAYER]",
+            help=f"layer {role} da mettere sotto il piano ({explanation})",
+        )
     parser.add_argument(
         "--geologia",
         metavar="GPKG",
-        help="geopackage da cui prendere faglie e affioramenti come riferimento",
+        help="scorciatoia: carbonates come poligoni e faults come linee dallo stesso geopackage",
     )
     parser.add_argument(
         "--categorie",
         metavar="CAMPO",
         default="code",
         help=(
-            "campo su cui colorare gli affioramenti poligonali (default 'code'); "
-            "'nessuna' per il colore unico di prima"
+            "campo su cui colorare i poligoni (default 'code'); "
+            "'nessuna' per il colore unico"
+        ),
+    )
+    parser.add_argument("--x", type=float, help="est del punto di appoggio (default: centro del DEM)")
+    parser.add_argument("--y", type=float, help="nord del punto di appoggio (default: centro del DEM)")
+    parser.add_argument(
+        "--z",
+        type=float,
+        help=(
+            "quota del punto di appoggio (default: quella del DEM); "
+            "se data, il piano resta a questa quota anche spostandolo"
         ),
     )
     parser.add_argument(
@@ -1333,15 +2025,69 @@ def main():
     args = parser.parse_args()
 
     attitude = (90.0, 30.0)
-    source = None
+    point = (args.x, args.y, args.z)
+    z_follows_dem = None
     side = args.finestra
 
     if args.assetto:
         saved = json.loads(Path(args.assetto).read_text(encoding="utf-8"))
         attitude = (saved["dip_dir"], saved["dip_angle"])
-        source = saved["source_point"]
         side = saved.get("finestra_px", side)
+        z_follows_dem = saved.get("source_z_dal_dem")
+
+        # Gli argomenti espliciti battono il file: se si passa --z insieme a un
+        # assetto, e' la riga di comando che si e' scritta adesso.
+        stored = saved.get("source_point") or (None, None, None)
+        point = tuple(
+            given if given is not None else was for given, was in zip(point, stored)
+        )
+
+        if args.z is not None:
+            z_follows_dem = False
+
         print(f"assetto: {attitude[0]:.0f}/{attitude[1]:.0f}, finestra {side} px")
+
+    vectors = [
+        spec
+        for spec in (
+            split_layer(args.poligoni, "poligoni"),
+            split_layer(args.linee, "linee"),
+            split_layer(args.punti, "punti"),
+        )
+        if spec
+    ]
+
+    # La scorciatoia storica, tenuta perche' e' come questo strumento si e'
+    # sempre lanciato: i due layer di geology.gpkg nei loro ruoli naturali.
+    if args.geologia:
+        vectors.append(dict(path=args.geologia, role="poligoni", layer="carbonates"))
+        vectors.append(dict(path=args.geologia, role="linee", layer="faults"))
+
+    for spec in vectors:
+        spec.setdefault(
+            "category_field",
+            None if args.categorie == "nessuna" or spec["role"] != "poligoni" else args.categorie,
+        )
+
+    # La QApplication prima di ogni dialogo, altrimenti Qt esce senza dire
+    # perche'.
+    app = QtWidgets.QApplication(sys.argv)
+
+    if not args.dem:
+        dialog = SourcesDialog(dem=args.dem, vectors=vectors, point=point)
+
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+
+        chosen = dialog.choices()
+        args.dem = chosen["dem"]
+        vectors = chosen["vectors"]
+        point = chosen["point"]
+
+        # Una quota scritta nel dialogo e' una scelta come quella da riga di
+        # comando, e vale allo stesso modo.
+        if point[2] is not None:
+            z_follows_dem = False
 
     dem = Dem(args.dem)
     print(
@@ -1350,18 +2096,29 @@ def main():
         f"sfondo decimato 1:{dem.decimation}"
     )
 
-    overlay = None
-    if args.geologia:
-        overlay = GeologyOverlay(
-            args.geologia,
+    overlay = Overlay(
+        VectorSource(
+            spec["path"],
+            spec["role"],
             dem.crs,
             dem.bounds,
-            category_field=None if args.categorie == "nessuna" else args.categorie,
+            layer=spec.get("layer"),
+            category_field=spec.get("category_field"),
         )
-        print(f"geologia: {overlay.summary()}")
+        for spec in vectors
+    )
 
-    app = QtWidgets.QApplication(sys.argv)
-    window = RealtimeWindow(dem, overlay, side=side, attitude=attitude, source=source)
+    if vectors:
+        print(f"vettoriali: {overlay.summary()}")
+
+    window = RealtimeWindow(
+        dem,
+        overlay,
+        side=side,
+        attitude=attitude,
+        source=point,
+        z_follows_dem=z_follows_dem,
+    )
     window.resize(1180, 880)
     window.show()
 
