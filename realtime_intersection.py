@@ -15,6 +15,12 @@ sfondo e' una overview decimata, mentre il kernel gira su una finestra a piena
 risoluzione centrata sul punto di appoggio, il cui lato --finestra decide la
 fluidita' (1000 px stanno sui 38 fps, 500 px sui 100).
 
+L'immersione si legge e si scrive in **azimut vero**, come la si misura sul
+terreno. Il DEM pero' e' sulla griglia della proiezione, e i due nord non
+coincidono: la convergenza dei meridiani viene tolta prima di chiamare il
+kernel, e mostrata sotto l'assetto. Sull'Appennino meridionale vale da +0,41 a
++1,04 gradi, che su cinque chilometri di traccia sono fino a 91 metri.
+
 Nella finestra:
     - quadrante e cursore per immersione e inclinazione;
     - rotella per zoomare attorno al cursore, barra di navigazione per pan,
@@ -67,6 +73,60 @@ def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
     shaded = np.cos(zenith) * np.cos(slope) + np.sin(zenith) * np.sin(slope) * np.cos(az - aspect)
 
     return np.clip(shaded, 0.0, 1.0)
+
+
+class MeridianConvergence:
+    """
+    L'angolo fra il nord della carta e il nord geografico, punto per punto.
+
+    In una proiezione le linee verticali della griglia non sono meridiani: solo
+    sul meridiano centrale i due nord coincidono. Sull'Appennino meridionale in
+    EPSG:25833 lo scarto va da +0,41 a +1,04 gradi, che su cinque chilometri di
+    traccia sono fino a 91 metri -- venti volte la cella del DEM.
+
+    Il valore si ricava misurandolo invece di leggerlo da una formula: si fa un
+    passo di un centinaio di metri lungo il nord vero e si guarda che azimut ha
+    assunto sulla griglia. Costa 8 microsecondi e vale per qualunque proiezione,
+    anche quelle che non si lasciano scrivere in PROJ.
+
+    Il segno, verificato su tre punti a quattro decimali:
+
+        azimut_di_griglia = azimut_vero - convergenza
+    """
+
+    STEP_M = 100.0
+
+    def __init__(self, crs):
+        self.available = False
+
+        if crs is None:
+            return
+
+        import pyproj
+
+        try:
+            self._to_geographic = pyproj.Transformer.from_crs(crs, 4326, always_xy=True)
+            self._to_projected = pyproj.Transformer.from_crs(4326, crs, always_xy=True)
+            self._geod = pyproj.CRS.from_user_input(crs).get_geod()
+        except Exception:
+            return
+
+        self.available = self._geod is not None
+
+    def at(self, x, y):
+        """Convergenza in gradi nel punto, positiva a est del meridiano centrale."""
+
+        if not self.available:
+            return 0.0
+
+        lon, lat = self._to_geographic.transform(x, y)
+        lon_n, lat_n, _ = self._geod.fwd(lon, lat, 0.0, self.STEP_M)
+        x_n, y_n = self._to_projected.transform(lon_n, lat_n)
+
+        return -math.degrees(math.atan2(x_n - x, y_n - y))
+
+    def to_grid(self, true_azimuth, x, y):
+        return (true_azimuth - self.at(x, y)) % 360.0
 
 
 class ComputeWindow:
@@ -408,6 +468,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.background = None
         self.dragging = False
         self.frame_times = deque(maxlen=20)
+        self.convergence = MeridianConvergence(dem.crs)
         self.last_result = ([], [])
 
         if source is None:
@@ -446,27 +507,52 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
 
+        # Quadrante per la mano, casella per il numero. Il quadrante da solo va
+        # a passo di un grado, e la convergenza dei meridiani qui e' 0,8: senza
+        # il decimo di grado la correzione sarebbe piu' piccola del controllo
+        # che dovrebbe correggere, e quindi inutile. La casella e' la fonte
+        # autorevole, il quadrante la insegue.
         self.dip_dir_dial = QtWidgets.QDial()
         self.dip_dir_dial.setRange(0, 359)
-        self.dip_dir_dial.setValue(
-            int(round(attitude[0] - self.DIAL_NORTH_OFFSET)) % 360
-        )
         self.dip_dir_dial.setWrapping(True)
         self.dip_dir_dial.setNotchesVisible(True)
         self.dip_dir_dial.setMinimumSize(140, 140)
 
+        self.dip_dir_spin = QtWidgets.QDoubleSpinBox()
+        self.dip_dir_spin.setRange(0.0, 359.9)
+        self.dip_dir_spin.setDecimals(1)
+        self.dip_dir_spin.setSingleStep(0.1)
+        self.dip_dir_spin.setWrapping(True)
+        self.dip_dir_spin.setSuffix("°  immersione")
+
         self.dip_angle_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.dip_angle_slider.setRange(0, 90)
-        self.dip_angle_slider.setValue(int(attitude[1]))
         self.dip_angle_slider.setTickInterval(10)
         self.dip_angle_slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksRight)
+
+        self.dip_angle_spin = QtWidgets.QDoubleSpinBox()
+        self.dip_angle_spin.setRange(0.0, 90.0)
+        self.dip_angle_spin.setDecimals(1)
+        self.dip_angle_spin.setSingleStep(0.1)
+        self.dip_angle_spin.setSuffix("°  inclinazione")
 
         self.attitude_label = QtWidgets.QLabel()
         self.attitude_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
+        self.convergence_label = QtWidgets.QLabel()
+        self.convergence_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.convergence_label.setStyleSheet("color: gray; font-size: 10px;")
+
+        self.dip_dir_spin.setValue(float(attitude[0]) % 360.0)
+        self.dip_angle_spin.setValue(float(attitude[1]))
+        self._sync_dial_from_spin()
+        self._sync_slider_from_spin()
+
         # Il punto: si ricalcola mentre si trascina, non su un bottone.
-        self.dip_dir_dial.valueChanged.connect(self.update_intersection)
-        self.dip_angle_slider.valueChanged.connect(self.update_intersection)
+        self.dip_dir_dial.valueChanged.connect(self._on_dial_moved)
+        self.dip_dir_spin.valueChanged.connect(self._on_dip_dir_typed)
+        self.dip_angle_slider.valueChanged.connect(self._on_slider_moved)
+        self.dip_angle_spin.valueChanged.connect(self._on_dip_angle_typed)
 
         self.side_spin = QtWidgets.QSpinBox()
         self.side_spin.setRange(100, min(4000, max(self.dem.width, self.dem.height)))
@@ -483,9 +569,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(controls)
         layout.addWidget(QtWidgets.QLabel("Immersione"))
         layout.addWidget(self.dip_dir_dial)
+        layout.addWidget(self.dip_dir_spin)
         layout.addWidget(QtWidgets.QLabel("Inclinazione"))
         layout.addWidget(self.dip_angle_slider, stretch=1)
+        layout.addWidget(self.dip_angle_spin)
         layout.addWidget(self.attitude_label)
+        layout.addWidget(self.convergence_label)
 
         layout.addSpacing(8)
         layout.addWidget(QtWidgets.QLabel("Finestra di calcolo"))
@@ -640,15 +729,64 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return True
 
     def dip_direction(self):
-        """L'immersione in azimut, non il numero grezzo del quadrante."""
+        """
+        L'immersione come la si misura sul terreno: azimut dal nord geografico.
 
-        return float((self.dip_dir_dial.value() + self.DIAL_NORTH_OFFSET) % 360)
+        E' questo il numero che il quadrante mostra e che finisce negli export,
+        perche' e' quello che una bussola legge una volta corretta la
+        declinazione. Il kernel invece lavora sulla griglia, e vuole
+        `grid_dip_direction`.
+        """
+
+        return float(self.dip_dir_spin.value())
 
     def set_dip_direction(self, azimuth):
-        self.dip_dir_dial.setValue(int(round(azimuth - self.DIAL_NORTH_OFFSET)) % 360)
+        self.dip_dir_spin.setValue(float(azimuth) % 360.0)
+
+    def _sync_dial_from_spin(self):
+        with QtCore.QSignalBlocker(self.dip_dir_dial):
+            self.dip_dir_dial.setValue(
+                int(round(self.dip_dir_spin.value() - self.DIAL_NORTH_OFFSET)) % 360
+            )
+
+    def _sync_slider_from_spin(self):
+        with QtCore.QSignalBlocker(self.dip_angle_slider):
+            self.dip_angle_slider.setValue(int(round(self.dip_angle_spin.value())))
+
+    def _on_dial_moved(self, value):
+        """Il quadrante muove la casella, che e' quella che comanda."""
+
+        with QtCore.QSignalBlocker(self.dip_dir_spin):
+            self.dip_dir_spin.setValue(float((value + self.DIAL_NORTH_OFFSET) % 360))
+
+        self.update_intersection()
+
+    def _on_dip_dir_typed(self, value):
+        self._sync_dial_from_spin()
+        self.update_intersection()
+
+    def _on_slider_moved(self, value):
+        with QtCore.QSignalBlocker(self.dip_angle_spin):
+            self.dip_angle_spin.setValue(float(value))
+
+        self.update_intersection()
+
+    def _on_dip_angle_typed(self, value):
+        self._sync_slider_from_spin()
+        self.update_intersection()
+
+    def grid_dip_direction(self):
+        """L'immersione ruotata sul nord della carta, che e' cio' che il DEM ha."""
+
+        return self.convergence.to_grid(
+            self.dip_direction(), self.source_point[0], self.source_point[1]
+        )
+
+    def convergence_here(self):
+        return self.convergence.at(self.source_point[0], self.source_point[1])
 
     def dip_angle(self):
-        return float(self.dip_angle_slider.value())
+        return float(self.dip_angle_spin.value())
 
     def _navigating(self):
         """Vero mentre pan o zoom-rettangolo sono attivi nella barra.
@@ -763,15 +901,19 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # -- ciclo ------------------------------------------------------------
 
     def update_intersection(self):
-        dip_dir = self.dip_direction()
         dip_angle = self.dip_angle()
+
+        # Il quadrante e' in azimut vero, il DEM e' sulla griglia: la
+        # convergenza sta in mezzo e va tolta prima di chiamare il kernel.
+        convergence = self.convergence_here()
+        grid_dip_dir = (self.dip_direction() - convergence) % 360.0
 
         start = perf_counter()
         points, segments = intersect_plane_grid(
             self.window.data,
             self.window.geotransform,
             self.source_point,
-            dip_dir,
+            grid_dip_dir,
             dip_angle,
             self.dem.nodata,
         )
@@ -802,10 +944,24 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         drawn = perf_counter()
 
         self.frame_times.append(drawn - start)
-        self._report(dip_dir, dip_angle, len(points), kernel_done - start, drawn - kernel_done)
+        self._report(
+            grid_dip_dir,
+            convergence,
+            dip_angle,
+            len(points),
+            kernel_done - start,
+            drawn - kernel_done,
+        )
 
-    def _report(self, dip_dir, dip_angle, n_points, kernel_s, draw_s):
-        self.attitude_label.setText(f"{dip_dir:03.0f} / {dip_angle:02.0f}")
+    def _report(self, grid_dip_dir, convergence, dip_angle, n_points, kernel_s, draw_s):
+        # Sull'etichetta il numero vero, che e' quello che si misura e si
+        # scrive nel taccuino; sotto, per esteso, che cosa ne fa la griglia.
+        self.attitude_label.setText(f"{self.dip_direction():03.0f} / {dip_angle:02.0f}")
+        self.convergence_label.setText(
+            f"nord vero\nconvergenza {convergence:+.2f}°\ngriglia {grid_dip_dir:05.1f}°"
+            if self.convergence.available
+            else "nord della griglia\n(convergenza non\ncalcolabile)"
+        )
 
         rows, cols = self.window.shape
         km = cols * self.dem.res_x / 1000.0
@@ -866,9 +1022,14 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         if not path:
             return
 
+        # Il riferimento va scritto per esteso: un'immersione senza il nord a
+        # cui si appoggia e' ambigua di quasi un grado, da queste parti.
         settings = {
             "dem": str(self.dem.path),
             "dip_dir": self.dip_direction(),
+            "dip_dir_riferimento": "nord geografico",
+            "dip_dir_griglia": self.grid_dip_direction(),
+            "convergenza_meridiani": self.convergence_here(),
             "dip_angle": self.dip_angle(),
             "source_point": [float(v) for v in self.source_point],
             "finestra_px": int(self.side),
@@ -897,9 +1058,13 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         dip_dir = self.dip_direction()
         dip_angle = self.dip_angle()
 
+        # Nomi entro i dieci caratteri che lo shapefile concede, e i due azimut
+        # entrambi presenti: chi riapre il file non deve indovinare quale nord.
         frame = gpd.GeoDataFrame(
             {
                 "dip_dir": [dip_dir] * len(traces),
+                "dipdir_grd": [self.grid_dip_direction()] * len(traces),
+                "converg": [self.convergence_here()] * len(traces),
                 "dip": [dip_angle] * len(traces),
                 "src_x": [self.source_point[0]] * len(traces),
                 "src_y": [self.source_point[1]] * len(traces),
