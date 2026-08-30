@@ -17,8 +17,11 @@ fluidita' (1000 px stanno sui 38 fps, 500 px sui 100).
 
 Nella finestra:
     - quadrante e cursore per immersione e inclinazione;
+    - rotella per zoomare attorno al cursore, barra di navigazione per pan,
+      zoom a rettangolo e ritorno alla vista piena;
     - clic sulla mappa per spostare il punto di appoggio, oppure trascinamento
-      del punto stesso;
+      del punto stesso (da fare con pan e zoom disattivati, altrimenti i due
+      gesti sono lo stesso);
     - schermata negli appunti o su file, assetto corrente in JSON, traccia
       calcolata in shapefile.
 """
@@ -42,7 +45,7 @@ from rasterio.windows import Window
 import PyQt6.QtCore  # noqa: F401
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
@@ -163,6 +166,48 @@ class Dem:
         z = float(self._src.read(1, window=Window(col, row, 1, 1))[0, 0])
 
         return None if self.nodata is not None and z == self.nodata else z
+
+    def shade_for(self, xmin, xmax, ymin, ymax, max_px=1200):
+        """
+        Ombreggiatura della sola vista corrente, alla risoluzione che serve.
+
+        Lo sfondo iniziale e' decimato sull'intero DEM: su un mosaico grande
+        vuol dire celle da decine di metri, e zoomando resta poltiglia proprio
+        mentre la traccia diventa dettagliata. Qui si rilegge la porzione
+        inquadrata con la decimazione giusta per quella scala.
+
+        Torna None se la vista e' del tutto fuori dal DEM.
+        """
+
+        left = max(xmin, self.bounds.left)
+        right = min(xmax, self.bounds.right)
+        bottom = max(ymin, self.bounds.bottom)
+        top = min(ymax, self.bounds.top)
+
+        if right <= left or top <= bottom:
+            return None
+
+        window = rasterio.windows.from_bounds(
+            left, bottom, right, top, self._src.transform
+        ).round_offsets().round_lengths()
+
+        window = window.intersection(Window(0, 0, self.width, self.height))
+
+        if window.width < 2 or window.height < 2:
+            return None
+
+        step = max(1, math.ceil(max(window.width, window.height) / max_px))
+        shape = (max(2, int(window.height) // step), max(2, int(window.width) // step))
+
+        band = self._src.read(1, window=window, out_shape=shape).astype(float)
+
+        if self.nodata is not None:
+            band[band == self.nodata] = np.nan
+
+        shade = hillshade(band, self.res_x * step, self.res_y * step)
+        left, bottom, right, top = rasterio.windows.bounds(window, self._src.transform)
+
+        return shade, [left, right, bottom, top], step
 
     def window_at(self, x, y, side):
         """Finestra di `side` celle centrata su (x, y), tagliata sul DEM."""
@@ -302,9 +347,52 @@ def merged_traces(points, segments):
     return list(merged.geoms) if hasattr(merged, "geoms") else [merged]
 
 
+class Toolbar(NavigationToolbar2QT):
+    """
+    La barra di navigazione, con il salvataggio dirottato.
+
+    Il pulsante di salvataggio del toolbar chiama `savefig` per conto suo, e
+    quel percorso non sa nulla degli artisti animati: il file uscirebbe con la
+    mappa e senza la traccia sopra. Qui va a finire nello stesso posto del
+    bottone "Salva schermata", cosi' i due non possono divergere.
+    """
+
+    def __init__(self, canvas, parent, save_handler, view_changed):
+        super().__init__(canvas, parent)
+        self._save_handler = save_handler
+        self._view_changed = view_changed
+
+    def save_figure(self, *args):
+        self._save_handler()
+
+    # Ogni via con cui la barra cambia inquadratura deve avvisare, o lo sfondo
+    # resta alla risoluzione di prima.
+
+    def release_pan(self, event):
+        super().release_pan(event)
+        self._view_changed()
+
+    def release_zoom(self, event):
+        super().release_zoom(event)
+        self._view_changed()
+
+    def home(self, *args):
+        super().home(*args)
+        self._view_changed()
+
+    def back(self, *args):
+        super().back(*args)
+        self._view_changed()
+
+    def forward(self, *args):
+        super().forward(*args)
+        self._view_changed()
+
+
 class RealtimeWindow(QtWidgets.QMainWindow):
 
     PICK_RADIUS_PX = 12
+    ZOOM_STEP = 1.3
 
     def __init__(self, dem, overlay=None, side=1000, attitude=(90.0, 30.0), source=None):
         super().__init__()
@@ -337,10 +425,20 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.axes = self.figure.add_subplot(111)
 
+        self.toolbar = Toolbar(self.canvas, self, self.save_screenshot, self.schedule_shade_refresh)
+
+        # Il ricarico dell'ombreggiatura si paga in decine di millisecondi:
+        # troppo per farlo a ogni scatto di rotella, giusto una volta quando la
+        # mano si ferma. Da qui il ritardo.
+        self.shade_timer = QtCore.QTimer(self)
+        self.shade_timer.setSingleShot(True)
+        self.shade_timer.timeout.connect(self._refresh_shade)
+
         self.canvas.mpl_connect("draw_event", self._on_draw)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
+        self.canvas.mpl_connect("scroll_event", self._on_scroll)
 
         self.dip_dir_dial = QtWidgets.QDial()
         self.dip_dir_dial.setRange(0, 359)
@@ -397,22 +495,31 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             button.clicked.connect(slot)
             layout.addWidget(button)
 
+        map_side = QtWidgets.QWidget()
+        map_layout = QtWidgets.QVBoxLayout(map_side)
+        map_layout.setContentsMargins(0, 0, 0, 0)
+        map_layout.addWidget(self.toolbar)
+        map_layout.addWidget(self.canvas, stretch=1)
+
         central = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout(central)
-        main_layout.addWidget(self.canvas, stretch=1)
+        main_layout.addWidget(map_side, stretch=1)
         main_layout.addWidget(controls)
         self.setCentralWidget(central)
 
-        self.statusBar().showMessage("trascina il punto giallo, o clicca altrove per spostarlo")
+        self.statusBar().showMessage(
+            "rotella per zoomare; trascina il punto giallo, o clicca altrove per spostarlo"
+        )
 
     def _draw_base_map(self):
-        self.axes.imshow(
+        self.shade_image = self.axes.imshow(
             self.dem.hillshade,
             cmap="gray",
             extent=self.dem.extent,
             origin="upper",
             interpolation="bilinear",
         )
+        self.shade_step = self.dem.decimation
         epsg = self.dem.crs.to_epsg() if self.dem.crs else "?"
         self.axes.set_xlabel(f"E (m, EPSG:{epsg})")
         self.axes.set_ylabel("N (m)")
@@ -470,6 +577,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.canvas.draw()
 
+        # La vista piena va messa in fondo alla pila della barra, altrimenti
+        # "casa" riporta al primo inquadramento che la barra ha visto passare,
+        # che e' un punto qualsiasi dello zoom e non l'estensione del DEM.
+        self.toolbar.update()
+        self.toolbar.push_current()
+
     # -- interazione ------------------------------------------------------
 
     def _on_draw(self, event):
@@ -518,8 +631,16 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         return True
 
+    def _navigating(self):
+        """Vero mentre pan o zoom-rettangolo sono attivi nella barra.
+
+        Senza questo controllo un pan trascinerebbe anche il punto di appoggio,
+        perche' i due gesti sono lo stesso: tasto sinistro premuto e mosso."""
+
+        return bool(self.toolbar.mode)
+
     def _on_press(self, event):
-        if event.inaxes is not self.axes or event.xdata is None:
+        if self._navigating() or event.inaxes is not self.axes or event.xdata is None:
             return
 
         if self._near_source(event):
@@ -529,6 +650,65 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self._move_source(event.xdata, event.ydata)
         self._recenter_window()
         self.update_intersection()
+
+    def _on_scroll(self, event):
+        """Zoom attorno al cursore, che resta fermo sul punto che indicava."""
+
+        if event.inaxes is not self.axes or event.xdata is None:
+            return
+
+        factor = 1.0 / self.ZOOM_STEP if event.button == "up" else self.ZOOM_STEP
+
+        for axis, limits, anchor in (
+            (self.axes.set_xlim, self.axes.get_xlim(), event.xdata),
+            (self.axes.set_ylim, self.axes.get_ylim(), event.ydata),
+        ):
+            low, high = limits
+            axis((anchor + (low - anchor) * factor, anchor + (high - anchor) * factor))
+
+        # Ogni scatto entra nella pila, cosi' le frecce avanti/indietro della
+        # barra ripercorrono anche gli zoom fatti con la rotella.
+        self.toolbar.push_current()
+
+        # Il fondale e' cambiato: serve un draw pieno, e il draw_event lo
+        # ricattura per il blitting dei frame successivi.
+        self.canvas.draw()
+        self.schedule_shade_refresh()
+
+    def schedule_shade_refresh(self, delay_ms=180):
+        self.shade_timer.start(delay_ms)
+
+    def _refresh_shade(self):
+        """Rilegge l'ombreggiatura per la vista corrente, se cambia qualcosa."""
+
+        xmin, xmax = self.axes.get_xlim()
+        ymin, ymax = self.axes.get_ylim()
+
+        result = self.dem.shade_for(xmin, xmax, ymin, ymax)
+        if result is None:
+            return
+
+        shade, extent, step = result
+        if step == self.shade_step and extent == list(self.shade_image.get_extent()):
+            return
+
+        started = perf_counter()
+
+        # set_extent riscala gli assi se lo si lascia fare, e la vista
+        # salterebbe a ogni ricarico: i limiti vanno rimessi come stavano.
+        limits = self.axes.get_xlim(), self.axes.get_ylim()
+        self.shade_image.set_data(shade)
+        self.shade_image.set_extent(extent)
+        self.axes.set_xlim(limits[0])
+        self.axes.set_ylim(limits[1])
+        self.shade_step = step
+
+        self.canvas.draw()
+
+        metres = self.dem.res_x * step
+        self.statusBar().showMessage(
+            f"sfondo ridisegnato a {metres:.0f} m/cella in {(perf_counter() - started) * 1000:.0f} ms"
+        )
 
     def _on_motion(self, event):
         if not self.dragging or event.inaxes is not self.axes or event.xdata is None:
