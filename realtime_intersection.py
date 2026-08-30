@@ -1,39 +1,50 @@
 """
 Intersezione piano geologico / DEM in tempo reale.
 
-Fetta verticale: serve a misurare se il ciclo completo -- kernel misah, poi
-disegno -- sta dentro il budget di un frame mentre si trascina il quadrante.
-Il kernel e' gia' noto (~24 ms su 1000x1000): la domanda aperta e' quanto resta
-per disegnare, ed e' quello che la barra di stato riporta a ogni frame.
+Il kernel misah interseca un piano illimitato con la griglia e restituisce le
+corde marching-squares; qui intorno c'e' il minimo che serve a guidarlo con la
+mano e a vedere il risultato mentre si muove. La barra di stato riporta kernel,
+disegno e fps a ogni frame, cosi' il costo resta visibile durante l'uso.
 
 Uso:
     python realtime_intersection.py <dem.tif> [--geologia <geology.gpkg>]
+                                    [--finestra N] [--assetto <file.json>]
 
-Il DEM va tenuto piccolo: 1000x1000 e' il bersaglio, 500x500 il margine comodo.
-Clic sulla mappa per spostare il punto di appoggio del piano.
+Il DEM puo' essere grande quanto si vuole: non viene caricato in memoria. Lo
+sfondo e' una overview decimata, mentre il kernel gira su una finestra a piena
+risoluzione centrata sul punto di appoggio, il cui lato --finestra decide la
+fluidita' (1000 px stanno sui 38 fps, 500 px sui 100).
 
-Con --geologia si sovrappongono faglie e carbonati come riferimento per
-posizionare il piano. Finiscono nel fondale insieme all'ombreggiatura, quindi
-non costano nulla per frame.
+Nella finestra:
+    - quadrante e cursore per immersione e inclinazione;
+    - clic sulla mappa per spostare il punto di appoggio, oppure trascinamento
+      del punto stesso;
+    - schermata negli appunti o su file, assetto corrente in JSON, traccia
+      calcolata in shapefile.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import sys
 from collections import deque
+from pathlib import Path
 from time import perf_counter
 
 import numpy as np
 import rasterio
+from rasterio.windows import Window
 
 # PyQt6 va importato prima del backend: matplotlib sceglie il binding
 # guardando quello gia' presente in sys.modules.
 import PyQt6.QtCore  # noqa: F401
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 
 from misah.kernels import intersect_plane_grid
 
@@ -55,20 +66,57 @@ def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
     return np.clip(shaded, 0.0, 1.0)
 
 
+class ComputeWindow:
+    """
+    Il ritaglio a piena risoluzione su cui gira il kernel.
+
+    Esiste separato dal DEM perche' il costo di un frame va con il numero di
+    celle scandite, non con la dimensione del file: su un mosaico da 314 Mpx il
+    kernel impiegherebbe secondi, su una finestra da 1000x1000 sta in 22 ms.
+    """
+
+    def __init__(self, data, geotransform, bounds, offset):
+        self.data = data
+        self.geotransform = geotransform
+        self.bounds = bounds
+        self.offset = offset
+
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def covers(self, x, y):
+        left, bottom, right, top = self.bounds
+
+        return left <= x <= right and bottom <= y <= top
+
+    def rectangle_xy(self):
+        left, bottom, right, top = self.bounds
+
+        return (left, bottom), right - left, top - bottom
+
+
 class Dem:
-    """Il DEM nella forma che il kernel vuole, letta una volta sola."""
+    """
+    Il DEM aperto senza caricarlo: overview per lo sfondo, finestre a piena
+    risoluzione a richiesta.
 
-    def __init__(self, path):
-        with rasterio.open(path) as src:
-            band = src.read(1)
-            self.geotransform = list(src.transform.to_gdal())
-            self.nodata = src.nodata
-            self.bounds = src.bounds
-            self.crs = src.crs
+    Un mosaico da 314 Mpx sarebbe 2,5 GB in float64, quindi tenerlo tutto in
+    memoria non e' una possibilita' e nemmeno serve: il kernel legge una
+    finestra per volta, e la lettura costa 4,9 ms su 1000x1000.
+    """
 
-        # misah vuole f64 contiguo. I DEM reali sono spesso f32: la conversione
-        # si paga qui, al caricamento, non a ogni frame.
-        self.data = np.ascontiguousarray(band.astype(np.float64))
+    def __init__(self, path, display_max=1600):
+        self.path = Path(path)
+        self._src = rasterio.open(path)
+
+        self.crs = self._src.crs
+        self.nodata = self._src.nodata
+        self.bounds = self._src.bounds
+        self.width = self._src.width
+        self.height = self._src.height
+        self.res_x = abs(self._src.transform.a)
+        self.res_y = abs(self._src.transform.e)
 
         self.extent = [
             self.bounds.left,
@@ -77,17 +125,25 @@ class Dem:
             self.bounds.top,
         ]
 
-        valid = self.data if self.nodata is None else self.data[self.data != self.nodata]
-        self.z_median = float(np.median(valid))
+        # Lo sfondo non ha bisogno della piena risoluzione: oltre il paio di
+        # migliaia di pixel non si vedrebbe comunque, e l'ombreggiatura di un
+        # mosaico intero costerebbe minuti.
+        self.decimation = max(1, math.ceil(max(self.width, self.height) / display_max))
+        shape = (self.height // self.decimation, self.width // self.decimation)
+        overview = self._src.read(1, out_shape=shape).astype(float)
 
-        shaded = self.data.copy()
         if self.nodata is not None:
-            shaded[shaded == self.nodata] = np.nan
-        self.hillshade = hillshade(shaded, abs(self.geotransform[1]), abs(self.geotransform[5]))
+            overview[overview == self.nodata] = np.nan
 
-    @property
-    def shape(self):
-        return self.data.shape
+        self.hillshade = hillshade(
+            overview,
+            self.res_x * self.decimation,
+            self.res_y * self.decimation,
+        )
+        self.z_median = float(np.nanmedian(overview))
+
+    def close(self):
+        self._src.close()
 
     def center(self):
         return (
@@ -98,17 +154,44 @@ class Dem:
     def elevation_at(self, x, y):
         """Quota alla coordinata mappa, o None fuori griglia / su nodata."""
 
-        origin_x, px_w, _, origin_y, _, px_h = self.geotransform
-        col = int((x - origin_x) / px_w)
-        row = int((y - origin_y) / px_h)
+        row, col = self._src.index(x, y)
+        row, col = int(row), int(col)
 
-        n_rows, n_cols = self.data.shape
-        if not (0 <= row < n_rows and 0 <= col < n_cols):
+        if not (0 <= row < self.height and 0 <= col < self.width):
             return None
 
-        z = float(self.data[row, col])
+        z = float(self._src.read(1, window=Window(col, row, 1, 1))[0, 0])
 
         return None if self.nodata is not None and z == self.nodata else z
+
+    def window_at(self, x, y, side):
+        """Finestra di `side` celle centrata su (x, y), tagliata sul DEM."""
+
+        row, col = self._src.index(x, y)
+        col_off = int(col) - side // 2
+        row_off = int(row) - side // 2
+
+        # Sui bordi la finestra si sposta invece di rimpicciolirsi, cosi' il
+        # costo per frame resta quello annunciato ovunque la si porti.
+        col_off = max(0, min(col_off, self.width - side))
+        row_off = max(0, min(row_off, self.height - side))
+
+        width = min(side, self.width)
+        height = min(side, self.height)
+
+        window = Window(col_off, row_off, width, height)
+        band = self._src.read(1, window=window)
+        transform = rasterio.windows.transform(window, self._src.transform)
+        bounds = rasterio.windows.bounds(window, self._src.transform)
+
+        # misah vuole f64 contiguo. I DEM reali sono spesso f32: la conversione
+        # si paga qui, non dentro il ciclo.
+        return ComputeWindow(
+            np.ascontiguousarray(band.astype(np.float64)),
+            list(transform.to_gdal()),
+            bounds,
+            (col_off, row_off),
+        )
 
 
 class GeologyOverlay:
@@ -198,45 +281,77 @@ class GeologyOverlay:
         return found or f"nessun layer usabile: {missing}"
 
 
+def merged_traces(points, segments):
+    """
+    Le corde marching-squares saldate in polilinee, con la quota.
+
+    Il kernel restituisce migliaia di segmenti da due vertici: scritti cosi'
+    sono inutilizzabili in un GIS. `linemerge` li ricuce nelle tracce continue
+    che sono davvero, e conserva la Z.
+    """
+
+    from shapely.geometry import LineString
+    from shapely.ops import linemerge
+
+    if not len(segments):
+        return []
+
+    chords = [LineString(points[pair]) for pair in segments]
+    merged = linemerge(chords)
+
+    return list(merged.geoms) if hasattr(merged, "geoms") else [merged]
+
+
 class RealtimeWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, dem, overlay=None):
+    PICK_RADIUS_PX = 12
+
+    def __init__(self, dem, overlay=None, side=1000, attitude=(90.0, 30.0), source=None):
         super().__init__()
 
         self.dem = dem
         self.overlay = overlay
         self.background = None
+        self.dragging = False
         self.frame_times = deque(maxlen=20)
+        self.last_result = ([], [])
 
-        cx, cy = dem.center()
-        self.source_point = [cx, cy, dem.elevation_at(cx, cy) or dem.z_median]
+        if source is None:
+            cx, cy = dem.center()
+            source = [cx, cy, dem.elevation_at(cx, cy) or dem.z_median]
+        self.source_point = list(source)
 
-        self.setWindowTitle(f"gSurf - intersezione in tempo reale ({dem.shape[1]}x{dem.shape[0]})")
-        self._build_ui()
+        self.side = min(side, dem.width, dem.height)
+        self.window = dem.window_at(self.source_point[0], self.source_point[1], self.side)
+
+        self.setWindowTitle(f"gSurf - intersezione in tempo reale - {dem.path.name}")
+        self._build_ui(attitude)
         self._draw_base_map()
 
         self.update_intersection()
 
     # -- costruzione ------------------------------------------------------
 
-    def _build_ui(self):
+    def _build_ui(self, attitude):
         self.figure = Figure(figsize=(8, 8), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.axes = self.figure.add_subplot(111)
 
         self.canvas.mpl_connect("draw_event", self._on_draw)
-        self.canvas.mpl_connect("button_press_event", self._on_click)
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
 
         self.dip_dir_dial = QtWidgets.QDial()
         self.dip_dir_dial.setRange(0, 359)
-        self.dip_dir_dial.setValue(90)
+        self.dip_dir_dial.setValue(int(attitude[0]))
         self.dip_dir_dial.setWrapping(True)
         self.dip_dir_dial.setNotchesVisible(True)
         self.dip_dir_dial.setMinimumSize(140, 140)
 
         self.dip_angle_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.dip_angle_slider.setRange(0, 90)
-        self.dip_angle_slider.setValue(30)
+        self.dip_angle_slider.setValue(int(attitude[1]))
         self.dip_angle_slider.setTickInterval(10)
         self.dip_angle_slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksRight)
 
@@ -247,21 +362,48 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.dip_dir_dial.valueChanged.connect(self.update_intersection)
         self.dip_angle_slider.valueChanged.connect(self.update_intersection)
 
+        self.side_spin = QtWidgets.QSpinBox()
+        self.side_spin.setRange(100, min(4000, max(self.dem.width, self.dem.height)))
+        self.side_spin.setSingleStep(100)
+        self.side_spin.setValue(self.side)
+        self.side_spin.setSuffix(" px")
+        self.side_spin.valueChanged.connect(self._on_side_changed)
+
+        self.side_label = QtWidgets.QLabel()
+        self.side_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
         controls = QtWidgets.QWidget()
-        controls_layout = QtWidgets.QVBoxLayout(controls)
-        controls_layout.addWidget(QtWidgets.QLabel("Immersione"))
-        controls_layout.addWidget(self.dip_dir_dial)
-        controls_layout.addWidget(QtWidgets.QLabel("Inclinazione"))
-        controls_layout.addWidget(self.dip_angle_slider, stretch=1)
-        controls_layout.addWidget(self.attitude_label)
+        controls.setMaximumWidth(200)
+        layout = QtWidgets.QVBoxLayout(controls)
+        layout.addWidget(QtWidgets.QLabel("Immersione"))
+        layout.addWidget(self.dip_dir_dial)
+        layout.addWidget(QtWidgets.QLabel("Inclinazione"))
+        layout.addWidget(self.dip_angle_slider, stretch=1)
+        layout.addWidget(self.attitude_label)
+
+        layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("Finestra di calcolo"))
+        layout.addWidget(self.side_spin)
+        layout.addWidget(self.side_label)
+
+        layout.addSpacing(8)
+        for text, slot in (
+            ("Copia schermata", self.copy_screenshot),
+            ("Salva schermata...", self.save_screenshot),
+            ("Salva assetto...", self.save_settings),
+            ("Esporta traccia...", self.export_traces),
+        ):
+            button = QtWidgets.QPushButton(text)
+            button.clicked.connect(slot)
+            layout.addWidget(button)
 
         central = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(central)
-        layout.addWidget(self.canvas, stretch=1)
-        layout.addWidget(controls)
+        main_layout = QtWidgets.QHBoxLayout(central)
+        main_layout.addWidget(self.canvas, stretch=1)
+        main_layout.addWidget(controls)
         self.setCentralWidget(central)
 
-        self.statusBar().showMessage("clic sulla mappa per spostare il punto di appoggio")
+        self.statusBar().showMessage("trascina il punto giallo, o clicca altrove per spostarlo")
 
     def _draw_base_map(self):
         self.axes.imshow(
@@ -274,12 +416,13 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         epsg = self.dem.crs.to_epsg() if self.dem.crs else "?"
         self.axes.set_xlabel(f"E (m, EPSG:{epsg})")
         self.axes.set_ylabel("N (m)")
+        self.axes.set_aspect("equal")
 
         if self.overlay is not None:
             self.overlay.draw(self.axes)
 
-        # animated=True tiene i due artisti fuori dal draw normale: li ridisegna
-        # solo il blitting, che e' tutto il punto dell'esercizio.
+        # animated=True tiene questi artisti fuori dal draw normale: li ridisegna
+        # solo il blitting, che e' cio' che tiene il ciclo dentro il frame.
         #
         # Una sola Line2D con separatori NaN, non una LineCollection: le corde
         # marching-squares sono migliaia di segmenti sciolti, e per matplotlib
@@ -295,42 +438,130 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             marker="o",
             color="yellow",
             markeredgecolor="black",
-            markersize=7,
+            markersize=8,
             animated=True,
         )
+
+        corner, width, height = self.window.rectangle_xy()
+        self.window_patch = Rectangle(
+            corner,
+            width,
+            height,
+            fill=False,
+            edgecolor="orange",
+            linestyle="--",
+            linewidth=1.0,
+            animated=True,
+        )
+        self.axes.add_patch(self.window_patch)
 
         # La legenda va costruita a mano: gli artisti animati non compaiono nel
         # draw normale, e i poligoni di geopandas non portano un handler.
         from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
 
-        handles = [Line2D([], [], color="red", linewidth=1.2, label="intersezione")]
+        handles = [
+            Line2D([], [], color="red", linewidth=1.2, label="intersezione"),
+            Patch(facecolor="none", edgecolor="orange", linestyle="--", label="finestra di calcolo"),
+        ]
         if self.overlay is not None:
             handles.extend(self.overlay.legend_handles())
         self.axes.legend(handles=handles, loc="upper right", fontsize="small", framealpha=0.85)
 
         self.canvas.draw()
 
-    # -- ciclo di aggiornamento -------------------------------------------
+    # -- interazione ------------------------------------------------------
 
     def _on_draw(self, event):
         """Il fondale cambia solo su resize o zoom: qui lo si ricattura."""
 
         self.background = self.canvas.copy_from_bbox(self.axes.bbox)
+        self._draw_animated()
+
+    def _draw_animated(self):
+        self.axes.draw_artist(self.window_patch)
         self.axes.draw_artist(self.intersections)
         self.axes.draw_artist(self.source_marker)
 
-    def _on_click(self, event):
+    def _near_source(self, event):
+        """Vicinanza misurata in pixel di schermo, non in metri: la soglia deve
+        restare la stessa a ogni scala di zoom."""
+
+        px, py = self.axes.transData.transform(self.source_point[:2])
+
+        return math.hypot(event.x - px, event.y - py) <= self.PICK_RADIUS_PX
+
+    def _move_source(self, x, y):
+        z = self.dem.elevation_at(x, y)
+
+        # Su nodata si tiene la quota precedente invece di rifiutare lo
+        # spostamento: interrompere un trascinamento a meta' e' peggio che
+        # appoggiare il piano a una quota vecchia di qualche pixel.
+        self.source_point = [x, y, z if z is not None else self.source_point[2]]
+        self.source_marker.set_data([x], [y])
+
+        return z is not None
+
+    def _recenter_window(self):
+        """Rilegge la finestra se il punto ne e' uscito. Torna True se cambiata."""
+
+        fresh = self.dem.window_at(self.source_point[0], self.source_point[1], self.side)
+
+        if fresh.offset == self.window.offset:
+            return False
+
+        self.window = fresh
+        corner, width, height = fresh.rectangle_xy()
+        self.window_patch.set_xy(corner)
+        self.window_patch.set_width(width)
+        self.window_patch.set_height(height)
+
+        return True
+
+    def _on_press(self, event):
         if event.inaxes is not self.axes or event.xdata is None:
             return
 
-        z = self.dem.elevation_at(event.xdata, event.ydata)
-        if z is None:
-            self.statusBar().showMessage("punto fuori dal DEM o su nodata")
+        if self._near_source(event):
+            self.dragging = True
             return
 
-        self.source_point = [event.xdata, event.ydata, z]
-        self.source_marker.set_data([event.xdata], [event.ydata])
+        self._move_source(event.xdata, event.ydata)
+        self._recenter_window()
         self.update_intersection()
+
+    def _on_motion(self, event):
+        if not self.dragging or event.inaxes is not self.axes or event.xdata is None:
+            return
+
+        # Durante il trascinamento la finestra resta ferma: rileggerla a ogni
+        # passo costerebbe 4,9 ms su 1000x1000, e la traccia dentro la finestra
+        # e' corretta comunque, perche' il piano e' illimitato e il punto di
+        # appoggio non deve starci dentro. Si ricentra al rilascio.
+        self._move_source(event.xdata, event.ydata)
+        self.update_intersection()
+
+    def _on_release(self, event):
+        if not self.dragging:
+            return
+
+        self.dragging = False
+
+        if self._recenter_window():
+            self.update_intersection()
+
+    def _on_side_changed(self, value):
+        self.side = value
+        self.window = self.dem.window_at(self.source_point[0], self.source_point[1], self.side)
+
+        corner, width, height = self.window.rectangle_xy()
+        self.window_patch.set_xy(corner)
+        self.window_patch.set_width(width)
+        self.window_patch.set_height(height)
+
+        self.update_intersection()
+
+    # -- ciclo ------------------------------------------------------------
 
     def update_intersection(self):
         dip_dir = float(self.dip_dir_dial.value())
@@ -338,14 +569,16 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         start = perf_counter()
         points, segments = intersect_plane_grid(
-            self.dem.data,
-            self.dem.geotransform,
+            self.window.data,
+            self.window.geotransform,
             self.source_point,
             dip_dir,
             dip_angle,
             self.dem.nodata,
         )
         kernel_done = perf_counter()
+
+        self.last_result = (points, segments)
 
         # points e' (N, 3) in coordinate mappa, segments (M, 2) di indici. Le
         # corde diventano un percorso unico: estremo, estremo, NaN, e la NaN
@@ -363,8 +596,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             self.canvas.draw()
         else:
             self.canvas.restore_region(self.background)
-            self.axes.draw_artist(self.intersections)
-            self.axes.draw_artist(self.source_marker)
+            self._draw_animated()
             self.canvas.blit(self.axes.bbox)
 
         self.canvas.flush_events()
@@ -375,6 +607,10 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def _report(self, dip_dir, dip_angle, n_points, kernel_s, draw_s):
         self.attitude_label.setText(f"{dip_dir:03.0f} / {dip_angle:02.0f}")
+
+        rows, cols = self.window.shape
+        km = cols * self.dem.res_x / 1000.0
+        self.side_label.setText(f"{cols}x{rows} = {km:.1f} km")
 
         mean_frame = sum(self.frame_times) / len(self.frame_times)
         fps = 1.0 / mean_frame if mean_frame else 0.0
@@ -387,6 +623,102 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             f"{fps:4.1f} fps"
         )
 
+    # -- uscite -----------------------------------------------------------
+
+    def _rendered_figure(self, path, dpi=150):
+        """
+        Salva la figura con dentro anche gli artisti animati.
+
+        Un artista animato non partecipa al draw normale, quindi savefig da solo
+        restituirebbe la mappa senza la traccia. Qui si spengono, si salva, si
+        riaccendono, e il draw finale rifa' il fondale del blitting.
+        """
+
+        animated = [self.intersections, self.source_marker, self.window_patch]
+
+        for artist in animated:
+            artist.set_animated(False)
+
+        try:
+            self.figure.savefig(path, dpi=dpi)
+        finally:
+            for artist in animated:
+                artist.set_animated(True)
+            self.canvas.draw()
+
+    def copy_screenshot(self):
+        QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
+        self.statusBar().showMessage("schermata copiata negli appunti")
+
+    def save_screenshot(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Salva schermata", str(self._suggested_name(".png")), "PNG (*.png)"
+        )
+        if not path:
+            return
+
+        self._rendered_figure(path)
+        self.statusBar().showMessage(f"schermata salvata in {path}")
+
+    def save_settings(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Salva assetto", str(self._suggested_name(".json")), "JSON (*.json)"
+        )
+        if not path:
+            return
+
+        settings = {
+            "dem": str(self.dem.path),
+            "dip_dir": float(self.dip_dir_dial.value()),
+            "dip_angle": float(self.dip_angle_slider.value()),
+            "source_point": [float(v) for v in self.source_point],
+            "finestra_px": int(self.side),
+            "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
+        }
+
+        Path(path).write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        self.statusBar().showMessage(f"assetto salvato in {path}")
+
+    def export_traces(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Esporta traccia", str(self._suggested_name(".shp")), "Shapefile (*.shp)"
+        )
+        if not path:
+            return
+
+        import geopandas as gpd
+
+        points, segments = self.last_result
+        traces = merged_traces(points, segments)
+
+        if not traces:
+            self.statusBar().showMessage("nessuna intersezione da esportare")
+            return
+
+        dip_dir = float(self.dip_dir_dial.value())
+        dip_angle = float(self.dip_angle_slider.value())
+
+        frame = gpd.GeoDataFrame(
+            {
+                "dip_dir": [dip_dir] * len(traces),
+                "dip": [dip_angle] * len(traces),
+                "src_x": [self.source_point[0]] * len(traces),
+                "src_y": [self.source_point[1]] * len(traces),
+                "src_z": [self.source_point[2]] * len(traces),
+            },
+            geometry=traces,
+            crs=self.dem.crs,
+        )
+        frame.to_file(path, driver="ESRI Shapefile")
+
+        self.statusBar().showMessage(f"{len(traces)} tracce esportate in {path}")
+
+    def _suggested_name(self, suffix):
+        stem = self.dem.path.stem
+        attitude = f"{self.dip_dir_dial.value():03d}-{self.dip_angle_slider.value():02d}"
+
+        return self.dem.path.with_name(f"{stem}_{attitude}{suffix}")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -396,10 +728,37 @@ def main():
         metavar="GPKG",
         help="geopackage da cui prendere faglie e carbonati come riferimento",
     )
+    parser.add_argument(
+        "--finestra",
+        type=int,
+        default=1000,
+        metavar="N",
+        help="lato in celle della finestra di calcolo (default 1000)",
+    )
+    parser.add_argument(
+        "--assetto",
+        metavar="JSON",
+        help="assetto salvato da cui ripartire",
+    )
     args = parser.parse_args()
 
+    attitude = (90.0, 30.0)
+    source = None
+    side = args.finestra
+
+    if args.assetto:
+        saved = json.loads(Path(args.assetto).read_text(encoding="utf-8"))
+        attitude = (saved["dip_dir"], saved["dip_angle"])
+        source = saved["source_point"]
+        side = saved.get("finestra_px", side)
+        print(f"assetto: {attitude[0]:.0f}/{attitude[1]:.0f}, finestra {side} px")
+
     dem = Dem(args.dem)
-    print(f"DEM {dem.shape[1]}x{dem.shape[0]}, EPSG:{dem.crs.to_epsg()}, nodata={dem.nodata}")
+    print(
+        f"DEM {dem.width}x{dem.height} ({dem.width * dem.height / 1e6:.1f} Mpx), "
+        f"EPSG:{dem.crs.to_epsg()}, nodata={dem.nodata}, "
+        f"sfondo decimato 1:{dem.decimation}"
+    )
 
     overlay = None
     if args.geologia:
@@ -407,8 +766,8 @@ def main():
         print(f"geologia: {overlay.summary()}")
 
     app = QtWidgets.QApplication(sys.argv)
-    window = RealtimeWindow(dem, overlay)
-    window.resize(1100, 850)
+    window = RealtimeWindow(dem, overlay, side=side, attitude=attitude, source=source)
+    window.resize(1180, 880)
     window.show()
 
     sys.exit(app.exec())
