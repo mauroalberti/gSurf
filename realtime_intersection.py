@@ -7,10 +7,14 @@ Il kernel e' gia' noto (~24 ms su 1000x1000): la domanda aperta e' quanto resta
 per disegnare, ed e' quello che la barra di stato riporta a ogni frame.
 
 Uso:
-    python realtime_intersection.py <dem.tif>
+    python realtime_intersection.py <dem.tif> [--geologia <geology.gpkg>]
 
 Il DEM va tenuto piccolo: 1000x1000 e' il bersaglio, 500x500 il margine comodo.
 Clic sulla mappa per spostare il punto di appoggio del piano.
+
+Con --geologia si sovrappongono faglie e carbonati come riferimento per
+posizionare il piano. Finiscono nel fondale insieme all'ombreggiatura, quindi
+non costano nulla per frame.
 """
 
 from __future__ import annotations
@@ -60,6 +64,7 @@ class Dem:
             self.geotransform = list(src.transform.to_gdal())
             self.nodata = src.nodata
             self.bounds = src.bounds
+            self.crs = src.crs
 
         # misah vuole f64 contiguo. I DEM reali sono spesso f32: la conversione
         # si paga qui, al caricamento, non a ogni frame.
@@ -106,12 +111,100 @@ class Dem:
         return None if self.nodata is not None and z == self.nodata else z
 
 
+class GeologyOverlay:
+    """
+    Faglie e carbonati come facilitatori di posizionamento.
+
+    Sono statici, quindi vanno disegnati una volta e finiscono nel fondale che
+    il blitting ricattura: per frame costano zero. Il geopackage tiene i layer
+    in CRS diversi fra loro (i carbonati in UTM 32N, le faglie in geografiche),
+    quindi ognuno va riproiettato per conto suo su quello del DEM.
+    """
+
+    STYLES = {
+        "carbonates": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.22, linewidth=0.5),
+        "faults": dict(color="#1f4fd8", linewidth=1.0),
+    }
+
+    def __init__(self, path, crs, bounds, layers=("carbonates", "faults")):
+        import geopandas as gpd  # pesante da importare: solo se serve davvero
+        from shapely.geometry import box
+
+        window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
+
+        self.layers = {}
+        self.skipped = {}
+
+        for name in layers:
+            try:
+                data = gpd.read_file(path, layer=name)
+            except Exception as err:
+                self.skipped[name] = str(err).split("\n")[0]
+                continue
+
+            if data.crs is None:
+                self.skipped[name] = "CRS assente"
+                continue
+
+            visible = data.to_crs(crs)
+            visible = visible[visible.intersects(window)]
+
+            if visible.empty:
+                self.skipped[name] = "nessun elemento nella finestra"
+                continue
+
+            self.layers[name] = visible
+
+    def draw(self, axes):
+        """Disegna sugli assi, senza lasciare che geopandas riscali la vista."""
+
+        limits = axes.get_xlim(), axes.get_ylim()
+
+        for name, data in self.layers.items():
+            data.plot(ax=axes, zorder=2, label=name, **self.STYLES[name])
+
+        axes.set_xlim(limits[0])
+        axes.set_ylim(limits[1])
+
+    def legend_handles(self):
+        """
+        Artisti fittizi per la legenda: geopandas disegna i poligoni con una
+        collection che matplotlib non sa rappresentare da sola, e senza questi
+        i carbonati sparirebbero dalla legenda in silenzio.
+        """
+
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
+
+        handles = []
+
+        for name in self.layers:
+            style = self.STYLES[name]
+
+            if "facecolor" in style:
+                handles.append(Patch(label=name, **style))
+            else:
+                handles.append(Line2D([], [], label=name, **style))
+
+        return handles
+
+    def summary(self):
+        found = ", ".join(f"{n} {len(g)}" for n, g in self.layers.items())
+        missing = ", ".join(f"{n} ({why})" for n, why in self.skipped.items())
+
+        if found and missing:
+            return f"{found} -- saltati: {missing}"
+
+        return found or f"nessun layer usabile: {missing}"
+
+
 class RealtimeWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, dem):
+    def __init__(self, dem, overlay=None):
         super().__init__()
 
         self.dem = dem
+        self.overlay = overlay
         self.background = None
         self.frame_times = deque(maxlen=20)
 
@@ -178,8 +271,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             origin="upper",
             interpolation="bilinear",
         )
-        self.axes.set_xlabel("E (m, EPSG:25833)")
+        epsg = self.dem.crs.to_epsg() if self.dem.crs else "?"
+        self.axes.set_xlabel(f"E (m, EPSG:{epsg})")
         self.axes.set_ylabel("N (m)")
+
+        if self.overlay is not None:
+            self.overlay.draw(self.axes)
 
         # animated=True tiene i due artisti fuori dal draw normale: li ridisegna
         # solo il blitting, che e' tutto il punto dell'esercizio.
@@ -201,6 +298,15 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             markersize=7,
             animated=True,
         )
+
+        # La legenda va costruita a mano: gli artisti animati non compaiono nel
+        # draw normale, e i poligoni di geopandas non portano un handler.
+        from matplotlib.lines import Line2D
+
+        handles = [Line2D([], [], color="red", linewidth=1.2, label="intersezione")]
+        if self.overlay is not None:
+            handles.extend(self.overlay.legend_handles())
+        self.axes.legend(handles=handles, loc="upper right", fontsize="small", framealpha=0.85)
 
         self.canvas.draw()
 
@@ -285,13 +391,23 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dem", help="DEM in un formato leggibile da rasterio")
+    parser.add_argument(
+        "--geologia",
+        metavar="GPKG",
+        help="geopackage da cui prendere faglie e carbonati come riferimento",
+    )
     args = parser.parse_args()
 
     dem = Dem(args.dem)
-    print(f"DEM {dem.shape[1]}x{dem.shape[0]}, nodata={dem.nodata}")
+    print(f"DEM {dem.shape[1]}x{dem.shape[0]}, EPSG:{dem.crs.to_epsg()}, nodata={dem.nodata}")
+
+    overlay = None
+    if args.geologia:
+        overlay = GeologyOverlay(args.geologia, dem.crs, dem.bounds)
+        print(f"geologia: {overlay.summary()}")
 
     app = QtWidgets.QApplication(sys.argv)
-    window = RealtimeWindow(dem)
+    window = RealtimeWindow(dem, overlay)
     window.resize(1100, 850)
     window.show()
 
