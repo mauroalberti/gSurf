@@ -394,6 +394,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     PICK_RADIUS_PX = 12
     ZOOM_STEP = 1.3
 
+    # QDial mette il minimo alle ore 6, non alle 12: misurato afferrando il
+    # widget e cercando la lancetta, il valore 0 punta a 181 gradi dalle ore 12
+    # e il valore 180 a 360. Il verso e' orario, come l'azimut, quindi fra la
+    # scala del widget e l'immersione geologica c'e' solo mezzo giro di scarto.
+    DIAL_NORTH_OFFSET = 180
+
     def __init__(self, dem, overlay=None, side=1000, attitude=(90.0, 30.0), source=None):
         super().__init__()
 
@@ -442,7 +448,9 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.dip_dir_dial = QtWidgets.QDial()
         self.dip_dir_dial.setRange(0, 359)
-        self.dip_dir_dial.setValue(int(attitude[0]))
+        self.dip_dir_dial.setValue(
+            int(round(attitude[0] - self.DIAL_NORTH_OFFSET)) % 360
+        )
         self.dip_dir_dial.setWrapping(True)
         self.dip_dir_dial.setNotchesVisible(True)
         self.dip_dir_dial.setMinimumSize(140, 140)
@@ -631,6 +639,17 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         return True
 
+    def dip_direction(self):
+        """L'immersione in azimut, non il numero grezzo del quadrante."""
+
+        return float((self.dip_dir_dial.value() + self.DIAL_NORTH_OFFSET) % 360)
+
+    def set_dip_direction(self, azimuth):
+        self.dip_dir_dial.setValue(int(round(azimuth - self.DIAL_NORTH_OFFSET)) % 360)
+
+    def dip_angle(self):
+        return float(self.dip_angle_slider.value())
+
     def _navigating(self):
         """Vero mentre pan o zoom-rettangolo sono attivi nella barra.
 
@@ -744,8 +763,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # -- ciclo ------------------------------------------------------------
 
     def update_intersection(self):
-        dip_dir = float(self.dip_dir_dial.value())
-        dip_angle = float(self.dip_angle_slider.value())
+        dip_dir = self.dip_direction()
+        dip_angle = self.dip_angle()
 
         start = perf_counter()
         points, segments = intersect_plane_grid(
@@ -849,8 +868,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         settings = {
             "dem": str(self.dem.path),
-            "dip_dir": float(self.dip_dir_dial.value()),
-            "dip_angle": float(self.dip_angle_slider.value()),
+            "dip_dir": self.dip_direction(),
+            "dip_angle": self.dip_angle(),
             "source_point": [float(v) for v in self.source_point],
             "finestra_px": int(self.side),
             "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
@@ -875,8 +894,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("nessuna intersezione da esportare")
             return
 
-        dip_dir = float(self.dip_dir_dial.value())
-        dip_angle = float(self.dip_angle_slider.value())
+        dip_dir = self.dip_direction()
+        dip_angle = self.dip_angle()
 
         frame = gpd.GeoDataFrame(
             {
@@ -895,7 +914,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def _suggested_name(self, suffix):
         stem = self.dem.path.stem
-        attitude = f"{self.dip_dir_dial.value():03d}-{self.dip_angle_slider.value():02d}"
+        attitude = f"{int(self.dip_direction()):03d}-{int(self.dip_angle()):02d}"
 
         return self.dem.path.with_name(f"{stem}_{attitude}{suffix}")
 
