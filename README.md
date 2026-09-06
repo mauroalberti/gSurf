@@ -52,7 +52,7 @@ pip install geopandas shapely
 
 They are imported only where they are actually used, so without them the tool
 still starts, draws the DEM and recomputes the intersection as you drag; you
-get no layers underneath, and `Esporta traccia` raises on the way out.
+get no layers underneath, and `Export trace` raises on the way out.
 
 ### Usage
 
@@ -66,10 +66,10 @@ Or state it up front:
 
 ```bash
 python realtime_intersection.py dem.tif \
-    --poligoni geology.gpkg:carbonates \
-    --linee    geology.gpkg:faults \
-    --punti    stations.shp \
-    --x 611240 --y 4409700 --finestra 1000
+    --polygons geology.gpkg:carbonates \
+    --lines    geology.gpkg:faults \
+    --points   stations.shp \
+    --x 611240 --y 4409700 --window 1000
 ```
 
 The DEM is the only thing required. The three vector slots — polygons, lines,
@@ -78,14 +78,23 @@ being laid down. In the dialog, the layers offered in each slot are filtered on
 geometry read from the file's metadata, so faults never appear among the
 polygons and a geometry-less attribute table appears nowhere.
 
-Polygons are coloured per unit, on the field given by `--categorie` (default
-`code`, `nessuna` to switch it off). The colours are drawn from the layer's
+Polygons are coloured per unit, on the field given by `--categories` (default
+`code`, `none` to switch it off). The colours are drawn from the layer's
 complete list of values rather than from whatever is currently in view, so a
 formation keeps its colour as you pan. The legend is cut by outcropping area,
 not alphabetically, so the units that make up the map are the ones named.
 
-`--assetto file.json` reopens a saved orientation. Explicit arguments win over
-the file, so `--assetto x.json --z 900` is the saved plane at a new elevation.
+The legend stands beside the map rather than on it: categorised it runs to some
+thirty entries, and inside the frame those cover the corner you were most
+likely looking at. The *Legend* box in the panel moves it at any time —
+`beside`, `inside`, `hidden` — and `--legend` picks where it starts.
+Wherever it goes it belongs to the figure and not to a widget alongside, so
+both the saved and the copied screenshot carry it.
+
+`--settings file.json` reopens a saved orientation. Explicit arguments win over
+the file, so `--settings x.json --z 900` is the saved plane at a new elevation.
+Files written before the interface changed language still load: the Italian
+keys are read as a fallback.
 
 ### Things worth knowing
 
@@ -99,7 +108,7 @@ twenty times the DEM cell. It is measured rather than taken from a formula: a
 Eight microseconds, and it holds for any projection.
 
 **The DEM is never loaded.** The background is a decimated overview; the kernel
-reads one full-resolution window at a time, and `--finestra` sets its side in
+reads one full-resolution window at a time, and `--window` sets its side in
 cells. A 234 Mpx mosaic therefore costs the same per frame as a small crop,
 where loading it would have been 2.5 GB in float64.
 
@@ -115,7 +124,7 @@ gdaladdo -r average dem.tif 2 4 8 16
 independent: what you omit the DEM decides — no `--x`/`--y` puts it at the
 centre, no `--z` takes the ground elevation. But a `z` you give stays given,
 and survives dragging the point, which is how a plane is laid on a horizon
-passing above or below today's topography. The *quota dal DEM* checkbox makes
+passing above or below today's topography. The *elevation from DEM* checkbox makes
 and breaks the tie at any time, and both exports record which way it was along
 with the ground elevation underneath.
 

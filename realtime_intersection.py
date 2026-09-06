@@ -1,62 +1,61 @@
 """
-Intersezione piano geologico / DEM in tempo reale.
+Real-time geological plane / DEM intersection.
 
-Il kernel misah interseca un piano illimitato con la griglia e restituisce le
-corde marching-squares; qui intorno c'e' il minimo che serve a guidarlo con la
-mano e a vedere il risultato mentre si muove. La barra di stato riporta kernel,
-disegno e fps a ogni frame, cosi' il costo resta visibile durante l'uso.
+The misah kernel intersects an unbounded plane with the grid and returns the
+marching-squares chords; around it is the minimum needed to steer it by hand
+and watch the answer move. The status bar reports kernel, drawing and frame
+rate on every frame, so the cost stays visible while you work.
 
-Uso:
+Usage:
     python realtime_intersection.py
-    python realtime_intersection.py <dem.tif> [--poligoni PATH[:LAYER]]
-                                    [--linee PATH[:LAYER]] [--punti PATH[:LAYER]]
-                                    [--categorie CAMPO] [--x E] [--y N] [--z Q]
-                                    [--finestra N] [--assetto <file.json>]
+    python realtime_intersection.py <dem.tif> [--polygons PATH[:LAYER]]
+                                    [--lines PATH[:LAYER]] [--points PATH[:LAYER]]
+                                    [--categories FIELD] [--x E] [--y N] [--z Z]
+                                    [--window N] [--settings <file.json>]
 
-Senza argomenti si apre un dialogo che chiede le stesse cose. L'unica
-obbligatoria e' il DEM: i tre slot vettoriali -- poligoni, linee, punti --
-servono a sapere dove si sta appoggiando il piano, che e' una domanda diversa
-dal calcolo. I layer offerti in ciascuno slot sono filtrati sulla geometria,
-letta dai metadati, quindi fra i poligoni le faglie non compaiono.
+With no arguments a dialog asks for the same things. The only one required is
+the DEM: the three vector slots -- polygons, lines, points -- answer where the
+plane is being laid down, which is a different question from the calculation.
+The layers offered in each slot are filtered on geometry read from the
+metadata, so faults never appear among the polygons.
 
-Il DEM puo' essere grande quanto si vuole: non viene caricato in memoria. Lo
-sfondo e' una overview decimata, mentre il kernel gira su una finestra a piena
-risoluzione centrata sul punto di appoggio, il cui lato --finestra decide la
-fluidita' (1000 px stanno sui 38 fps, 500 px sui 100).
+The DEM can be as large as you like: it is never loaded into memory. The
+background is a decimated overview, while the kernel runs on a full-resolution
+window centred on the source point, whose side --window sets and which decides
+how smooth the ride is (1000 px sits around 38 fps, 500 px around 100).
 
-Il punto di appoggio si fissa componente per componente, e cio' che si lascia
-vuoto lo decide il DEM: senza --x e --y si va al centro, senza --z si prende la
-quota del suolo. Una quota data invece resta quella anche spostando il punto --
-e' cosi' che si appoggia un piano a un orizzonte che passa sopra o sotto la
-topografia di oggi. La spunta "quota dal DEM" nel pannello fa e disfa il legame
-in qualsiasi momento.
+The source point is fixed component by component, and what you leave out the
+DEM decides: no --x and --y puts it at the centre, no --z takes the ground
+elevation. An elevation you give stays given even as you move the point --
+that is how a plane is laid on a horizon passing above or below today's
+topography. The "elevation from DEM" checkbox makes and breaks the tie at any
+time.
 
-L'immersione si legge e si scrive in **azimut vero**, come la si misura sul
-terreno. Il DEM pero' e' sulla griglia della proiezione, e i due nord non
-coincidono: la convergenza dei meridiani viene tolta prima di chiamare il
-kernel, e mostrata sotto l'assetto. Sull'Appennino meridionale vale da +0,41 a
-+1,04 gradi, che su cinque chilometri di traccia sono fino a 91 metri.
+Dip direction is read and written in **true azimuth**, as it is measured in
+the field. The DEM, though, is on the projection's grid, and the two norths do
+not agree: meridian convergence is subtracted before the kernel is called, and
+shown under the attitude. In the southern Apennines it runs between +0.41 and
++1.04 degrees, which over five kilometres of trace is up to 91 metres.
 
-Nella finestra:
-    - quadrante e cursore per immersione e inclinazione;
-    - rotella per zoomare attorno al cursore, barra di navigazione per pan,
-      zoom a rettangolo e ritorno alla vista piena;
-    - clic sulla mappa per spostare il punto di appoggio, oppure trascinamento
-      del punto stesso (da fare con pan e zoom disattivati, altrimenti i due
-      gesti sono lo stesso);
-    - schermata negli appunti o su file, assetto corrente in JSON, traccia
-      calcolata in shapefile. Il punto di appoggio esce in entrambi nelle due
-      forme, proiettata e geografica.
+In the window:
+    - dial and slider for dip direction and dip angle;
+    - scroll to zoom around the cursor, navigation bar for pan, rubber-band
+      zoom and back to the full view;
+    - click on the map to move the source point, or drag the point itself (with
+      pan and zoom off, or the two gestures are the same one);
+    - screenshot to the clipboard or to a file, current attitude as JSON,
+      computed trace as a shapefile. The source point goes into both in both
+      forms, projected and geographic.
 
-Gli affioramenti poligonali sono colorati per unita' -- il campo lo decide
---categorie, di default `code`. I colori escono dall'elenco completo del layer
-e non da quali unita' inquadri, cosi' la stessa formazione tiene il suo colore
-mentre ti sposti.
+Polygonal outcrops are coloured per unit -- the field is set by --categories,
+`code` by default. The colours come from the layer's complete list of values
+and not from whichever units are in view, so a formation keeps its colour as
+you pan.
 """
 
-# Gli slot vettoriali sono tre e generici, ma questo strumento e' nato con un
-# geopackage solo: `--geologia` resta come scorciatoia per quello, e mette
-# `carbonates` fra i poligoni e `faults` fra le linee.
+# The vector slots are three and generic, but this tool grew up around a single
+# geopackage: `--geology` survives as the shortcut for it, putting `carbonates`
+# among the polygons and `faults` among the lines.
 
 from __future__ import annotations
 
@@ -72,8 +71,8 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 
-# PyQt6 va importato prima del backend: matplotlib sceglie il binding
-# guardando quello gia' presente in sys.modules.
+# PyQt6 has to be imported before the backend: matplotlib picks the binding by
+# looking at what is already in sys.modules.
 import PyQt6.QtCore  # noqa: F401
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -85,7 +84,7 @@ from misah.kernels import intersect_plane_grid
 
 
 def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
-    """Ombreggiatura secondo la convenzione ESRI, con le righe che vanno a sud."""
+    """Hillshade in the ESRI convention, with rows running south."""
 
     d_row, d_col = np.gradient(z, dy, dx)
     dz_dx, dz_dy = d_col, -d_row
@@ -103,21 +102,21 @@ def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
 
 class MeridianConvergence:
     """
-    L'angolo fra il nord della carta e il nord geografico, punto per punto.
+    The angle between grid north and true north, point by point.
 
-    In una proiezione le linee verticali della griglia non sono meridiani: solo
-    sul meridiano centrale i due nord coincidono. Sull'Appennino meridionale in
-    EPSG:25833 lo scarto va da +0,41 a +1,04 gradi, che su cinque chilometri di
-    traccia sono fino a 91 metri -- venti volte la cella del DEM.
+    In a projection the vertical grid lines are not meridians: only on the
+    central meridian do the two norths coincide. In the southern Apennines in
+    EPSG:25833 the gap runs from +0.41 to +1.04 degrees, which over five
+    kilometres of trace is up to 91 metres -- twenty times the DEM cell.
 
-    Il valore si ricava misurandolo invece di leggerlo da una formula: si fa un
-    passo di un centinaio di metri lungo il nord vero e si guarda che azimut ha
-    assunto sulla griglia. Costa 8 microsecondi e vale per qualunque proiezione,
-    anche quelle che non si lasciano scrivere in PROJ.
+    The value is measured rather than read off a formula: take a hundred-metre
+    step along true north and see what azimuth that step has on the grid. Eight
+    microseconds, and it holds for any projection, including the ones that do
+    not let themselves be written in PROJ.
 
-    Il segno, verificato su tre punti a quattro decimali:
+    The sign, checked on three points to four decimals:
 
-        azimut_di_griglia = azimut_vero - convergenza
+        grid_azimuth = true_azimuth - convergence
     """
 
     STEP_M = 100.0
@@ -141,7 +140,7 @@ class MeridianConvergence:
         self.available = self._geod is not None
 
     def at(self, x, y):
-        """Convergenza in gradi nel punto, positiva a est del meridiano centrale."""
+        """Convergence in degrees at the point, positive east of the central meridian."""
 
         if not self.available:
             return 0.0
@@ -157,16 +156,16 @@ class MeridianConvergence:
 
     def geographic(self, x, y):
         """
-        Longitudine e latitudine del punto, o None senza un CRS utilizzabile.
+        Longitude and latitude of the point, or None without a usable CRS.
 
-        La trasformazione esiste gia' perche' serve alla convergenza a ogni
-        frame: qui viene solo esposta, perche' un punto scritto nelle sole
-        coordinate proiettate e' inutilizzabile fuori dal suo EPSG -- in un
-        taccuino, in un GPS, in un articolo.
+        The transformation already exists because convergence needs it on every
+        frame: here it is only exposed, because a point written in projected
+        coordinates alone is unusable outside its EPSG -- in a notebook, in a
+        GPS, in a paper.
 
-        Fuori dal dominio della proiezione pyproj restituisce infinito invece
-        di sollevare: il controllo sui finiti e' quello che distingue il fuori
-        campo da una coordinata buona.
+        Outside the projection's domain pyproj returns infinity rather than
+        raising: the finiteness check is what tells an out-of-range point from
+        a good coordinate.
         """
 
         if self._to_geographic is None:
@@ -182,11 +181,11 @@ class MeridianConvergence:
 
 class ComputeWindow:
     """
-    Il ritaglio a piena risoluzione su cui gira il kernel.
+    The full-resolution crop the kernel runs on.
 
-    Esiste separato dal DEM perche' il costo di un frame va con il numero di
-    celle scandite, non con la dimensione del file: su un mosaico da 314 Mpx il
-    kernel impiegherebbe secondi, su una finestra da 1000x1000 sta in 22 ms.
+    It exists apart from the DEM because the cost of a frame goes with the
+    number of cells scanned, not with the size of the file: on a 314 Mpx mosaic
+    the kernel would take seconds, on a 1000x1000 window it fits in 22 ms.
     """
 
     def __init__(self, data, geotransform, bounds, offset):
@@ -212,12 +211,12 @@ class ComputeWindow:
 
 class Dem:
     """
-    Il DEM aperto senza caricarlo: overview per lo sfondo, finestre a piena
-    risoluzione a richiesta.
+    The DEM opened without loading it: an overview for the background,
+    full-resolution windows on demand.
 
-    Un mosaico da 314 Mpx sarebbe 2,5 GB in float64, quindi tenerlo tutto in
-    memoria non e' una possibilita' e nemmeno serve: il kernel legge una
-    finestra per volta, e la lettura costa 4,9 ms su 1000x1000.
+    A 314 Mpx mosaic would be 2.5 GB in float64, so holding it all in memory is
+    not an option and is not needed either: the kernel reads one window at a
+    time, and that read costs 4.9 ms on 1000x1000.
     """
 
     def __init__(self, path, display_max=1600):
@@ -239,9 +238,9 @@ class Dem:
             self.bounds.top,
         ]
 
-        # Lo sfondo non ha bisogno della piena risoluzione: oltre il paio di
-        # migliaia di pixel non si vedrebbe comunque, e l'ombreggiatura di un
-        # mosaico intero costerebbe minuti.
+        # The background does not need full resolution: past a couple of
+        # thousand pixels it would not show anyway, and hillshading a whole
+        # mosaic would cost minutes.
         self.decimation = max(1, math.ceil(max(self.width, self.height) / display_max))
         shape = (self.height // self.decimation, self.width // self.decimation)
         overview = self._src.read(1, out_shape=shape).astype(float)
@@ -266,7 +265,7 @@ class Dem:
         )
 
     def elevation_at(self, x, y):
-        """Quota alla coordinata mappa, o None fuori griglia / su nodata."""
+        """Elevation at the map coordinate, or None off-grid / on nodata."""
 
         row, col = self._src.index(x, y)
         row, col = int(row), int(col)
@@ -280,14 +279,14 @@ class Dem:
 
     def shade_for(self, xmin, xmax, ymin, ymax, max_px=1200):
         """
-        Ombreggiatura della sola vista corrente, alla risoluzione che serve.
+        Hillshade of the current view alone, at the resolution it needs.
 
-        Lo sfondo iniziale e' decimato sull'intero DEM: su un mosaico grande
-        vuol dire celle da decine di metri, e zoomando resta poltiglia proprio
-        mentre la traccia diventa dettagliata. Qui si rilegge la porzione
-        inquadrata con la decimazione giusta per quella scala.
+        The initial background is decimated over the whole DEM: on a large
+        mosaic that means cells tens of metres across, and zooming in leaves
+        mush exactly as the trace becomes detailed. Here the framed portion is
+        re-read at the decimation right for that scale.
 
-        Torna None se la vista e' del tutto fuori dal DEM.
+        Returns None if the view is entirely off the DEM.
         """
 
         left = max(xmin, self.bounds.left)
@@ -321,14 +320,14 @@ class Dem:
         return shade, [left, right, bottom, top], step
 
     def window_at(self, x, y, side):
-        """Finestra di `side` celle centrata su (x, y), tagliata sul DEM."""
+        """A `side`-cell window centred on (x, y), clipped to the DEM."""
 
         row, col = self._src.index(x, y)
         col_off = int(col) - side // 2
         row_off = int(row) - side // 2
 
-        # Sui bordi la finestra si sposta invece di rimpicciolirsi, cosi' il
-        # costo per frame resta quello annunciato ovunque la si porti.
+        # At the edges the window shifts rather than shrinking, so the per-frame
+        # cost stays the advertised one wherever you take it.
         col_off = max(0, min(col_off, self.width - side))
         row_off = max(0, min(row_off, self.height - side))
 
@@ -340,8 +339,8 @@ class Dem:
         transform = rasterio.windows.transform(window, self._src.transform)
         bounds = rasterio.windows.bounds(window, self._src.transform)
 
-        # misah vuole f64 contiguo. I DEM reali sono spesso f32: la conversione
-        # si paga qui, non dentro il ciclo.
+        # misah wants contiguous f64. Real DEMs are often f32: the conversion is
+        # paid for here, not inside the loop.
         return ComputeWindow(
             np.ascontiguousarray(band.astype(np.float64)),
             list(transform.to_gdal()),
@@ -352,62 +351,62 @@ class Dem:
 
 class VectorSource:
     """
-    Un layer vettoriale di sfondo, nel ruolo che gli si e' dato.
+    One backdrop vector layer, in the role it was given.
 
-    I ruoli sono tre -- poligoni, linee, punti -- e non sono una scelta di
-    stile: decidono che cosa ha senso chiedere al layer. Un campo di poligoni
-    colorato per unita' dice a quali due formazioni appartiene un contatto; le
-    stesse ventitre tinte spalmate su quattrocento faglie non si leggono.
-    Quindi la categorizzazione parte accesa sui poligoni e spenta sul resto,
-    ed e' comunque l'utente a decidere.
+    The roles are three -- polygons, lines, points -- and they are not a matter
+    of style: they decide what it makes sense to ask of the layer. A field of
+    polygons coloured per unit says which two formations a contact separates;
+    the same twenty-three tints spread over four hundred faults cannot be read.
+    So categorisation starts on for polygons and off for the rest, and it is
+    the user who decides in the end.
 
-    I layer sono statici: si disegnano una volta e finiscono nel fondale che il
-    blitting ricattura, quindi per frame costano zero. Ognuno porta il proprio
-    CRS -- in geology.gpkg i carbonati sono in UTM 32N e le faglie in
-    geografiche -- e va riproiettato per conto suo su quello del DEM, mai il
-    file in blocco.
+    The layers are static: they are drawn once and end up in the background
+    that blitting recaptures, so per frame they cost nothing. Each carries its
+    own CRS -- in geology.gpkg the carbonates are in UTM 32N and the faults in
+    geographic -- and is reprojected on its own onto the DEM's, never the file
+    as a block.
     """
 
-    ROLES = ("poligoni", "linee", "punti")
+    ROLES = ("polygons", "lines", "points")
 
-    # Il suffisso del tipo OGR: 'Polygon' e 'MultiPolygon' finiscono entrambi
-    # in 'Polygon', e cosi' le altre due coppie. Un layer senza geometria --
-    # `fault_attitudes` in geology.gpkg e' una tabella pura -- non ha suffisso
-    # e resta fuori da tutti e tre i ruoli, che e' dove deve stare.
+    # The OGR type suffix: 'Polygon' and 'MultiPolygon' both end in 'Polygon',
+    # and so for the other two pairs. A layer with no geometry --
+    # `fault_attitudes` in geology.gpkg is a pure table -- has no suffix and
+    # stays out of all three roles, which is where it belongs.
     GEOMETRY_SUFFIX = {
-        "poligoni": "Polygon",
-        "linee": "LineString",
-        "punti": "Point",
+        "polygons": "Polygon",
+        "lines": "LineString",
+        "points": "Point",
     }
 
     FLAT_STYLE = {
-        "poligoni": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.25, linewidth=0.5),
-        "linee": dict(color="#1f4fd8", linewidth=1.0),
-        "punti": dict(color="#d95f02", markersize=26, marker="^", edgecolor="#4a2200"),
+        "polygons": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.25, linewidth=0.5),
+        "lines": dict(color="#1f4fd8", linewidth=1.0),
+        "points": dict(color="#d95f02", markersize=26, marker="^", edgecolor="#4a2200"),
     }
 
     CATEGORY_STYLE = {
-        "poligoni": dict(edgecolor="#333333", linewidth=0.4, alpha=0.38),
-        "linee": dict(linewidth=1.3),
-        "punti": dict(markersize=30, marker="^", edgecolor="#222222"),
+        "polygons": dict(edgecolor="#333333", linewidth=0.4, alpha=0.38),
+        "lines": dict(linewidth=1.3),
+        "points": dict(markersize=30, marker="^", edgecolor="#222222"),
     }
 
-    # I punti sopra le linee, le linee sopra i poligoni: l'ordine in cui una
-    # carta si legge. Con lo zorder unico di prima un affioramento disegnato
-    # dopo copriva le faglie che servivano a orientarsi.
-    ZORDER = {"poligoni": 2, "linee": 3, "punti": 4}
+    # Points over lines, lines over polygons: the order in which a map is read.
+    # With the single zorder of before, an outcrop drawn later covered the
+    # faults you were using to find your way.
+    ZORDER = {"polygons": 2, "lines": 3, "points": 4}
 
-    # Il campo che tappa i buchi di quello scelto: in geology.gpkg cinque
-    # poligoni non hanno `code`, e senza fallback finirebbero in un'unica
-    # categoria "n.d." che ne mescola tre di diverse.
+    # The field that plugs the holes in the chosen one: in geology.gpkg five
+    # polygons have no `code`, and with no fallback they would end up in a
+    # single "n/a" category mixing three different ones.
     CATEGORY_FALLBACK = "name"
 
-    # Oltre una dozzina di voci la legenda mangia la mappa che dovrebbe
-    # spiegare; le categorie in eccesso restano colorate, solo non elencate.
+    # Past a dozen entries the legend eats the map it is supposed to explain;
+    # the categories in excess stay coloured, they are just not listed.
     MAX_LEGEND_ENTRIES = 12
 
     def __init__(self, path, role, crs, bounds, layer=None, category_field=None):
-        import geopandas as gpd  # pesante da importare: solo se serve davvero
+        import geopandas as gpd  # heavy to import: only when actually needed
         from shapely.geometry import box
 
         self.path = Path(path)
@@ -426,7 +425,7 @@ class VectorSource:
             return
 
         if complete.crs is None:
-            self.problem = "CRS assente"
+            self.problem = "no CRS"
             return
 
         window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
@@ -434,21 +433,21 @@ class VectorSource:
         visible = visible[visible.intersects(window)]
 
         if visible.empty:
-            self.problem = "nessun elemento sul DEM"
+            self.problem = "no feature on the DEM"
             return
 
         self.frame = self._categorize(complete, visible)
 
-    # -- lettura del contenitore, senza caricare i dati -------------------
+    # -- reading the container, without loading the data ------------------
 
     @staticmethod
     def candidate_layers(path, role):
         """
-        I layer del file che hanno la geometria giusta per il ruolo.
+        The layers in the file whose geometry fits the role.
 
-        Si legge dai soli metadati, quindi elencare i layer di un geopackage
-        da mezzo giga costa quanto elencarne uno vuoto -- ed e' cio' che
-        permette al dialogo di filtrare mentre l'utente sceglie.
+        Read from the metadata alone, so listing the layers of a half-gigabyte
+        geopackage costs what listing an empty one costs -- and that is what
+        lets the dialog filter while the user chooses.
         """
 
         import pyogrio
@@ -463,7 +462,7 @@ class VectorSource:
 
     @staticmethod
     def text_fields(path, layer=None):
-        """I campi testuali del layer: gli unici su cui categorizzare abbia senso."""
+        """The layer's text fields: the only ones worth categorising on."""
 
         import pyogrio
 
@@ -475,14 +474,14 @@ class VectorSource:
             if str(dtype) == "object"
         ]
 
-    # -- categorie ---------------------------------------------------------
+    # -- categories --------------------------------------------------------
 
     @property
     def is_loaded(self):
         return self.frame is not None
 
     def _values(self, frame):
-        """La colonna su cui distinguere, con i buchi tappati dal nome."""
+        """The column to tell things apart by, with the holes plugged by the name."""
 
         if not self.category_field or self.category_field not in frame.columns:
             return None
@@ -492,16 +491,16 @@ class VectorSource:
         if self.CATEGORY_FALLBACK in frame.columns:
             values = values.fillna(frame[self.CATEGORY_FALLBACK].astype("string"))
 
-        return values.fillna("n.d.").astype(str)
+        return values.fillna("n/a").astype(str)
 
     def _categorize(self, complete, visible):
         """
-        Assegna un colore per categoria, deciso sull'elenco completo del layer.
+        Assigns one colour per category, decided on the layer's complete list.
 
-        Sull'elenco completo e non su quello visibile di proposito: se i colori
-        uscissero da quali categorie capitano nella finestra, la stessa
-        formazione cambierebbe colore spostandosi o cambiando DEM, ed e'
-        l'unica cosa che una legenda non puo' permettersi.
+        On the complete list and not on the visible one on purpose: if the
+        colours came from whichever categories happen to fall in the window,
+        the same formation would change colour as you pan or change DEM, and
+        that is the one thing a legend cannot afford.
         """
 
         values = self._values(complete)
@@ -511,8 +510,8 @@ class VectorSource:
 
         from matplotlib import colormaps
 
-        # Venti piu' venti: le unita' cartografate in geology.gpkg sono
-        # ventitre, e con la sola tab20 due di esse uscirebbero identiche.
+        # Twenty plus twenty: the units mapped in geology.gpkg are twenty-three,
+        # and with tab20 alone two of them would come out identical.
         wheel = list(colormaps["tab20"].colors) + list(colormaps["tab20b"].colors)
         order = sorted(values.unique())
 
@@ -527,7 +526,7 @@ class VectorSource:
 
         return visible.assign(_gsurf_category=self._values(visible))
 
-    # -- disegno -----------------------------------------------------------
+    # -- drawing -----------------------------------------------------------
 
     def draw(self, axes):
         table = self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE
@@ -548,12 +547,12 @@ class VectorSource:
 
     def _handle(self, label, color=None):
         """
-        L'artista fittizio per una voce di legenda.
+        The dummy artist standing in for one legend entry.
 
-        Serve perche' geopandas disegna con collection che matplotlib non sa
-        rappresentare da sola: senza questi, i poligoni sparirebbero dalla
-        legenda in silenzio. La forma segue il ruolo, cosi' fra tre layer
-        categorizzati si capisce comunque quale voce e' di chi.
+        Needed because geopandas draws with collections matplotlib cannot
+        represent on its own: without these the polygons would drop out of the
+        legend silently. The shape follows the role, so across three
+        categorised layers you can still tell whose entry is whose.
         """
 
         from matplotlib.lines import Line2D
@@ -563,10 +562,10 @@ class VectorSource:
         style.pop("markersize", None)
         style.pop("color", None)
 
-        if self.role == "poligoni":
+        if self.role == "polygons":
             return Patch(facecolor=color or style.pop("facecolor", "#4daf7c"), label=label, **style)
 
-        if self.role == "linee":
+        if self.role == "lines":
             return Line2D([], [], color=color or "#1f4fd8", label=label, **style)
 
         marker = style.pop("marker", "^")
@@ -586,16 +585,16 @@ class VectorSource:
         if not self.colors:
             return [self._handle(self.layer or self.path.stem)]
 
-        # In legenda solo le categorie che si vedono davvero, e in ordine di
-        # peso: alfabeticamente il taglio a dodici butterebbe fuori Qt, PL e
-        # Op -- che sono meta' della mappa -- per far posto ad AV, che e' un
-        # poligono solo. Il peso e' l'area per i poligoni, la lunghezza per le
-        # linee, il conteggio per i punti.
+        # In the legend only the categories actually on show, and in order of
+        # weight: alphabetically, the cut at twelve would throw out Qt, PL and
+        # Op -- which are half the map -- to make room for AV, which is a
+        # single polygon. Weight is area for polygons, length for lines, count
+        # for points.
         frame = self.frame
 
-        if self.role == "poligoni":
+        if self.role == "polygons":
             weight = frame.area
-        elif self.role == "linee":
+        elif self.role == "lines":
             weight = frame.length
         else:
             weight = 1.0
@@ -620,7 +619,7 @@ class VectorSource:
                 Patch(
                     facecolor="none",
                     edgecolor="none",
-                    label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} altre in {self.role}",
+                    label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} more in {self.role}",
                 )
             )
 
@@ -630,14 +629,14 @@ class VectorSource:
         where = self.layer or self.path.name
 
         if not self.is_loaded:
-            return f"{self.role}: {where} saltato ({self.problem})"
+            return f"{self.role}: {where} skipped ({self.problem})"
 
         if self.colors:
             distinct = len(set(self.frame["_gsurf_category"]))
 
             return (
                 f"{self.role}: {where}, {len(self.frame)} in {distinct} "
-                f"categorie ({self.category_field})"
+                f"categories ({self.category_field})"
             )
 
         return f"{self.role}: {where}, {len(self.frame)}"
@@ -645,11 +644,11 @@ class VectorSource:
 
 class Overlay:
     """
-    I layer vettoriali di sfondo tenuti insieme, nell'ordine in cui si leggono.
+    The backdrop vector layers held together, in the order they are read in.
 
-    Nessuno di essi e' necessario: il DEM da solo basta a intersecare un piano.
-    Servono a sapere dove si sta appoggiando quel piano, che e' una domanda
-    diversa dal calcolo e a cui il DEM non risponde.
+    None of them is necessary: the DEM alone is enough to intersect a plane.
+    They answer where that plane is being laid down, which is a different
+    question from the calculation and one the DEM does not answer.
     """
 
     def __init__(self, sources=()):
@@ -666,7 +665,7 @@ class Overlay:
         return any(source.colors for source in self.sources)
 
     def draw(self, axes):
-        """Disegna sugli assi, senza lasciare che geopandas riscali la vista."""
+        """Draws on the axes, without letting geopandas rescale the view."""
 
         limits = axes.get_xlim(), axes.get_ylim()
 
@@ -687,16 +686,16 @@ class Overlay:
     def summary(self):
         lines = [s.summary() for s in self.sources] + [s.summary() for s in self.rejected]
 
-        return "; ".join(lines) if lines else "nessun layer vettoriale"
+        return "; ".join(lines) if lines else "no vector layer"
 
 
 def merged_traces(points, segments):
     """
-    Le corde marching-squares saldate in polilinee, con la quota.
+    The marching-squares chords welded into polylines, elevation and all.
 
-    Il kernel restituisce migliaia di segmenti da due vertici: scritti cosi'
-    sono inutilizzabili in un GIS. `linemerge` li ricuce nelle tracce continue
-    che sono davvero, e conserva la Z.
+    The kernel returns thousands of two-vertex segments: written out that way
+    they are unusable in a GIS. `linemerge` stitches them back into the
+    continuous traces they really are, and keeps the Z.
     """
 
     from shapely.geometry import LineString
@@ -713,12 +712,12 @@ def merged_traces(points, segments):
 
 class Toolbar(NavigationToolbar2QT):
     """
-    La barra di navigazione, con il salvataggio dirottato.
+    The navigation bar, with saving diverted.
 
-    Il pulsante di salvataggio del toolbar chiama `savefig` per conto suo, e
-    quel percorso non sa nulla degli artisti animati: il file uscirebbe con la
-    mappa e senza la traccia sopra. Qui va a finire nello stesso posto del
-    bottone "Salva schermata", cosi' i due non possono divergere.
+    The toolbar's save button calls `savefig` on its own, and that path knows
+    nothing of the animated artists: the file would come out with the map and
+    without the trace on top. Here it ends up in the same place as the "Save
+    screenshot" button, so the two cannot drift apart.
     """
 
     def __init__(self, canvas, parent, save_handler, view_changed):
@@ -729,8 +728,8 @@ class Toolbar(NavigationToolbar2QT):
     def save_figure(self, *args):
         self._save_handler()
 
-    # Ogni via con cui la barra cambia inquadratura deve avvisare, o lo sfondo
-    # resta alla risoluzione di prima.
+    # Every way the bar can change the framing has to report it, or the
+    # background stays at the previous resolution.
 
     def release_pan(self, event):
         super().release_pan(event)
@@ -754,18 +753,18 @@ class Toolbar(NavigationToolbar2QT):
 
 
 VECTOR_FILTER = (
-    "Vettoriali (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
-    "Tutti i file (*)"
+    "Vector (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
+    "All files (*)"
 )
 
-RASTER_FILTER = "Raster (*.tif *.tiff *.vrt *.asc *.img *.dt2 *.hgt);;Tutti i file (*)"
+RASTER_FILTER = "Raster (*.tif *.tiff *.vrt *.asc *.img *.dt2 *.hgt);;All files (*)"
 
 
 def as_number(text):
-    """Il testo come numero, o None se e' vuoto o non lo e'.
+    """The text as a number, or None if it is empty or is not one.
 
-    La virgola vale il punto: la tastiera italiana mette la virgola sul
-    tastierino, e rifiutare '1187,4' sarebbe una piccola crudelta'."""
+    A comma counts as a point: an Italian keyboard puts the comma on the numeric
+    keypad, and rejecting '1187,4' would be a small cruelty."""
 
     text = (text or "").strip().replace(",", ".")
 
@@ -780,18 +779,20 @@ def as_number(text):
 
 class VectorPicker(QtWidgets.QGroupBox):
     """
-    La scelta di un layer per un ruolo: file, layer dentro il file, categorie.
+    Choosing one layer for one role: file, layer within the file, categories.
 
-    I layer offerti sono filtrati sulla geometria del ruolo, letta dai soli
-    metadati: nello slot dei poligoni le faglie non compaiono proprio, e una
-    tabella senza geometria non compare da nessuna parte. E' un errore in meno
-    da diagnosticare a valle, al costo di una lettura che non tocca i dati.
+    The layers offered are filtered on the role's geometry, read from the
+    metadata alone: in the polygon slot the faults simply never appear, and a
+    table without geometry appears nowhere. One less error to diagnose
+    downstream, at the cost of a read that never touches the data.
     """
 
-    # I nomi con cui una colonna di categoria si presenta di solito. Sui
-    # poligoni la categorizzazione parte accesa perche' e' quasi sempre cio'
-    # che si vuole; su linee e punti parte spenta, che venti tinte su
-    # quattrocento faglie non si leggono.
+    # The names a category column usually goes by. The Italian ones are kept
+    # alongside the English: the geological maps this is used on are surveyed
+    # in Italy, and their attribute tables say `sigla` and `unita`. On polygons
+    # categorisation starts on because it is almost always what you want; on
+    # lines and points it starts off, since twenty tints over four hundred
+    # faults cannot be read.
     PREFERRED_FIELDS = ("code", "sigla", "unit", "unita", "type", "tipo", "name", "nome")
 
     def __init__(self, role, parent=None):
@@ -802,12 +803,12 @@ class VectorPicker(QtWidgets.QGroupBox):
 
         self.path_label = QtWidgets.QLineEdit()
         self.path_label.setReadOnly(True)
-        self.path_label.setPlaceholderText("nessuno (opzionale)")
+        self.path_label.setPlaceholderText("none (optional)")
 
-        browse = QtWidgets.QPushButton("Sfoglia...")
+        browse = QtWidgets.QPushButton("Browse...")
         browse.clicked.connect(self._browse)
 
-        self.clear_button = QtWidgets.QPushButton("Togli")
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear)
         self.clear_button.setEnabled(False)
 
@@ -824,34 +825,34 @@ class VectorPicker(QtWidgets.QGroupBox):
         grid.addWidget(self.clear_button, 0, 3)
         grid.addWidget(QtWidgets.QLabel("layer"), 1, 0)
         grid.addWidget(self.layer_combo, 1, 1, 1, 3)
-        grid.addWidget(QtWidgets.QLabel("categorie"), 2, 0)
+        grid.addWidget(QtWidgets.QLabel("categories"), 2, 0)
         grid.addWidget(self.category_combo, 2, 1, 1, 3)
         grid.setColumnStretch(1, 1)
 
     def _browse(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, f"Scegli il file: {self.role}", "", VECTOR_FILTER
+            self, f"Choose the file: {self.role}", "", VECTOR_FILTER
         )
 
         if path:
             self.set_path(path)
 
     def set_path(self, path, layer=None, category_field=None):
-        """Carica l'elenco dei layer adatti al ruolo. Torna False se non ce ne sono."""
+        """Loads the list of layers fit for the role. Returns False if there are none."""
 
         try:
             candidates = VectorSource.candidate_layers(path, self.role)
         except Exception as err:
             QtWidgets.QMessageBox.warning(
-                self, "File illeggibile", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
+                self, "Unreadable file", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
             )
             return False
 
         if not candidates:
             QtWidgets.QMessageBox.information(
                 self,
-                "Nessun layer adatto",
-                f"{Path(path).name} non contiene layer di tipo {self.role}.",
+                "No suitable layer",
+                f"{Path(path).name} holds no {self.role} layer.",
             )
             return False
 
@@ -883,17 +884,17 @@ class VectorPicker(QtWidgets.QGroupBox):
 
         with QtCore.QSignalBlocker(self.category_combo):
             self.category_combo.clear()
-            self.category_combo.addItem("(nessuna)")
+            self.category_combo.addItem("(none)")
             self.category_combo.addItems(fields)
 
             chosen = None
 
             if preferred and preferred in fields:
                 chosen = preferred
-            elif self.role == "poligoni":
+            elif self.role == "polygons":
                 chosen = next((f for f in self.PREFERRED_FIELDS if f in fields), None)
 
-            self.category_combo.setCurrentText(chosen or "(nessuna)")
+            self.category_combo.setCurrentText(chosen or "(none)")
 
         self.category_combo.setEnabled(bool(fields))
 
@@ -908,7 +909,7 @@ class VectorPicker(QtWidgets.QGroupBox):
         self.category_combo.setEnabled(False)
 
     def value(self):
-        """Il ruolo scelto come dizionario, o None se lo slot e' vuoto."""
+        """The chosen role as a dictionary, or None if the slot is empty."""
 
         if self._path is None:
             return None
@@ -919,35 +920,35 @@ class VectorPicker(QtWidgets.QGroupBox):
             path=str(self._path),
             role=self.role,
             layer=self.layer_combo.currentText() or None,
-            category_field=None if field in ("", "(nessuna)") else field,
+            category_field=None if field in ("", "(none)") else field,
         )
 
 
 class SourcesDialog(QtWidgets.QDialog):
     """
-    Che cosa aprire, chiesto prima di aprire la finestra di lavoro.
+    What to open, asked before the working window opens.
 
-    Il DEM e' l'unico obbligatorio, perche' e' l'unico di cui il kernel ha
-    bisogno: gli altri tre servono a sapere dove si sta appoggiando il piano,
-    che e' una domanda diversa dal calcolo.
+    The DEM is the only one required, because it is the only one the kernel
+    needs: the other three answer where the plane is being laid down, which is
+    a different question from the calculation.
 
-    Anche il punto di appoggio si puo' fissare qui, componente per componente:
-    lasciando vuoto si va al centro del DEM con la quota del suolo, e una
-    quota scritta a mano vale piu' del suolo -- e' cosi' che si appoggia un
-    piano a un orizzonte che passa sopra la topografia di oggi.
+    The source point can be fixed here too, component by component: leave it
+    empty and you go to the centre of the DEM at ground elevation, and an
+    elevation typed by hand outranks the ground -- that is how a plane is laid
+    on a horizon passing above today's topography.
     """
 
     def __init__(self, parent=None, dem=None, vectors=(), point=(None, None, None)):
         super().__init__(parent)
 
-        self.setWindowTitle("gSurf - sorgenti")
+        self.setWindowTitle("gSurf - sources")
         self.setMinimumWidth(560)
 
         self.dem_label = QtWidgets.QLineEdit()
         self.dem_label.setReadOnly(True)
-        self.dem_label.setPlaceholderText("obbligatorio")
+        self.dem_label.setPlaceholderText("required")
 
-        dem_browse = QtWidgets.QPushButton("Sfoglia...")
+        dem_browse = QtWidgets.QPushButton("Browse...")
         dem_browse.clicked.connect(self._browse_dem)
 
         self.dem_info = QtWidgets.QLabel()
@@ -962,8 +963,8 @@ class SourcesDialog(QtWidgets.QDialog):
 
         self.pickers = {role: VectorPicker(role) for role in VectorSource.ROLES}
 
-        # Le caselle restano di testo e non spinbox: una spinbox non sa stare
-        # vuota, e "vuoto" e' proprio il valore che qui vuol dire "decidi tu".
+        # The boxes stay line edits and not spin boxes: a spin box cannot be
+        # empty, and "empty" is exactly the value that here means "you decide".
         numeric = QtGui.QDoubleValidator()
         numeric.setLocale(QtCore.QLocale.c())
 
@@ -974,11 +975,11 @@ class SourcesDialog(QtWidgets.QDialog):
         for edit in (self.easting_edit, self.northing_edit, self.elevation_edit):
             edit.setValidator(numeric)
 
-        self.easting_edit.setPlaceholderText("centro del DEM")
-        self.northing_edit.setPlaceholderText("centro del DEM")
-        self.elevation_edit.setPlaceholderText("quota del DEM")
+        self.easting_edit.setPlaceholderText("DEM centre")
+        self.northing_edit.setPlaceholderText("DEM centre")
+        self.elevation_edit.setPlaceholderText("DEM elevation")
 
-        point_box = QtWidgets.QGroupBox("Punto di appoggio (opzionale)")
+        point_box = QtWidgets.QGroupBox("Source point (optional)")
         point_grid = QtWidgets.QGridLayout(point_box)
         for column, (caption, edit) in enumerate(
             (
@@ -992,7 +993,7 @@ class SourcesDialog(QtWidgets.QDialog):
             point_grid.setColumnStretch(column * 2 + 1, 1)
 
         note = QtWidgets.QLabel(
-            "Una quota scritta qui non segue il DEM: il piano si appoggia a quella."
+            "An elevation typed here does not follow the DEM: the plane rests on it."
         )
         note.setStyleSheet("color: gray; font-size: 10px;")
         point_grid.addWidget(note, 1, 0, 1, 6)
@@ -1004,14 +1005,8 @@ class SourcesDialog(QtWidgets.QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
 
-        # I pulsanti standard di Qt prendono la lingua da un file di traduzione
-        # che qui non c'e', e uscirebbero in inglese in mezzo a un'interfaccia
-        # italiana. Scriverli a mano costa meno che installare un traduttore.
-        for button, text in (
-            (QtWidgets.QDialogButtonBox.StandardButton.Open, "Apri"),
-            (QtWidgets.QDialogButtonBox.StandardButton.Cancel, "Annulla"),
-        ):
-            self.buttons.button(button).setText(text)
+        # Qt's standard buttons already read "Open" and "Cancel" untranslated,
+        # so nothing has to be written over them here.
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(dem_box)
@@ -1037,7 +1032,7 @@ class SourcesDialog(QtWidgets.QDialog):
 
     def _browse_dem(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Scegli il DEM", "", RASTER_FILTER
+            self, "Choose the DEM", "", RASTER_FILTER
         )
 
         if path:
@@ -1045,12 +1040,12 @@ class SourcesDialog(QtWidgets.QDialog):
 
     def _set_dem(self, path):
         """
-        Apre il DEM per i soli metadati, e con quelli spiega che cosa e'.
+        Opens the DEM for its metadata alone, and says what it is from those.
 
-        Serve anche a scoprire subito che il file non e' un raster, invece che
-        dopo aver chiuso il dialogo -- e a scrivere nei segnaposto le
-        coordinate vere del centro, che sono il valore che si otterrebbe
-        lasciando vuoto.
+        It also catches a file that is not a raster right away, rather than
+        after the dialog has closed -- and writes the real centre coordinates
+        into the placeholders, which is the value you would get by leaving them
+        empty.
         """
 
         self._refresh_ok()
@@ -1066,11 +1061,11 @@ class SourcesDialog(QtWidgets.QDialog):
                 info = (
                     f"{src.width}x{src.height} "
                     f"({src.width * src.height / 1e6:.1f} Mpx), "
-                    f"EPSG:{epsg or '?'}, cella {abs(src.transform.a):g} m"
+                    f"EPSG:{epsg or '?'}, cell {abs(src.transform.a):g} m"
                 )
         except Exception as err:
             QtWidgets.QMessageBox.warning(
-                self, "DEM illeggibile", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
+                self, "Unreadable DEM", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
             )
             return
 
@@ -1079,8 +1074,8 @@ class SourcesDialog(QtWidgets.QDialog):
         self.dem_label.setToolTip(str(path))
         self.dem_info.setText(info)
 
-        self.easting_edit.setPlaceholderText(f"centro: {centre_x:.0f}")
-        self.northing_edit.setPlaceholderText(f"centro: {centre_y:.0f}")
+        self.easting_edit.setPlaceholderText(f"centre: {centre_x:.0f}")
+        self.northing_edit.setPlaceholderText(f"centre: {centre_y:.0f}")
 
         self._refresh_ok()
 
@@ -1090,7 +1085,7 @@ class SourcesDialog(QtWidgets.QDialog):
         )
 
     def choices(self):
-        """DEM, layer vettoriali e punto, nella forma che `main` sa usare."""
+        """DEM, vector layers and point, in the shape `main` knows how to use."""
 
         vectors = [p.value() for p in self.pickers.values()]
 
@@ -1110,11 +1105,23 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     PICK_RADIUS_PX = 12
     ZOOM_STEP = 1.3
 
-    # QDial mette il minimo alle ore 6, non alle 12: misurato afferrando il
-    # widget e cercando la lancetta, il valore 0 punta a 181 gradi dalle ore 12
-    # e il valore 180 a 360. Il verso e' orario, come l'azimut, quindi fra la
-    # scala del widget e l'immersione geologica c'e' solo mezzo giro di scarto.
+    # QDial puts its minimum at six o'clock, not at twelve: measured by
+    # grabbing the widget and hunting for the needle, value 0 points 181 degrees
+    # from twelve o'clock and value 180 points to 360. It runs clockwise, like
+    # an azimuth, so between the widget's scale and geological dip direction
+    # there is only half a turn of offset.
     DIAL_NORTH_OFFSET = 180
+
+    # Where the legend goes. Categorised it runs to some thirty entries, and
+    # inside the map it covers the corner you were most likely looking at:
+    # beside it the map stays whole and the legend grows in its own column.
+    # Hidden is for when the tints are already known and the map just has to be
+    # read -- or for a figure whose caption lists them elsewhere.
+    LEGEND_PLACEMENTS = (
+        ("beside the map", "beside"),
+        ("inside the map", "inside"),
+        ("hidden", "hidden"),
+    )
 
     def __init__(
         self,
@@ -1124,29 +1131,31 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         attitude=(90.0, 30.0),
         source=None,
         z_follows_dem=None,
+        legend="beside",
     ):
         super().__init__()
 
         self.dem = dem
         self.overlay = overlay
         self.background = None
+        self.legend = None
         self.dragging = False
         self.frame_times = deque(maxlen=20)
         self.convergence = MeridianConvergence(dem.crs)
         self.last_result = ([], [])
 
-        # Le tre componenti sono indipendenti: si puo' fissare la sola quota e
-        # lasciare che il punto stia al centro, o il contrario.
+        # The three components are independent: you can fix the elevation alone
+        # and let the point sit at the centre, or the other way round.
         x, y, z = (tuple(source) + (None, None, None))[:3] if source else (None, None, None)
         centre_x, centre_y = dem.center()
 
         x = centre_x if x is None else float(x)
         y = centre_y if y is None else float(y)
 
-        # Una quota data esplicitamente vuole restare quella: e' il caso di un
-        # orizzonte proiettato, o di una misura presa sopra o sotto il suolo.
-        # Darla e' quindi anche il modo di dire che non deve seguire il DEM,
-        # salvo che qualcuno lo chieda esplicitamente.
+        # An elevation given explicitly wants to stay that one: it is the case
+        # of a projected horizon, or of a measurement taken above or below the
+        # ground. Giving it is therefore also the way of saying it must not
+        # follow the DEM, unless somebody asks for that explicitly.
         self.z_follows_dem = (z is None) if z_follows_dem is None else bool(z_follows_dem)
 
         if z is None:
@@ -1158,24 +1167,24 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.side = min(side, dem.width, dem.height)
         self.window = dem.window_at(self.source_point[0], self.source_point[1], self.side)
 
-        self.setWindowTitle(f"gSurf - intersezione in tempo reale - {dem.path.name}")
-        self._build_ui(attitude)
+        self.setWindowTitle(f"gSurf - real-time intersection - {dem.path.name}")
+        self._build_ui(attitude, legend)
         self._draw_base_map()
 
         self.update_intersection()
 
-    # -- costruzione ------------------------------------------------------
+    # -- construction -----------------------------------------------------
 
-    def _build_ui(self, attitude):
+    def _build_ui(self, attitude, legend):
         self.figure = Figure(figsize=(8, 8), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.axes = self.figure.add_subplot(111)
 
         self.toolbar = Toolbar(self.canvas, self, self.save_screenshot, self.schedule_shade_refresh)
 
-        # Il ricarico dell'ombreggiatura si paga in decine di millisecondi:
-        # troppo per farlo a ogni scatto di rotella, giusto una volta quando la
-        # mano si ferma. Da qui il ritardo.
+        # Reloading the hillshade is paid for in tens of milliseconds: too much
+        # for every notch of the wheel, about right once the hand stops. Hence
+        # the delay.
         self.shade_timer = QtCore.QTimer(self)
         self.shade_timer.setSingleShot(True)
         self.shade_timer.timeout.connect(self._refresh_shade)
@@ -1186,11 +1195,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
 
-        # Quadrante per la mano, casella per il numero. Il quadrante da solo va
-        # a passo di un grado, e la convergenza dei meridiani qui e' 0,8: senza
-        # il decimo di grado la correzione sarebbe piu' piccola del controllo
-        # che dovrebbe correggere, e quindi inutile. La casella e' la fonte
-        # autorevole, il quadrante la insegue.
+        # The dial for the hand, the box for the number. The dial alone steps by
+        # one degree, and meridian convergence here is 0.8: without the tenth of
+        # a degree the correction would be smaller than the control meant to
+        # apply it, and therefore useless. The box is the authoritative source,
+        # the dial follows it.
         self.dip_dir_dial = QtWidgets.QDial()
         self.dip_dir_dial.setRange(0, 359)
         self.dip_dir_dial.setWrapping(True)
@@ -1202,7 +1211,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.dip_dir_spin.setDecimals(1)
         self.dip_dir_spin.setSingleStep(0.1)
         self.dip_dir_spin.setWrapping(True)
-        self.dip_dir_spin.setSuffix("°  immersione")
+        self.dip_dir_spin.setSuffix("°  dip dir")
 
         self.dip_angle_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.dip_angle_slider.setRange(0, 90)
@@ -1213,7 +1222,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.dip_angle_spin.setRange(0.0, 90.0)
         self.dip_angle_spin.setDecimals(1)
         self.dip_angle_spin.setSingleStep(0.1)
-        self.dip_angle_spin.setSuffix("°  inclinazione")
+        self.dip_angle_spin.setSuffix("°  dip")
 
         self.attitude_label = QtWidgets.QLabel()
         self.attitude_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -1227,7 +1236,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self._sync_dial_from_spin()
         self._sync_slider_from_spin()
 
-        # Il punto: si ricalcola mentre si trascina, non su un bottone.
+        # The point of it: recomputed while you drag, not on a button.
         self.dip_dir_dial.valueChanged.connect(self._on_dial_moved)
         self.dip_dir_spin.valueChanged.connect(self._on_dip_dir_typed)
         self.dip_angle_slider.valueChanged.connect(self._on_slider_moved)
@@ -1243,14 +1252,24 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.side_label = QtWidgets.QLabel()
         self.side_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
-        # Il punto di appoggio, scrivibile oltre che trascinabile: sul terreno
-        # una stazione ha delle coordinate, e ridigitarle cercandole con il
-        # mouse e' un modo di perderle.
-        # L'intervallo esce dal DEM di una sua larghezza per lato, invece di
-        # fermarsi al bordo: il piano e' illimitato e il punto che lo regge non
-        # deve starci sopra. Fermarsi al bordo vorrebbe dire che un --x fuori
-        # DEM verrebbe silenziosamente riportato dentro, e la casella direbbe
-        # una cosa diversa dal punto che sta calcolando.
+        # The box is the authoritative source here too: `_apply_legend` takes no
+        # argument, it reads where the legend goes off this widget.
+        self.legend_combo = QtWidgets.QComboBox()
+        for text, mode in self.LEGEND_PLACEMENTS:
+            self.legend_combo.addItem(text, mode)
+
+        modes = [mode for _, mode in self.LEGEND_PLACEMENTS]
+        self.legend_combo.setCurrentIndex(modes.index(legend) if legend in modes else 0)
+        self.legend_combo.currentIndexChanged.connect(lambda _: self._apply_legend())
+
+        # The source point, typeable as well as draggable: in the field a
+        # station has coordinates, and re-entering them by hunting with the
+        # mouse is a way of losing them.
+        # The range runs past the DEM by one of its widths on each side rather
+        # than stopping at the edge: the plane is unbounded and the point
+        # holding it up need not sit on it. Stopping at the edge would mean an
+        # --x outside the DEM was silently pulled back inside, and the box would
+        # say something different from the point being computed.
         span_x = self.dem.bounds.right - self.dem.bounds.left
         span_y = self.dem.bounds.top - self.dem.bounds.bottom
 
@@ -1266,9 +1285,9 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.northing_spin.setRange(self.dem.bounds.bottom - span_y, self.dem.bounds.top + span_y)
         self.northing_spin.setPrefix("N ")
 
-        # La quota va sotto il livello del mare -- qui l'avanfossa ci arriva --
-        # e sopra la cima piu' alta, perche' un piano puo' appoggiarsi a un
-        # orizzonte che sta in aria sopra la topografia attuale.
+        # The elevation goes below sea level -- the foredeep reaches it around
+        # here -- and above the highest summit, because a plane can rest on a
+        # horizon standing in mid-air over today's topography.
         self.elevation_spin = QtWidgets.QDoubleSpinBox()
         self.elevation_spin.setDecimals(1)
         self.elevation_spin.setSingleStep(10.0)
@@ -1276,10 +1295,10 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.elevation_spin.setPrefix("Z ")
         self.elevation_spin.setSuffix(" m")
 
-        # Acceso, il punto striscia sulla topografia. Spento, la quota resta
-        # quella scritta e il piano si stacca dal suolo: e' cio' che serve per
-        # un orizzonte proiettato, o per una misura presa in parete.
-        self.follow_dem_check = QtWidgets.QCheckBox("quota dal DEM")
+        # On, the point crawls along the topography. Off, the elevation stays
+        # the one typed and the plane comes off the ground: which is what a
+        # projected horizon needs, or a measurement taken on a cliff face.
+        self.follow_dem_check = QtWidgets.QCheckBox("elevation from DEM")
         self.follow_dem_check.setChecked(self.z_follows_dem)
 
         self.elevation_label = QtWidgets.QLabel()
@@ -1296,17 +1315,17 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         controls = QtWidgets.QWidget()
         controls.setMaximumWidth(200)
         layout = QtWidgets.QVBoxLayout(controls)
-        layout.addWidget(QtWidgets.QLabel("Immersione"))
+        layout.addWidget(QtWidgets.QLabel("Dip direction"))
         layout.addWidget(self.dip_dir_dial)
         layout.addWidget(self.dip_dir_spin)
-        layout.addWidget(QtWidgets.QLabel("Inclinazione"))
+        layout.addWidget(QtWidgets.QLabel("Dip angle"))
         layout.addWidget(self.dip_angle_slider, stretch=1)
         layout.addWidget(self.dip_angle_spin)
         layout.addWidget(self.attitude_label)
         layout.addWidget(self.convergence_label)
 
         layout.addSpacing(8)
-        layout.addWidget(QtWidgets.QLabel("Punto di appoggio"))
+        layout.addWidget(QtWidgets.QLabel("Source point"))
         layout.addWidget(self.easting_spin)
         layout.addWidget(self.northing_spin)
         layout.addWidget(self.elevation_spin)
@@ -1314,16 +1333,20 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.elevation_label)
 
         layout.addSpacing(8)
-        layout.addWidget(QtWidgets.QLabel("Finestra di calcolo"))
+        layout.addWidget(QtWidgets.QLabel("Compute window"))
         layout.addWidget(self.side_spin)
         layout.addWidget(self.side_label)
 
         layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("Legend"))
+        layout.addWidget(self.legend_combo)
+
+        layout.addSpacing(8)
         for text, slot in (
-            ("Copia schermata", self.copy_screenshot),
-            ("Salva schermata...", self.save_screenshot),
-            ("Salva assetto...", self.save_settings),
-            ("Esporta traccia...", self.export_traces),
+            ("Copy screenshot", self.copy_screenshot),
+            ("Save screenshot...", self.save_screenshot),
+            ("Save settings...", self.save_settings),
+            ("Export trace...", self.export_traces),
         ):
             button = QtWidgets.QPushButton(text)
             button.clicked.connect(slot)
@@ -1335,8 +1358,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         map_layout.addWidget(self.toolbar)
         map_layout.addWidget(self.canvas, stretch=1)
 
-        # Il pannello ha cinque gruppi e non ci sta piu' su uno schermo basso:
-        # dentro un'area scorrevole si accorcia invece di tagliare i bottoni.
+        # The panel has five groups and no longer fits on a short screen: inside
+        # a scroll area it shortens instead of cutting the buttons off.
         panel = QtWidgets.QScrollArea()
         panel.setWidget(controls)
         panel.setWidgetResizable(True)
@@ -1351,7 +1374,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.statusBar().showMessage(
-            "rotella per zoomare; trascina il punto giallo, o clicca altrove per spostarlo"
+            "scroll to zoom; drag the yellow point, or click elsewhere to move it"
         )
 
     def _draw_base_map(self):
@@ -1371,13 +1394,13 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         if self.overlay is not None:
             self.overlay.draw(self.axes)
 
-        # animated=True tiene questi artisti fuori dal draw normale: li ridisegna
-        # solo il blitting, che e' cio' che tiene il ciclo dentro il frame.
+        # animated=True keeps these artists out of the normal draw: only
+        # blitting redraws them, which is what keeps the loop inside the frame.
         #
-        # Una sola Line2D con separatori NaN, non una LineCollection: le corde
-        # marching-squares sono migliaia di segmenti sciolti, e per matplotlib
-        # un unico percorso spezzato costa 4-5 volte meno di altrettanti path
-        # separati (misurato: 2,0 ms contro 9,1 su 1000x1000).
+        # A single Line2D with NaN separators, not a LineCollection: the
+        # marching-squares chords are thousands of loose segments, and for
+        # matplotlib one broken path costs 4-5 times less than as many separate
+        # paths (measured: 2.0 ms against 9.1 on 1000x1000).
         (self.intersections,) = self.axes.plot(
             [], [], "-", color="red", linewidth=1.2, animated=True
         )
@@ -1405,41 +1428,77 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         )
         self.axes.add_patch(self.window_patch)
 
-        # La legenda va costruita a mano: gli artisti animati non compaiono nel
-        # draw normale, e i poligoni di geopandas non portano un handler.
+        self._apply_legend()
+
+        # The full view has to go at the bottom of the bar's stack, or "home"
+        # takes you back to the first framing the bar happened to see, which is
+        # some arbitrary point of the zoom and not the extent of the DEM.
+        self.toolbar.update()
+        self.toolbar.push_current()
+
+    def _legend_handles(self):
+        """
+        The legend has to be built by hand: animated artists do not show up in
+        the normal draw, and geopandas polygons carry no handler.
+        """
+
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
         handles = [
-            Line2D([], [], color="red", linewidth=1.2, label="intersezione"),
-            Patch(facecolor="none", edgecolor="orange", linestyle="--", label="finestra di calcolo"),
+            Line2D([], [], color="red", linewidth=1.2, label="intersection"),
+            Patch(facecolor="none", edgecolor="orange", linestyle="--", label="compute window"),
         ]
-        categorized = self.overlay is not None and self.overlay.is_categorized
 
         if self.overlay is not None:
             handles.extend(self.overlay.legend_handles())
 
-        # Con le unita' distinte le voci sono una dozzina invece di tre: al
-        # corpo normale la legenda coprirebbe un quarto della mappa.
-        self.axes.legend(
-            handles=handles,
-            loc="upper right",
-            fontsize="x-small" if categorized else "small",
-            framealpha=0.85,
-        )
+        return handles
 
+    def _apply_legend(self):
+        """
+        Rebuilds the legend where the box says it goes, the map included.
+
+        Rebuilt and not hidden: a legend made invisible beside the map would
+        still hold its column, and the map would stay narrow to explain
+        nothing. Outside the axes it is `figure.legend` and not `axes.legend`,
+        because only that way does the layout reserve the column for it instead
+        of letting it spill over; and it lives in the figure, not in a Qt widget
+        alongside, or it would drop out of both outputs -- the saved screenshot
+        and the copied one.
+        """
+
+        if self.legend is not None:
+            self.legend.remove()
+            self.legend = None
+
+        mode = self.legend_combo.currentData()
+
+        if mode != "hidden":
+            # With distinct units the entries are a dozen instead of three, and
+            # at normal body size they would not fit in height.
+            categorized = self.overlay is not None and self.overlay.is_categorized
+            style = dict(
+                handles=self._legend_handles(),
+                fontsize="x-small" if categorized else "small",
+                framealpha=0.85,
+            )
+
+            self.legend = (
+                self.axes.legend(loc="upper right", **style)
+                if mode == "inside"
+                else self.figure.legend(loc="outside right upper", **style)
+            )
+
+        # The axes box has just moved: the blitting background cut on the
+        # previous one would be worth nothing now. The draw_event fired from
+        # here recaptures it.
         self.canvas.draw()
 
-        # La vista piena va messa in fondo alla pila della barra, altrimenti
-        # "casa" riporta al primo inquadramento che la barra ha visto passare,
-        # che e' un punto qualsiasi dello zoom e non l'estensione del DEM.
-        self.toolbar.update()
-        self.toolbar.push_current()
-
-    # -- interazione ------------------------------------------------------
+    # -- interaction ------------------------------------------------------
 
     def _on_draw(self, event):
-        """Il fondale cambia solo su resize o zoom: qui lo si ricattura."""
+        """The background only changes on resize or zoom: here it is recaptured."""
 
         self.background = self.canvas.copy_from_bbox(self.axes.bbox)
         self._draw_animated()
@@ -1450,8 +1509,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.axes.draw_artist(self.source_marker)
 
     def _near_source(self, event):
-        """Vicinanza misurata in pixel di schermo, non in metri: la soglia deve
-        restare la stessa a ogni scala di zoom."""
+        """Nearness measured in screen pixels, not in metres: the threshold has
+        to stay the same at every zoom scale."""
 
         px, py = self.axes.transData.transform(self.source_point[:2])
 
@@ -1460,11 +1519,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     def _move_source(self, x, y):
         surface = self.dem.elevation_at(x, y)
 
-        # Con la spunta tolta la quota non si tocca: chi l'ha scritta la vuole
-        # dov'e', e un trascinamento in mappa e' un gesto sul piano orizzontale.
-        # Su nodata si tiene comunque la precedente invece di rifiutare lo
-        # spostamento: interrompere un trascinamento a meta' e' peggio che
-        # appoggiare il piano a una quota vecchia di qualche pixel.
+        # With the box unticked the elevation is left alone: whoever typed it
+        # wants it where it is, and a drag across the map is a gesture in the
+        # horizontal plane. On nodata the previous one is kept rather than
+        # refusing the move: breaking off a drag halfway is worse than resting
+        # the plane on an elevation a few pixels old.
         if self.z_follows_dem and surface is not None:
             z = surface
         else:
@@ -1477,7 +1536,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return surface is not None
 
     def _sync_point_boxes(self):
-        """Riporta le tre caselle sul punto, senza farle rispondere."""
+        """Puts the three boxes back on the point, without letting them answer."""
 
         for box, value in (
             (self.easting_spin, self.source_point[0]),
@@ -1491,23 +1550,23 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self._report_elevation()
 
     def _report_elevation(self):
-        """Lo scarto dal suolo, che e' l'unica cosa che la quota da sola non dice."""
+        """The gap from the ground, the one thing the elevation alone does not say."""
 
         surface = self.dem.elevation_at(self.source_point[0], self.source_point[1])
 
         if surface is None:
-            self.elevation_label.setText("fuori DEM")
+            self.elevation_label.setText("outside DEM")
             return
 
         if self.z_follows_dem:
-            self.elevation_label.setText(f"suolo {surface:.0f} m")
+            self.elevation_label.setText(f"ground {surface:.0f} m")
             return
 
         gap = self.source_point[2] - surface
-        self.elevation_label.setText(f"suolo {surface:.0f} m\n{gap:+.0f} m dal suolo")
+        self.elevation_label.setText(f"ground {surface:.0f} m\n{gap:+.0f} m from ground")
 
     def _on_point_typed(self, value):
-        """Coordinate scritte a mano: il punto va dove dicono, e la finestra lo segue."""
+        """Coordinates typed by hand: the point goes where they say, the window follows."""
 
         x = float(self.easting_spin.value())
         y = float(self.northing_spin.value())
@@ -1523,10 +1582,10 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def _on_follow_dem_toggled(self, checked):
         """
-        Riagganciare la quota al DEM la riporta subito sul suolo.
+        Hooking the elevation back onto the DEM puts it on the ground at once.
 
-        Il contrario no: togliendo la spunta la quota resta quella che era, che
-        e' il punto di partenza naturale per spostarla di poco.
+        Not the other way round: unticking leaves the elevation where it was,
+        which is the natural starting point for moving it a little.
         """
 
         self.z_follows_dem = bool(checked)
@@ -1541,7 +1600,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.update_intersection()
 
     def _recenter_window(self):
-        """Rilegge la finestra se il punto ne e' uscito. Torna True se cambiata."""
+        """Re-reads the window if the point has left it. True if it changed."""
 
         fresh = self.dem.window_at(self.source_point[0], self.source_point[1], self.side)
 
@@ -1558,11 +1617,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def dip_direction(self):
         """
-        L'immersione come la si misura sul terreno: azimut dal nord geografico.
+        Dip direction as it is measured in the field: azimuth from true north.
 
-        E' questo il numero che il quadrante mostra e che finisce negli export,
-        perche' e' quello che una bussola legge una volta corretta la
-        declinazione. Il kernel invece lavora sulla griglia, e vuole
+        This is the number the dial shows and the one that goes into the
+        exports, because it is what a compass reads once declination has been
+        corrected. The kernel, instead, works on the grid, and wants
         `grid_dip_direction`.
         """
 
@@ -1582,7 +1641,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             self.dip_angle_slider.setValue(int(round(self.dip_angle_spin.value())))
 
     def _on_dial_moved(self, value):
-        """Il quadrante muove la casella, che e' quella che comanda."""
+        """The dial moves the box, and the box is what commands."""
 
         with QtCore.QSignalBlocker(self.dip_dir_spin):
             self.dip_dir_spin.setValue(float((value + self.DIAL_NORTH_OFFSET) % 360))
@@ -1604,7 +1663,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.update_intersection()
 
     def grid_dip_direction(self):
-        """L'immersione ruotata sul nord della carta, che e' cio' che il DEM ha."""
+        """Dip direction turned onto grid north, which is what the DEM has."""
 
         return self.convergence.to_grid(
             self.dip_direction(), self.source_point[0], self.source_point[1]
@@ -1614,7 +1673,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return self.convergence.at(self.source_point[0], self.source_point[1])
 
     def source_geographic(self):
-        """Il punto di appoggio in longitudine e latitudine, o None."""
+        """The source point in longitude and latitude, or None."""
 
         return self.convergence.geographic(self.source_point[0], self.source_point[1])
 
@@ -1622,10 +1681,10 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return float(self.dip_angle_spin.value())
 
     def _navigating(self):
-        """Vero mentre pan o zoom-rettangolo sono attivi nella barra.
+        """True while pan or rubber-band zoom are active in the bar.
 
-        Senza questo controllo un pan trascinerebbe anche il punto di appoggio,
-        perche' i due gesti sono lo stesso: tasto sinistro premuto e mosso."""
+        Without this check a pan would drag the source point along too, because
+        the two gestures are the same one: left button held down and moved."""
 
         return bool(self.toolbar.mode)
 
@@ -1642,7 +1701,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.update_intersection()
 
     def _on_scroll(self, event):
-        """Zoom attorno al cursore, che resta fermo sul punto che indicava."""
+        """Zoom around the cursor, which stays put on the point it was on."""
 
         if event.inaxes is not self.axes or event.xdata is None:
             return
@@ -1656,12 +1715,12 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             low, high = limits
             axis((anchor + (low - anchor) * factor, anchor + (high - anchor) * factor))
 
-        # Ogni scatto entra nella pila, cosi' le frecce avanti/indietro della
-        # barra ripercorrono anche gli zoom fatti con la rotella.
+        # Every notch goes on the stack, so the bar's back/forward arrows
+        # retrace the zooms made with the wheel as well.
         self.toolbar.push_current()
 
-        # Il fondale e' cambiato: serve un draw pieno, e il draw_event lo
-        # ricattura per il blitting dei frame successivi.
+        # The background has changed: a full draw is needed, and the draw_event
+        # recaptures it for the blitting of the frames that follow.
         self.canvas.draw()
         self.schedule_shade_refresh()
 
@@ -1669,7 +1728,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.shade_timer.start(delay_ms)
 
     def _refresh_shade(self):
-        """Rilegge l'ombreggiatura per la vista corrente, se cambia qualcosa."""
+        """Re-reads the hillshade for the current view, if anything changes."""
 
         xmin, xmax = self.axes.get_xlim()
         ymin, ymax = self.axes.get_ylim()
@@ -1684,8 +1743,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         started = perf_counter()
 
-        # set_extent riscala gli assi se lo si lascia fare, e la vista
-        # salterebbe a ogni ricarico: i limiti vanno rimessi come stavano.
+        # set_extent rescales the axes if you let it, and the view would jump on
+        # every reload: the limits have to be put back the way they were.
         limits = self.axes.get_xlim(), self.axes.get_ylim()
         self.shade_image.set_data(shade)
         self.shade_image.set_extent(extent)
@@ -1697,17 +1756,17 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         metres = self.dem.res_x * step
         self.statusBar().showMessage(
-            f"sfondo ridisegnato a {metres:.0f} m/cella in {(perf_counter() - started) * 1000:.0f} ms"
+            f"background redrawn at {metres:.0f} m/cell in {(perf_counter() - started) * 1000:.0f} ms"
         )
 
     def _on_motion(self, event):
         if not self.dragging or event.inaxes is not self.axes or event.xdata is None:
             return
 
-        # Durante il trascinamento la finestra resta ferma: rileggerla a ogni
-        # passo costerebbe 4,9 ms su 1000x1000, e la traccia dentro la finestra
-        # e' corretta comunque, perche' il piano e' illimitato e il punto di
-        # appoggio non deve starci dentro. Si ricentra al rilascio.
+        # During a drag the window stays put: re-reading it at every step would
+        # cost 4.9 ms on 1000x1000, and the trace inside the window is right
+        # anyway, because the plane is unbounded and the source point need not
+        # sit inside it. It recentres on release.
         self._move_source(event.xdata, event.ydata)
         self.update_intersection()
 
@@ -1731,13 +1790,13 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.update_intersection()
 
-    # -- ciclo ------------------------------------------------------------
+    # -- loop -------------------------------------------------------------
 
     def update_intersection(self):
         dip_angle = self.dip_angle()
 
-        # Il quadrante e' in azimut vero, il DEM e' sulla griglia: la
-        # convergenza sta in mezzo e va tolta prima di chiamare il kernel.
+        # The dial is in true azimuth, the DEM is on the grid: convergence sits
+        # between the two and has to come off before the kernel is called.
         convergence = self.convergence_here()
         grid_dip_dir = (self.dip_direction() - convergence) % 360.0
 
@@ -1754,9 +1813,9 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.last_result = (points, segments)
 
-        # points e' (N, 3) in coordinate mappa, segments (M, 2) di indici. Le
-        # corde diventano un percorso unico: estremo, estremo, NaN, e la NaN
-        # spezza la linea fra una corda e la successiva.
+        # points is (N, 3) in map coordinates, segments (M, 2) of indices. The
+        # chords become a single path: end, end, NaN, and the NaN breaks the
+        # line between one chord and the next.
         if len(segments):
             chords = points[segments][:, :, :2]
             path = np.full((len(chords) * 3, 2), np.nan)
@@ -1787,13 +1846,13 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         )
 
     def _report(self, grid_dip_dir, convergence, dip_angle, n_points, kernel_s, draw_s):
-        # Sull'etichetta il numero vero, che e' quello che si misura e si
-        # scrive nel taccuino; sotto, per esteso, che cosa ne fa la griglia.
+        # On the label the true number, the one you measure and write in the
+        # notebook; below it, spelled out, what the grid makes of it.
         self.attitude_label.setText(f"{self.dip_direction():03.0f} / {dip_angle:02.0f}")
         self.convergence_label.setText(
-            f"nord vero\nconvergenza {convergence:+.2f}°\ngriglia {grid_dip_dir:05.1f}°"
+            f"true north\nconvergence {convergence:+.2f}°\ngrid {grid_dip_dir:05.1f}°"
             if self.convergence.available
-            else "nord della griglia\n(convergenza non\ncalcolabile)"
+            else "grid north\n(convergence not\ncomputable)"
         )
 
         rows, cols = self.window.shape
@@ -1804,22 +1863,23 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         fps = 1.0 / mean_frame if mean_frame else 0.0
 
         self.statusBar().showMessage(
-            f"{n_points} punti   "
+            f"{n_points} points   "
             f"kernel {kernel_s * 1000:5.1f} ms   "
-            f"disegno {draw_s * 1000:5.1f} ms   "
-            f"totale {(kernel_s + draw_s) * 1000:5.1f} ms   "
+            f"draw {draw_s * 1000:5.1f} ms   "
+            f"total {(kernel_s + draw_s) * 1000:5.1f} ms   "
             f"{fps:4.1f} fps"
         )
 
-    # -- uscite -----------------------------------------------------------
+    # -- outputs ----------------------------------------------------------
 
     def _rendered_figure(self, path, dpi=150):
         """
-        Salva la figura con dentro anche gli artisti animati.
+        Saves the figure with the animated artists in it too.
 
-        Un artista animato non partecipa al draw normale, quindi savefig da solo
-        restituirebbe la mappa senza la traccia. Qui si spengono, si salva, si
-        riaccendono, e il draw finale rifa' il fondale del blitting.
+        An animated artist takes no part in the normal draw, so savefig on its
+        own would give back the map without the trace. Here they are turned
+        off, it is saved, they are turned back on, and the final draw remakes
+        the blitting background.
         """
 
         animated = [self.intersections, self.source_marker, self.window_patch]
@@ -1836,62 +1896,63 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def copy_screenshot(self):
         QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
-        self.statusBar().showMessage("schermata copiata negli appunti")
+        self.statusBar().showMessage("screenshot copied to the clipboard")
 
     def save_screenshot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Salva schermata", str(self._suggested_name(".png")), "PNG (*.png)"
+            self, "Save screenshot", str(self._suggested_name(".png")), "PNG (*.png)"
         )
         if not path:
             return
 
         self._rendered_figure(path)
-        self.statusBar().showMessage(f"schermata salvata in {path}")
+        self.statusBar().showMessage(f"screenshot saved to {path}")
 
     def save_settings(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Salva assetto", str(self._suggested_name(".json")), "JSON (*.json)"
+            self, "Save settings", str(self._suggested_name(".json")), "JSON (*.json)"
         )
         if not path:
             return
 
-        # Il riferimento va scritto per esteso: un'immersione senza il nord a
-        # cui si appoggia e' ambigua di quasi un grado, da queste parti.
+        # The reference has to be written out in full: a dip direction without
+        # the north it rests on is ambiguous by almost a degree around here.
         #
-        # E il punto va in entrambe le forme. Le proiettate sono quelle su cui
-        # gira il kernel, ma senza le geografiche il file non si legge fuori
-        # dal suo EPSG -- e l'EPSG e' proprio la riga che si perde per prima.
+        # And the point goes in both forms. The projected ones are what the
+        # kernel runs on, but without the geographic ones the file cannot be
+        # read outside its EPSG -- and the EPSG is the very line that goes
+        # missing first.
         lon_lat = self.source_geographic()
 
         settings = {
             "dem": str(self.dem.path),
             "dip_dir": self.dip_direction(),
-            "dip_dir_riferimento": "nord geografico",
-            "dip_dir_griglia": self.grid_dip_direction(),
-            "convergenza_meridiani": self.convergence_here(),
+            "dip_dir_reference": "true north",
+            "dip_dir_grid": self.grid_dip_direction(),
+            "meridian_convergence": self.convergence_here(),
             "dip_angle": self.dip_angle(),
             "source_point": [float(v) for v in self.source_point],
-            "source_point_riferimento": (
-                f"EPSG:{self.dem.crs.to_epsg()}" if self.dem.crs else "sconosciuto"
+            "source_point_reference": (
+                f"EPSG:{self.dem.crs.to_epsg()}" if self.dem.crs else "unknown"
             ),
             "source_lon": lon_lat[0] if lon_lat else None,
             "source_lat": lon_lat[1] if lon_lat else None,
-            "source_lon_lat_riferimento": "EPSG:4326",
-            # Senza queste due righe una quota staccata dal suolo si rilegge
-            # come un errore di lettura del DEM, invece che come la scelta che
-            # era: va detto che il distacco e' voluto e di quanto.
-            "source_z_dal_dem": bool(self.z_follows_dem),
-            "quota_dem": self.dem.elevation_at(self.source_point[0], self.source_point[1]),
-            "finestra_px": int(self.side),
+            "source_lon_lat_reference": "EPSG:4326",
+            # Without these two lines an elevation lifted off the ground reads
+            # back as a DEM lookup gone wrong, instead of as the choice it was:
+            # it has to say the lift is deliberate, and by how much.
+            "source_z_from_dem": bool(self.z_follows_dem),
+            "dem_elevation": self.dem.elevation_at(self.source_point[0], self.source_point[1]),
+            "window_px": int(self.side),
             "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
         }
 
         Path(path).write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        self.statusBar().showMessage(f"assetto salvato in {path}")
+        self.statusBar().showMessage(f"settings saved to {path}")
 
     def export_traces(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Esporta traccia", str(self._suggested_name(".shp")), "Shapefile (*.shp)"
+            self, "Export trace", str(self._suggested_name(".shp")), "Shapefile (*.shp)"
         )
         if not path:
             return
@@ -1902,19 +1963,19 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         traces = merged_traces(points, segments)
 
         if not traces:
-            self.statusBar().showMessage("nessuna intersezione da esportare")
+            self.statusBar().showMessage("no intersection to export")
             return
 
         dip_dir = self.dip_direction()
         dip_angle = self.dip_angle()
 
-        # Nomi entro i dieci caratteri che lo shapefile concede, e i due azimut
-        # entrambi presenti: chi riapre il file non deve indovinare quale nord.
-        # Stessa ragione per le due coppie di coordinate: il .prj dice in che
-        # EPSG stanno src_x e src_y, ma il .prj e' il file che si perde.
-        # `src_z_dem` e' la quota del suolo sotto il punto: se differisce da
-        # `src_z` il piano e' stato staccato apposta, e senza il confronto
-        # sembrerebbe uno sbaglio.
+        # Names within the ten characters a shapefile allows, and both azimuths
+        # present: whoever reopens the file should not have to guess which
+        # north. Same reason for the two pairs of coordinates: the .prj says
+        # which EPSG src_x and src_y are in, but the .prj is the file that goes
+        # missing. `src_z_dem` is the ground elevation under the point: if it
+        # differs from `src_z` the plane was lifted on purpose, and without the
+        # comparison that would look like a mistake.
         lon_lat = self.source_geographic()
         surface = self.dem.elevation_at(self.source_point[0], self.source_point[1])
 
@@ -1930,14 +1991,14 @@ class RealtimeWindow(QtWidgets.QMainWindow):
                 "src_lon": [lon_lat[0] if lon_lat else None] * len(traces),
                 "src_lat": [lon_lat[1] if lon_lat else None] * len(traces),
                 "src_z_dem": [surface] * len(traces),
-                "z_da_dem": [bool(self.z_follows_dem)] * len(traces),
+                "z_from_dem": [bool(self.z_follows_dem)] * len(traces),
             },
             geometry=traces,
             crs=self.dem.crs,
         )
         frame.to_file(path, driver="ESRI Shapefile")
 
-        self.statusBar().showMessage(f"{len(traces)} tracce esportate in {path}")
+        self.statusBar().showMessage(f"{len(traces)} traces exported to {path}")
 
     def _suggested_name(self, suffix):
         stem = self.dem.path.stem
@@ -1948,11 +2009,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
 def split_layer(spec, role):
     """
-    `percorso` oppure `percorso:layer`, sciolto senza indovinare.
+    `path` or `path:layer`, resolved without guessing.
 
-    Un percorso puo' contenere due punti per conto suo, quindi la regola e'
-    guardare il disco invece di leggere la stringa: se il tutto e' un file
-    esistente, e' un percorso; altrimenti si prova a staccare l'ultimo pezzo.
+    A path can hold a colon of its own, so the rule is to look at the disk
+    rather than read the string: if the whole thing is an existing file, it is
+    a path; otherwise the last piece is peeled off and tried.
     """
 
     if spec is None:
@@ -1969,74 +2030,113 @@ def split_layer(spec, role):
     return dict(path=spec, role=role, layer=None)
 
 
+def fit_to_screen(window, width, height):
+    """
+    Shows the window at the wanted size, or maximised if it does not fit.
+
+    1180x880 is the right measure for the map plus the panel, but on a 1366x768
+    screen the bottom of the window -- the buttons and the status bar -- ends up
+    under the edge, and unlike the buttons the status bar cannot be reached by
+    scrolling the panel.
+
+    Maximised rather than resized to the available area, because the window
+    frame is not ours to measure: right after show() the title bar does not
+    exist yet, and it only appears once the window manager has reparented the
+    window, some hundred milliseconds later -- a delay there is no honest way to
+    wait for. Maximising hands the arithmetic to the window manager, which knows
+    how thick its own decorations are. The one case this leaves rough is a
+    screen tall enough for the client area but not for the title bar too, where
+    the window sticks out by the height of that bar.
+    """
+
+    available = window.screen().availableGeometry()
+
+    if width > available.width() or height > available.height():
+        window.showMaximized()
+        return
+
+    window.resize(width, height)
+    window.show()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "dem",
         nargs="?",
-        help="DEM in un formato leggibile da rasterio; se manca lo chiede un dialogo",
+        help="DEM in any format rasterio can read; a dialog asks for it if missing",
     )
     for role, explanation in (
-        ("poligoni", "affioramenti, unita', qualunque campitura"),
-        ("linee", "faglie, contatti, tracce"),
-        ("punti", "stazioni, misure, campioni"),
+        ("polygons", "outcrops, units, any fill"),
+        ("lines", "faults, contacts, traces"),
+        ("points", "stations, measurements, samples"),
     ):
         parser.add_argument(
             f"--{role}",
             metavar="PATH[:LAYER]",
-            help=f"layer {role} da mettere sotto il piano ({explanation})",
+            help=f"{role} layer to put under the plane ({explanation})",
         )
     parser.add_argument(
-        "--geologia",
+        "--geology",
         metavar="GPKG",
-        help="scorciatoia: carbonates come poligoni e faults come linee dallo stesso geopackage",
+        help="shortcut: carbonates as polygons and faults as lines from the same geopackage",
     )
     parser.add_argument(
-        "--categorie",
-        metavar="CAMPO",
+        "--categories",
+        metavar="FIELD",
         default="code",
         help=(
-            "campo su cui colorare i poligoni (default 'code'); "
-            "'nessuna' per il colore unico"
+            "field to colour the polygons on (default 'code'); "
+            "'none' for a single colour"
         ),
     )
-    parser.add_argument("--x", type=float, help="est del punto di appoggio (default: centro del DEM)")
-    parser.add_argument("--y", type=float, help="nord del punto di appoggio (default: centro del DEM)")
+    parser.add_argument("--x", type=float, help="easting of the source point (default: DEM centre)")
+    parser.add_argument("--y", type=float, help="northing of the source point (default: DEM centre)")
     parser.add_argument(
         "--z",
         type=float,
         help=(
-            "quota del punto di appoggio (default: quella del DEM); "
-            "se data, il piano resta a questa quota anche spostandolo"
+            "elevation of the source point (default: the DEM's); "
+            "if given, the plane stays at this elevation as you move it"
         ),
     )
     parser.add_argument(
-        "--finestra",
+        "--window",
         type=int,
         default=1000,
         metavar="N",
-        help="lato in celle della finestra di calcolo (default 1000)",
+        help="side in cells of the compute window (default 1000)",
     )
     parser.add_argument(
-        "--assetto",
+        "--settings",
         metavar="JSON",
-        help="assetto salvato da cui ripartire",
+        help="saved attitude to start from",
+    )
+    parser.add_argument(
+        "--legend",
+        choices=[mode for _, mode in RealtimeWindow.LEGEND_PLACEMENTS],
+        default="beside",
+        help="where to put the legend at startup (default 'beside'); changeable from the panel",
     )
     args = parser.parse_args()
 
     attitude = (90.0, 30.0)
     point = (args.x, args.y, args.z)
     z_follows_dem = None
-    side = args.finestra
+    side = args.window
 
-    if args.assetto:
-        saved = json.loads(Path(args.assetto).read_text(encoding="utf-8"))
+    if args.settings:
+        saved = json.loads(Path(args.settings).read_text(encoding="utf-8"))
         attitude = (saved["dip_dir"], saved["dip_angle"])
-        side = saved.get("finestra_px", side)
-        z_follows_dem = saved.get("source_z_dal_dem")
 
-        # Gli argomenti espliciti battono il file: se si passa --z insieme a un
-        # assetto, e' la riga di comando che si e' scritta adesso.
+        # The Italian keys are still read: files written before the interface
+        # changed language are the same attitudes, and refusing them would be a
+        # rename breaking data it had no business touching.
+        side = saved.get("window_px", saved.get("finestra_px", side))
+        z_follows_dem = saved.get("source_z_from_dem", saved.get("source_z_dal_dem"))
+
+        # Explicit arguments beat the file: passing --z together with a saved
+        # attitude means the command line is the one just written.
         stored = saved.get("source_point") or (None, None, None)
         point = tuple(
             given if given is not None else was for given, was in zip(point, stored)
@@ -2045,32 +2145,31 @@ def main():
         if args.z is not None:
             z_follows_dem = False
 
-        print(f"assetto: {attitude[0]:.0f}/{attitude[1]:.0f}, finestra {side} px")
+        print(f"settings: {attitude[0]:.0f}/{attitude[1]:.0f}, window {side} px")
 
     vectors = [
         spec
         for spec in (
-            split_layer(args.poligoni, "poligoni"),
-            split_layer(args.linee, "linee"),
-            split_layer(args.punti, "punti"),
+            split_layer(args.polygons, "polygons"),
+            split_layer(args.lines, "lines"),
+            split_layer(args.points, "points"),
         )
         if spec
     ]
 
-    # La scorciatoia storica, tenuta perche' e' come questo strumento si e'
-    # sempre lanciato: i due layer di geology.gpkg nei loro ruoli naturali.
-    if args.geologia:
-        vectors.append(dict(path=args.geologia, role="poligoni", layer="carbonates"))
-        vectors.append(dict(path=args.geologia, role="linee", layer="faults"))
+    # The historical shortcut, kept because it is how this tool has always been
+    # launched: the two layers of geology.gpkg in their natural roles.
+    if args.geology:
+        vectors.append(dict(path=args.geology, role="polygons", layer="carbonates"))
+        vectors.append(dict(path=args.geology, role="lines", layer="faults"))
 
     for spec in vectors:
         spec.setdefault(
             "category_field",
-            None if args.categorie == "nessuna" or spec["role"] != "poligoni" else args.categorie,
+            None if args.categories == "none" or spec["role"] != "polygons" else args.categories,
         )
 
-    # La QApplication prima di ogni dialogo, altrimenti Qt esce senza dire
-    # perche'.
+    # The QApplication before any dialog, or Qt exits without saying why.
     app = QtWidgets.QApplication(sys.argv)
 
     if not args.dem:
@@ -2084,8 +2183,8 @@ def main():
         vectors = chosen["vectors"]
         point = chosen["point"]
 
-        # Una quota scritta nel dialogo e' una scelta come quella da riga di
-        # comando, e vale allo stesso modo.
+        # An elevation typed into the dialog is a choice like the one from the
+        # command line, and counts the same way.
         if point[2] is not None:
             z_follows_dem = False
 
@@ -2093,7 +2192,7 @@ def main():
     print(
         f"DEM {dem.width}x{dem.height} ({dem.width * dem.height / 1e6:.1f} Mpx), "
         f"EPSG:{dem.crs.to_epsg()}, nodata={dem.nodata}, "
-        f"sfondo decimato 1:{dem.decimation}"
+        f"background decimated 1:{dem.decimation}"
     )
 
     overlay = Overlay(
@@ -2109,7 +2208,7 @@ def main():
     )
 
     if vectors:
-        print(f"vettoriali: {overlay.summary()}")
+        print(f"vectors: {overlay.summary()}")
 
     window = RealtimeWindow(
         dem,
@@ -2118,9 +2217,9 @@ def main():
         attitude=attitude,
         source=point,
         z_follows_dem=z_follows_dem,
+        legend=args.legend,
     )
-    window.resize(1180, 880)
-    window.show()
+    fit_to_screen(window, 1180, 880)
 
     sys.exit(app.exec())
 
