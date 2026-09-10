@@ -69,7 +69,6 @@ from time import perf_counter
 
 import numpy as np
 import rasterio
-from rasterio.windows import Window
 
 # PyQt6 has to be imported before the backend: matplotlib picks the binding by
 # looking at what is already in sys.modules.
@@ -81,612 +80,8 @@ from matplotlib.patches import Rectangle
 from misah.kernels import intersect_plane_grid
 
 from app.mapview import MapView
-
-
-def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
-    """Hillshade in the ESRI convention, with rows running south."""
-
-    d_row, d_col = np.gradient(z, dy, dx)
-    dz_dx, dz_dy = d_col, -d_row
-
-    slope = np.arctan(np.hypot(dz_dx, dz_dy))
-    aspect = np.arctan2(dz_dy, -dz_dx)
-
-    zenith = np.radians(90.0 - altitude)
-    az = np.radians(360.0 - azimuth + 90.0)
-
-    shaded = np.cos(zenith) * np.cos(slope) + np.sin(zenith) * np.sin(slope) * np.cos(az - aspect)
-
-    return np.clip(shaded, 0.0, 1.0)
-
-
-class MeridianConvergence:
-    """
-    The angle between grid north and true north, point by point.
-
-    In a projection the vertical grid lines are not meridians: only on the
-    central meridian do the two norths coincide. In the southern Apennines in
-    EPSG:25833 the gap runs from +0.41 to +1.04 degrees, which over five
-    kilometres of trace is up to 91 metres -- twenty times the DEM cell.
-
-    The value is measured rather than read off a formula: take a hundred-metre
-    step along true north and see what azimuth that step has on the grid. Eight
-    microseconds, and it holds for any projection, including the ones that do
-    not let themselves be written in PROJ.
-
-    The sign, checked on three points to four decimals:
-
-        grid_azimuth = true_azimuth - convergence
-    """
-
-    STEP_M = 100.0
-
-    def __init__(self, crs):
-        self.available = False
-        self._to_geographic = None
-
-        if crs is None:
-            return
-
-        import pyproj
-
-        try:
-            self._to_geographic = pyproj.Transformer.from_crs(crs, 4326, always_xy=True)
-            self._to_projected = pyproj.Transformer.from_crs(4326, crs, always_xy=True)
-            self._geod = pyproj.CRS.from_user_input(crs).get_geod()
-        except Exception:
-            return
-
-        self.available = self._geod is not None
-
-    def at(self, x, y):
-        """Convergence in degrees at the point, positive east of the central meridian."""
-
-        if not self.available:
-            return 0.0
-
-        lon, lat = self._to_geographic.transform(x, y)
-        lon_n, lat_n, _ = self._geod.fwd(lon, lat, 0.0, self.STEP_M)
-        x_n, y_n = self._to_projected.transform(lon_n, lat_n)
-
-        return -math.degrees(math.atan2(x_n - x, y_n - y))
-
-    def to_grid(self, true_azimuth, x, y):
-        return (true_azimuth - self.at(x, y)) % 360.0
-
-    def geographic(self, x, y):
-        """
-        Longitude and latitude of the point, or None without a usable CRS.
-
-        The transformation already exists because convergence needs it on every
-        frame: here it is only exposed, because a point written in projected
-        coordinates alone is unusable outside its EPSG -- in a notebook, in a
-        GPS, in a paper.
-
-        Outside the projection's domain pyproj returns infinity rather than
-        raising: the finiteness check is what tells an out-of-range point from
-        a good coordinate.
-        """
-
-        if self._to_geographic is None:
-            return None
-
-        lon, lat = self._to_geographic.transform(x, y)
-
-        if not (math.isfinite(lon) and math.isfinite(lat)):
-            return None
-
-        return lon, lat
-
-
-class ComputeWindow:
-    """
-    The full-resolution crop the kernel runs on.
-
-    It exists apart from the DEM because the cost of a frame goes with the
-    number of cells scanned, not with the size of the file: on a 314 Mpx mosaic
-    the kernel would take seconds, on a 1000x1000 window it fits in 22 ms.
-    """
-
-    def __init__(self, data, geotransform, bounds, offset):
-        self.data = data
-        self.geotransform = geotransform
-        self.bounds = bounds
-        self.offset = offset
-
-    @property
-    def shape(self):
-        return self.data.shape
-
-    def covers(self, x, y):
-        left, bottom, right, top = self.bounds
-
-        return left <= x <= right and bottom <= y <= top
-
-    def rectangle_xy(self):
-        left, bottom, right, top = self.bounds
-
-        return (left, bottom), right - left, top - bottom
-
-
-class Dem:
-    """
-    The DEM opened without loading it: an overview for the background,
-    full-resolution windows on demand.
-
-    A 314 Mpx mosaic would be 2.5 GB in float64, so holding it all in memory is
-    not an option and is not needed either: the kernel reads one window at a
-    time, and that read costs 4.9 ms on 1000x1000.
-    """
-
-    def __init__(self, path, display_max=1600):
-        self.path = Path(path)
-        self._src = rasterio.open(path)
-
-        self.crs = self._src.crs
-        self.nodata = self._src.nodata
-        self.bounds = self._src.bounds
-        self.width = self._src.width
-        self.height = self._src.height
-        self.res_x = abs(self._src.transform.a)
-        self.res_y = abs(self._src.transform.e)
-
-        self.extent = [
-            self.bounds.left,
-            self.bounds.right,
-            self.bounds.bottom,
-            self.bounds.top,
-        ]
-
-        # The background does not need full resolution: past a couple of
-        # thousand pixels it would not show anyway, and hillshading a whole
-        # mosaic would cost minutes.
-        self.decimation = max(1, math.ceil(max(self.width, self.height) / display_max))
-        shape = (self.height // self.decimation, self.width // self.decimation)
-        overview = self._src.read(1, out_shape=shape).astype(float)
-
-        if self.nodata is not None:
-            overview[overview == self.nodata] = np.nan
-
-        self.hillshade = hillshade(
-            overview,
-            self.res_x * self.decimation,
-            self.res_y * self.decimation,
-        )
-        self.z_median = float(np.nanmedian(overview))
-
-    def close(self):
-        self._src.close()
-
-    def center(self):
-        return (
-            (self.bounds.left + self.bounds.right) / 2.0,
-            (self.bounds.bottom + self.bounds.top) / 2.0,
-        )
-
-    def elevation_at(self, x, y):
-        """Elevation at the map coordinate, or None off-grid / on nodata."""
-
-        row, col = self._src.index(x, y)
-        row, col = int(row), int(col)
-
-        if not (0 <= row < self.height and 0 <= col < self.width):
-            return None
-
-        z = float(self._src.read(1, window=Window(col, row, 1, 1))[0, 0])
-
-        return None if self.nodata is not None and z == self.nodata else z
-
-    def shade_for(self, xmin, xmax, ymin, ymax, max_px=1200):
-        """
-        Hillshade of the current view alone, at the resolution it needs.
-
-        The initial background is decimated over the whole DEM: on a large
-        mosaic that means cells tens of metres across, and zooming in leaves
-        mush exactly as the trace becomes detailed. Here the framed portion is
-        re-read at the decimation right for that scale.
-
-        Returns None if the view is entirely off the DEM.
-        """
-
-        left = max(xmin, self.bounds.left)
-        right = min(xmax, self.bounds.right)
-        bottom = max(ymin, self.bounds.bottom)
-        top = min(ymax, self.bounds.top)
-
-        if right <= left or top <= bottom:
-            return None
-
-        window = rasterio.windows.from_bounds(
-            left, bottom, right, top, self._src.transform
-        ).round_offsets().round_lengths()
-
-        window = window.intersection(Window(0, 0, self.width, self.height))
-
-        if window.width < 2 or window.height < 2:
-            return None
-
-        step = max(1, math.ceil(max(window.width, window.height) / max_px))
-        shape = (max(2, int(window.height) // step), max(2, int(window.width) // step))
-
-        band = self._src.read(1, window=window, out_shape=shape).astype(float)
-
-        if self.nodata is not None:
-            band[band == self.nodata] = np.nan
-
-        shade = hillshade(band, self.res_x * step, self.res_y * step)
-        left, bottom, right, top = rasterio.windows.bounds(window, self._src.transform)
-
-        return shade, [left, right, bottom, top], step
-
-    def window_at(self, x, y, side):
-        """A `side`-cell window centred on (x, y), clipped to the DEM."""
-
-        row, col = self._src.index(x, y)
-        col_off = int(col) - side // 2
-        row_off = int(row) - side // 2
-
-        # At the edges the window shifts rather than shrinking, so the per-frame
-        # cost stays the advertised one wherever you take it.
-        col_off = max(0, min(col_off, self.width - side))
-        row_off = max(0, min(row_off, self.height - side))
-
-        width = min(side, self.width)
-        height = min(side, self.height)
-
-        window = Window(col_off, row_off, width, height)
-        band = self._src.read(1, window=window)
-        transform = rasterio.windows.transform(window, self._src.transform)
-        bounds = rasterio.windows.bounds(window, self._src.transform)
-
-        # misah wants contiguous f64. Real DEMs are often f32: the conversion is
-        # paid for here, not inside the loop.
-        return ComputeWindow(
-            np.ascontiguousarray(band.astype(np.float64)),
-            list(transform.to_gdal()),
-            bounds,
-            (col_off, row_off),
-        )
-
-
-class VectorSource:
-    """
-    One backdrop vector layer, in the role it was given.
-
-    The roles are three -- polygons, lines, points -- and they are not a matter
-    of style: they decide what it makes sense to ask of the layer. A field of
-    polygons coloured per unit says which two formations a contact separates;
-    the same twenty-three tints spread over four hundred faults cannot be read.
-    So categorisation starts on for polygons and off for the rest, and it is
-    the user who decides in the end.
-
-    The layers are static: they are drawn once and end up in the background
-    that blitting recaptures, so per frame they cost nothing. Each carries its
-    own CRS -- in geology.gpkg the carbonates are in UTM 32N and the faults in
-    geographic -- and is reprojected on its own onto the DEM's, never the file
-    as a block.
-    """
-
-    ROLES = ("polygons", "lines", "points")
-
-    # The OGR type suffix: 'Polygon' and 'MultiPolygon' both end in 'Polygon',
-    # and so for the other two pairs. A layer with no geometry --
-    # `fault_attitudes` in geology.gpkg is a pure table -- has no suffix and
-    # stays out of all three roles, which is where it belongs.
-    GEOMETRY_SUFFIX = {
-        "polygons": "Polygon",
-        "lines": "LineString",
-        "points": "Point",
-    }
-
-    FLAT_STYLE = {
-        "polygons": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.25, linewidth=0.5),
-        "lines": dict(color="#1f4fd8", linewidth=1.0),
-        "points": dict(color="#d95f02", markersize=26, marker="^", edgecolor="#4a2200"),
-    }
-
-    CATEGORY_STYLE = {
-        "polygons": dict(edgecolor="#333333", linewidth=0.4, alpha=0.38),
-        "lines": dict(linewidth=1.3),
-        "points": dict(markersize=30, marker="^", edgecolor="#222222"),
-    }
-
-    # Points over lines, lines over polygons: the order in which a map is read.
-    # With the single zorder of before, an outcrop drawn later covered the
-    # faults you were using to find your way.
-    ZORDER = {"polygons": 2, "lines": 3, "points": 4}
-
-    # The field that plugs the holes in the chosen one: in geology.gpkg five
-    # polygons have no `code`, and with no fallback they would end up in a
-    # single "n/a" category mixing three different ones.
-    CATEGORY_FALLBACK = "name"
-
-    # Past a dozen entries the legend eats the map it is supposed to explain;
-    # the categories in excess stay coloured, they are just not listed.
-    MAX_LEGEND_ENTRIES = 12
-
-    def __init__(self, path, role, crs, bounds, layer=None, category_field=None):
-        import geopandas as gpd  # heavy to import: only when actually needed
-        from shapely.geometry import box
-
-        self.path = Path(path)
-        self.role = role
-        self.layer = layer
-        self.category_field = category_field
-        self.colors = {}
-        self.labels = {}
-        self.frame = None
-        self.problem = None
-
-        try:
-            complete = gpd.read_file(path, layer=layer) if layer else gpd.read_file(path)
-        except Exception as err:
-            self.problem = str(err).split("\n")[0]
-            return
-
-        if complete.crs is None:
-            self.problem = "no CRS"
-            return
-
-        window = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
-        visible = complete.to_crs(crs)
-        visible = visible[visible.intersects(window)]
-
-        if visible.empty:
-            self.problem = "no feature on the DEM"
-            return
-
-        self.frame = self._categorize(complete, visible)
-
-    # -- reading the container, without loading the data ------------------
-
-    @staticmethod
-    def candidate_layers(path, role):
-        """
-        The layers in the file whose geometry fits the role.
-
-        Read from the metadata alone, so listing the layers of a half-gigabyte
-        geopackage costs what listing an empty one costs -- and that is what
-        lets the dialog filter while the user chooses.
-        """
-
-        import pyogrio
-
-        suffix = VectorSource.GEOMETRY_SUFFIX[role]
-
-        return [
-            str(name)
-            for name, geometry in pyogrio.list_layers(path)
-            if geometry is not None and str(geometry).endswith(suffix)
-        ]
-
-    @staticmethod
-    def text_fields(path, layer=None):
-        """The layer's text fields: the only ones worth categorising on."""
-
-        import pyogrio
-
-        info = pyogrio.read_info(path, layer=layer) if layer else pyogrio.read_info(path)
-
-        return [
-            str(field)
-            for field, dtype in zip(info["fields"], info["dtypes"])
-            if str(dtype) == "object"
-        ]
-
-    # -- categories --------------------------------------------------------
-
-    @property
-    def is_loaded(self):
-        return self.frame is not None
-
-    def _values(self, frame):
-        """The column to tell things apart by, with the holes plugged by the name."""
-
-        if not self.category_field or self.category_field not in frame.columns:
-            return None
-
-        values = frame[self.category_field].astype("string")
-
-        if self.CATEGORY_FALLBACK in frame.columns:
-            values = values.fillna(frame[self.CATEGORY_FALLBACK].astype("string"))
-
-        return values.fillna("n/a").astype(str)
-
-    def _categorize(self, complete, visible):
-        """
-        Assigns one colour per category, decided on the layer's complete list.
-
-        On the complete list and not on the visible one on purpose: if the
-        colours came from whichever categories happen to fall in the window,
-        the same formation would change colour as you pan or change DEM, and
-        that is the one thing a legend cannot afford.
-        """
-
-        values = self._values(complete)
-
-        if values is None:
-            return visible
-
-        from matplotlib import colormaps
-
-        # Twenty plus twenty: the units mapped in geology.gpkg are twenty-three,
-        # and with tab20 alone two of them would come out identical.
-        wheel = list(colormaps["tab20"].colors) + list(colormaps["tab20b"].colors)
-        order = sorted(values.unique())
-
-        self.colors = {value: wheel[i % len(wheel)] for i, value in enumerate(order)}
-
-        if self.CATEGORY_FALLBACK in complete.columns and self.category_field != self.CATEGORY_FALLBACK:
-            named = complete[self.CATEGORY_FALLBACK].astype("string")
-            self.labels = {
-                value: (group.dropna().iloc[0] if len(group.dropna()) else "")
-                for value, group in named.groupby(values)
-            }
-
-        return visible.assign(_gsurf_category=self._values(visible))
-
-    # -- drawing -----------------------------------------------------------
-
-    def draw(self, axes):
-        table = self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE
-        style = dict(table[self.role])
-
-        if self.colors:
-            style["color"] = [self.colors[v] for v in self.frame["_gsurf_category"]]
-        else:
-            style.setdefault("label", self.layer or self.path.stem)
-
-        self.frame.plot(ax=axes, zorder=self.ZORDER[self.role], **style)
-
-    def _legend_label(self, value, width=28):
-        name = self.labels.get(value, "")
-        text = f"{value} - {name}" if name and name != value else str(value)
-
-        return text if len(text) <= width else text[: width - 1] + "…"
-
-    def _handle(self, label, color=None):
-        """
-        The dummy artist standing in for one legend entry.
-
-        Needed because geopandas draws with collections matplotlib cannot
-        represent on its own: without these the polygons would drop out of the
-        legend silently. The shape follows the role, so across three
-        categorised layers you can still tell whose entry is whose.
-        """
-
-        from matplotlib.lines import Line2D
-        from matplotlib.patches import Patch
-
-        style = dict((self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE)[self.role])
-        style.pop("markersize", None)
-        style.pop("color", None)
-
-        if self.role == "polygons":
-            return Patch(facecolor=color or style.pop("facecolor", "#4daf7c"), label=label, **style)
-
-        if self.role == "lines":
-            return Line2D([], [], color=color or "#1f4fd8", label=label, **style)
-
-        marker = style.pop("marker", "^")
-        edge = style.pop("edgecolor", "#222222")
-
-        return Line2D(
-            [], [],
-            linestyle="none",
-            marker=marker,
-            markerfacecolor=color or "#d95f02",
-            markeredgecolor=edge,
-            markersize=7,
-            label=label,
-        )
-
-    def legend_handles(self):
-        if not self.colors:
-            return [self._handle(self.layer or self.path.stem)]
-
-        # In the legend only the categories actually on show, and in order of
-        # weight: alphabetically, the cut at twelve would throw out Qt, PL and
-        # Op -- which are half the map -- to make room for AV, which is a
-        # single polygon. Weight is area for polygons, length for lines, count
-        # for points.
-        frame = self.frame
-
-        if self.role == "polygons":
-            weight = frame.area
-        elif self.role == "lines":
-            weight = frame.length
-        else:
-            weight = 1.0
-
-        present = list(
-            frame.assign(_gsurf_weight=weight)
-            .groupby("_gsurf_category")["_gsurf_weight"]
-            .sum()
-            .sort_values(ascending=False)
-            .index
-        )
-
-        handles = [
-            self._handle(self._legend_label(value), self.colors[value])
-            for value in present[: self.MAX_LEGEND_ENTRIES]
-        ]
-
-        if len(present) > self.MAX_LEGEND_ENTRIES:
-            from matplotlib.patches import Patch
-
-            handles.append(
-                Patch(
-                    facecolor="none",
-                    edgecolor="none",
-                    label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} more in {self.role}",
-                )
-            )
-
-        return handles
-
-    def summary(self):
-        where = self.layer or self.path.name
-
-        if not self.is_loaded:
-            return f"{self.role}: {where} skipped ({self.problem})"
-
-        if self.colors:
-            distinct = len(set(self.frame["_gsurf_category"]))
-
-            return (
-                f"{self.role}: {where}, {len(self.frame)} in {distinct} "
-                f"categories ({self.category_field})"
-            )
-
-        return f"{self.role}: {where}, {len(self.frame)}"
-
-
-class Overlay:
-    """
-    The backdrop vector layers held together, in the order they are read in.
-
-    None of them is necessary: the DEM alone is enough to intersect a plane.
-    They answer where that plane is being laid down, which is a different
-    question from the calculation and one the DEM does not answer.
-    """
-
-    def __init__(self, sources=()):
-        sources = list(sources)
-
-        self.sources = [s for s in sources if s.is_loaded]
-        self.rejected = [s for s in sources if not s.is_loaded]
-
-    def __bool__(self):
-        return bool(self.sources)
-
-    @property
-    def is_categorized(self):
-        return any(source.colors for source in self.sources)
-
-    def draw(self, axes):
-        """Draws on the axes, without letting geopandas rescale the view."""
-
-        limits = axes.get_xlim(), axes.get_ylim()
-
-        for source in sorted(self.sources, key=lambda s: VectorSource.ZORDER[s.role]):
-            source.draw(axes)
-
-        axes.set_xlim(limits[0])
-        axes.set_ylim(limits[1])
-
-    def legend_handles(self):
-        handles = []
-
-        for source in sorted(self.sources, key=lambda s: VectorSource.ZORDER[s.role]):
-            handles.extend(source.legend_handles())
-
-        return handles
-
-    def summary(self):
-        lines = [s.summary() for s in self.sources] + [s.summary() for s in self.rejected]
-
-        return "; ".join(lines) if lines else "no vector layer"
+from app.session import Session
+from app.vectors import VectorSource
 
 
 def merged_traces(points, segments):
@@ -1078,8 +473,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     def __init__(
         self,
-        dem,
-        overlay=None,
+        session,
         side=1000,
         attitude=(90.0, 30.0),
         source=None,
@@ -1088,17 +482,22 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     ):
         super().__init__()
 
-        self.dem = dem
-        self.overlay = overlay
+        if session.dem is None:
+            raise ValueError("the plane / DEM intersection needs a DEM")
+
+        self.session = session
+        self.dem = session.dem
         self.dragging = False
         self.frame_times = deque(maxlen=20)
-        self.convergence = MeridianConvergence(dem.crs)
+        self.convergence = session.convergence
         self.last_result = ([], [])
+
+        dem = self.dem
 
         # The three components are independent: you can fix the elevation alone
         # and let the point sit at the centre, or the other way round.
         x, y, z = (tuple(source) + (None, None, None))[:3] if source else (None, None, None)
-        centre_x, centre_y = dem.center()
+        centre_x, centre_y = session.center()
 
         x = centre_x if x is None else float(x)
         y = centre_y if y is None else float(y)
@@ -1118,7 +517,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.side = min(side, dem.width, dem.height)
         self.window = dem.window_at(self.source_point[0], self.source_point[1], self.side)
 
-        self.setWindowTitle(f"gSurf - real-time intersection - {dem.path.name}")
+        self.setWindowTitle(f"gSurf - real-time intersection - {session.label}")
         self._build_ui(attitude, legend)
         self._draw_base_map()
 
@@ -1127,7 +526,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # -- construction -----------------------------------------------------
 
     def _build_ui(self, attitude, legend):
-        self.map_view = MapView(self.dem, self.overlay, legend=legend)
+        self.map_view = MapView(self.session, legend=legend)
 
         # The legend needs the entries for the artists this tool draws; the
         # backdrop's the map adds by itself.
@@ -1216,19 +615,20 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         # holding it up need not sit on it. Stopping at the edge would mean an
         # --x outside the DEM was silently pulled back inside, and the box would
         # say something different from the point being computed.
-        span_x = self.dem.bounds.right - self.dem.bounds.left
-        span_y = self.dem.bounds.top - self.dem.bounds.bottom
+        left, bottom, right, top = self.session.bounds
+        span_x = right - left
+        span_y = top - bottom
 
         self.easting_spin = QtWidgets.QDoubleSpinBox()
         self.easting_spin.setDecimals(1)
         self.easting_spin.setSingleStep(50.0)
-        self.easting_spin.setRange(self.dem.bounds.left - span_x, self.dem.bounds.right + span_x)
+        self.easting_spin.setRange(left - span_x, right + span_x)
         self.easting_spin.setPrefix("E ")
 
         self.northing_spin = QtWidgets.QDoubleSpinBox()
         self.northing_spin.setDecimals(1)
         self.northing_spin.setSingleStep(50.0)
-        self.northing_spin.setRange(self.dem.bounds.bottom - span_y, self.dem.bounds.top + span_y)
+        self.northing_spin.setRange(bottom - span_y, top + span_y)
         self.northing_spin.setPrefix("N ")
 
         # The elevation goes below sea level -- the foredeep reaches it around
@@ -1705,7 +1105,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             "dip_angle": self.dip_angle(),
             "source_point": [float(v) for v in self.source_point],
             "source_point_reference": (
-                f"EPSG:{self.dem.crs.to_epsg()}" if self.dem.crs else "unknown"
+                f"EPSG:{self.session.epsg}" if self.session.epsg else "unknown"
             ),
             "source_lon": lon_lat[0] if lon_lat else None,
             "source_lat": lon_lat[1] if lon_lat else None,
@@ -1716,7 +1116,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             "source_z_from_dem": bool(self.z_follows_dem),
             "dem_elevation": self.dem.elevation_at(self.source_point[0], self.source_point[1]),
             "window_px": int(self.side),
-            "epsg": self.dem.crs.to_epsg() if self.dem.crs else None,
+            "epsg": self.session.epsg,
         }
 
         Path(path).write_text(json.dumps(settings, indent=2), encoding="utf-8")
@@ -1766,17 +1166,16 @@ class RealtimeWindow(QtWidgets.QMainWindow):
                 "z_from_dem": [bool(self.z_follows_dem)] * len(traces),
             },
             geometry=traces,
-            crs=self.dem.crs,
+            crs=self.session.crs,
         )
         frame.to_file(path, driver="ESRI Shapefile")
 
         self.statusBar().showMessage(f"{len(traces)} traces exported to {path}")
 
     def _suggested_name(self, suffix):
-        stem = self.dem.path.stem
         attitude = f"{int(self.dip_direction()):03d}-{int(self.dip_angle()):02d}"
 
-        return self.dem.path.with_name(f"{stem}_{attitude}{suffix}")
+        return self.session.suggested_name(suffix, tag=attitude)
 
 
 def split_layer(spec, role):
@@ -1960,31 +1359,14 @@ def main():
         if point[2] is not None:
             z_follows_dem = False
 
-    dem = Dem(args.dem)
-    print(
-        f"DEM {dem.width}x{dem.height} ({dem.width * dem.height / 1e6:.1f} Mpx), "
-        f"EPSG:{dem.crs.to_epsg()}, nodata={dem.nodata}, "
-        f"background decimated 1:{dem.decimation}"
-    )
-
-    overlay = Overlay(
-        VectorSource(
-            spec["path"],
-            spec["role"],
-            dem.crs,
-            dem.bounds,
-            layer=spec.get("layer"),
-            category_field=spec.get("category_field"),
-        )
-        for spec in vectors
-    )
+    session = Session.open(dem_path=args.dem, vectors=vectors)
+    print(f"session: {session.summary()}, nodata={session.dem.nodata}")
 
     if vectors:
-        print(f"vectors: {overlay.summary()}")
+        print(f"vectors: {session.overlay.summary()}")
 
     window = RealtimeWindow(
-        dem,
-        overlay,
+        session,
         side=side,
         attitude=attitude,
         source=point,

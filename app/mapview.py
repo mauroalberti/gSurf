@@ -102,11 +102,12 @@ class MapView(QtWidgets.QWidget):
     save_requested = QtCore.pyqtSignal()
     status = QtCore.pyqtSignal(str)
 
-    def __init__(self, dem, overlay=None, legend="beside", parent=None):
+    def __init__(self, session, legend="beside", parent=None):
         super().__init__(parent)
 
-        self.dem = dem
-        self.overlay = overlay
+        self.session = session
+        self.dem = session.dem
+        self.overlay = session.overlay
         self.background = None
         self.legend = None
         self.shade_image = None
@@ -167,17 +168,28 @@ class MapView(QtWidgets.QWidget):
         return artist
 
     def draw_base_map(self):
-        """The background: hillshade, axis labels, vector backdrop."""
+        """The background: hillshade if there is one, axis labels, backdrop."""
 
-        self.shade_image = self.axes.imshow(
-            self.dem.hillshade,
-            cmap="gray",
-            extent=self.dem.extent,
-            origin="upper",
-            interpolation="bilinear",
-        )
-        self.shade_step = self.dem.decimation
-        epsg = self.dem.crs.to_epsg() if self.dem.crs else "?"
+        left, right, bottom, top = self.session.extent
+
+        if self.dem is not None:
+            self.shade_image = self.axes.imshow(
+                self.dem.hillshade,
+                cmap="gray",
+                extent=self.session.extent,
+                origin="upper",
+                interpolation="bilinear",
+            )
+            self.shade_step = self.dem.decimation
+        else:
+            # Without a raster nothing sets the limits, and the vector layers
+            # would decide them one at a time as they are drawn -- the last one
+            # winning. The session's area is the frame the layers were clipped
+            # to, so it is the honest one to show.
+            self.axes.set_xlim(left, right)
+            self.axes.set_ylim(bottom, top)
+
+        epsg = self.session.epsg or "?"
         self.axes.set_xlabel(f"E (m, EPSG:{epsg})")
         self.axes.set_ylabel("N (m)")
         self.axes.set_aspect("equal")
@@ -346,10 +358,24 @@ class MapView(QtWidgets.QWidget):
     # -- background at the right scale ------------------------------------
 
     def schedule_shade_refresh(self, delay_ms=180):
+        """
+        Asks for the background at the scale the view now needs, in a moment.
+
+        With no DEM there is no background to reread: the vector layers are
+        drawn from geometry and are as sharp at any zoom, so the timer is not
+        even started.
+        """
+
+        if self.dem is None:
+            return
+
         self.shade_timer.start(delay_ms)
 
     def _refresh_shade(self):
         """Re-reads the hillshade for the current view, if anything changes."""
+
+        if self.dem is None:
+            return
 
         xmin, xmax = self.axes.get_xlim()
         ymin, ymax = self.axes.get_ylim()
