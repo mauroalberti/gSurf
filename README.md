@@ -1,9 +1,14 @@
 # gSurf
 
-Lay an unbounded geological plane on a DEM and watch where it crops out, while
-you turn the dial. The intersection is recomputed on every frame, not behind a
-"Calculate" button, so a dip direction is something you sweep through rather
-than something you guess and check.
+Structural geology you steer by hand: the answer is recomputed on every frame,
+not behind a "Calculate" button, so a parameter is something you sweep through
+rather than something you guess and check.
+
+Two tools so far. **`realtime_intersection.py`** lays an unbounded geological
+plane on a DEM and shows where it crops out while you turn the dial.
+**`fold_axes.py`** drags a circular window across a map of bedding attitudes and
+shows, on a stereonet that follows it, the girdle the poles spread on and the
+axis they turn about.
 
 ![gSurf, real-time plane/DEM intersection](ims/realtime_intersection.png)
 
@@ -16,9 +21,9 @@ while you work.
 
 ### Status
 
-`realtime_intersection.py`, at the repository root, is the part that runs. Next
-to it, `app/` holds what is not about any one calculation, so that the next
-tool inherits it rather than copying it:
+`realtime_intersection.py` and `fold_axes.py`, at the repository root, are the
+parts that run. Next to them, `app/` holds what is not about any one
+calculation, so that the next tool inherits it rather than copying it:
 
 - `app/session.py` — the projection, the area, and what has been opened in
   them. The DEM is one of the things in a session and not the frame itself: a
@@ -28,6 +33,9 @@ tool inherits it rather than copying it:
   navigation, legend, and the blitting surface a tool draws its own artists on.
 - `app/dem.py`, `app/vectors.py`, `app/convergence.py` — the DEM read by
   windows, the backdrop layers, and grid north against true north.
+- `app/attitudes.py`, `app/folds.py`, `app/stereonet.py` — located attitudes
+  read strictly, the orientation tensor read as a fold, and an equal-area net
+  that redraws while you move.
 
 The name is `app` and not `gsurf` because the old `gSurf/` package is still in
 the tree, and on a case-insensitive filesystem the two would be one directory.
@@ -68,7 +76,17 @@ They are imported only where they are actually used, so without them the tool
 still starts, draws the DEM and recomputes the intersection as you drag; you
 get no layers underneath, and `Export trace` raises on the way out.
 
-### Usage
+`fold_axes.py` needs those two as well, and additionally:
+
+```bash
+pip install geogst mplstereonet
+```
+
+geogst is where the orientation tensor and Woodcock's parameters come from, and
+mplstereonet draws the net — `import mplstereonet` is also what registers the
+equal-area projection with matplotlib, so it is not an optional extra there.
+
+### Usage — plane on a DEM
 
 Launched bare, it asks for what it needs:
 
@@ -110,6 +128,42 @@ the file, so `--settings x.json --z 900` is the saved plane at a new elevation.
 Files written before the interface changed language still load: the Italian
 keys are read as a fallback.
 
+### Usage — fold axes
+
+```bash
+python fold_axes.py attitudes.gpkg:giaciture \
+    --dip-dir Immersione --dip Inclinazione \
+    --radius 2000 --dem dem.tif
+```
+
+The attitude layer is the only thing required, and it is what the session is
+built on: with no DEM the projection and the extent come from the layer itself.
+A DEM, if given, is backdrop and nothing else — this calculation never reads an
+elevation. `--strike-rhr` reads the azimuth field as a right-hand-rule strike
+instead of a dip direction.
+
+Drag the circle across the map. The stereonet follows it, showing the poles of
+the bedding inside, the best-fit girdle and the axis they turn about; the panel
+gives that axis, Woodcock's K and C, and how many attitudes it came from.
+
+**The axis is only an axis if the poles form a girdle.** Above K = 1 they
+cluster instead, which is a homocline, and the minimum eigenvector of a cluster
+is the least determined direction in the data rather than a fold axis. On the
+1757 CARG attitudes of the Potenza-Irsina sheet, three windows in four fail
+that test — which is the reason the gate exists rather than an argument against
+it. `--min-points`, `--max-k` set the thresholds, the panel changes them while
+you work, and both they and the verdict go into the saved JSON, because an
+answer recorded without the choice that produced it cannot be checked.
+
+A refused axis is drawn in grey rather than hidden. Hiding it would answer "is
+this a fold?" by showing nothing, which reads the same as an empty window;
+greyed, you watch it turn colour as the window crosses a hinge.
+
+Read the same place at three radii and you see what the window is for. At
+590000/4500000 on that sheet: at 1 km ten attitudes and a cluster, at 2 km
+312/13 from 38 attitudes with K = 0.59, at 5 km 312/19 from 162 — an axis that
+survives a change of scale is a structure, one that does not is a coincidence.
+
 ### Things worth knowing
 
 **Dip direction is true azimuth**, as a compass reads it once declination is
@@ -145,7 +199,15 @@ with the ground elevation underneath.
 **Exports carry their own frame.** Both azimuths (true and grid) and both
 coordinate pairs (projected and geographic) go into the JSON and the shapefile.
 Coordinates in a single EPSG are unusable outside it, and the `.prj` is the
-file that goes missing first.
+file that goes missing first. A fold axis is written the same way: true
+azimuth, grid azimuth and the convergence between them.
+
+**A horizontal bed has no dip direction.** `fold_axes.py` reads the dip first
+and only then the azimuth, because the dip is what decides whether the azimuth
+means anything: at zero dip the field is not read at all. That is not
+pedantry — the CARG sheets write 999 there, and a reader that took it at face
+value would drop every horizontal bed on the map, or worse, keep it as a
+bearing. Whatever is dropped and why is printed on the way in, never silently.
 
 ### Performance
 
@@ -163,9 +225,19 @@ and decimation or tiling would be needed. On the same plane and grid the misah
 kernel runs about 77× the pure-Python equivalent in geogst, which is what makes
 dragging possible at all.
 
+Fold axes are not a kernel problem. Dragging the window across the 1757 CARG
+attitudes costs 4.5 ms a frame, of which the search is 0.1 ms and the
+orientation tensor 0.8; the rest is drawing two canvases. The tensor is
+geogst's, called once per frame — 0.39 ms for a window of 20 poles, 0.99 for
+68, 4.2 for 313 — which is affordable at a frame and is why there is no second
+copy of that mathematics here. A grid of ten thousand windows is a different
+question, and its answer belongs upstream in geogst as a vectorised orientation
+tensor.
+
 ### Related
 
 - [misah](https://gitlab.com/mauroalberti/misah) — the Rust kernels
-- [geogst](https://gitlab.com/mauroalberti/geogst) — types, CRS and I/O
+- [geogst](https://gitlab.com/mauroalberti/geogst) — types, CRS, orientation
+  statistics and plots
 - [qgSurf](https://gitlab.com/mauroalberti/qgSurf) — the QGIS plug-in, whose
   plane/DEM intersection this replaces with an interactive one

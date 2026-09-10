@@ -353,3 +353,26 @@ class Overlay:
         lines = [s.summary() for s in self.sources] + [s.summary() for s in self.rejected]
 
         return "; ".join(lines) if lines else "no vector layer"
+
+
+def split_layer(spec, role):
+    """
+    `path` or `path:layer`, resolved without guessing.
+
+    A path can hold a colon of its own, so the rule is to look at the disk
+    rather than read the string: if the whole thing is an existing file, it is
+    a path; otherwise the last piece is peeled off and tried.
+    """
+
+    if spec is None:
+        return None
+
+    if Path(spec).exists():
+        return dict(path=spec, role=role, layer=None)
+
+    head, _, tail = spec.rpartition(":")
+
+    if head and Path(head).exists():
+        return dict(path=head, role=role, layer=tail)
+
+    return dict(path=spec, role=role, layer=None)

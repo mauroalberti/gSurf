@@ -79,9 +79,9 @@ from matplotlib.patches import Rectangle
 
 from misah.kernels import intersect_plane_grid
 
-from app.mapview import MapView
+from app.mapview import MapView, fit_to_screen
 from app.session import Session
-from app.vectors import VectorSource
+from app.vectors import VectorSource, split_layer
 
 
 def merged_traces(points, segments):
@@ -1176,58 +1176,6 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         attitude = f"{int(self.dip_direction()):03d}-{int(self.dip_angle()):02d}"
 
         return self.session.suggested_name(suffix, tag=attitude)
-
-
-def split_layer(spec, role):
-    """
-    `path` or `path:layer`, resolved without guessing.
-
-    A path can hold a colon of its own, so the rule is to look at the disk
-    rather than read the string: if the whole thing is an existing file, it is
-    a path; otherwise the last piece is peeled off and tried.
-    """
-
-    if spec is None:
-        return None
-
-    if Path(spec).exists():
-        return dict(path=spec, role=role, layer=None)
-
-    head, _, tail = spec.rpartition(":")
-
-    if head and Path(head).exists():
-        return dict(path=head, role=role, layer=tail)
-
-    return dict(path=spec, role=role, layer=None)
-
-
-def fit_to_screen(window, width, height):
-    """
-    Shows the window at the wanted size, or maximised if it does not fit.
-
-    1180x880 is the right measure for the map plus the panel, but on a 1366x768
-    screen the bottom of the window -- the buttons and the status bar -- ends up
-    under the edge, and unlike the buttons the status bar cannot be reached by
-    scrolling the panel.
-
-    Maximised rather than resized to the available area, because the window
-    frame is not ours to measure: right after show() the title bar does not
-    exist yet, and it only appears once the window manager has reparented the
-    window, some hundred milliseconds later -- a delay there is no honest way to
-    wait for. Maximising hands the arithmetic to the window manager, which knows
-    how thick its own decorations are. The one case this leaves rough is a
-    screen tall enough for the client area but not for the title bar too, where
-    the window sticks out by the height of that bar.
-    """
-
-    available = window.screen().availableGeometry()
-
-    if width > available.width() or height > available.height():
-        window.showMaximized()
-        return
-
-    window.resize(width, height)
-    window.show()
 
 
 def main():

@@ -432,3 +432,32 @@ class MapView(QtWidgets.QWidget):
     def copy_screenshot(self):
         QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
         self.status.emit("screenshot copied to the clipboard")
+
+
+def fit_to_screen(window, width, height):
+    """
+    Shows the window at the wanted size, or maximised if it does not fit.
+
+    1180x880 is the right measure for the map plus the panel, but on a 1366x768
+    screen the bottom of the window -- the buttons and the status bar -- ends up
+    under the edge, and unlike the buttons the status bar cannot be reached by
+    scrolling the panel.
+
+    Maximised rather than resized to the available area, because the window
+    frame is not ours to measure: right after show() the title bar does not
+    exist yet, and it only appears once the window manager has reparented the
+    window, some hundred milliseconds later -- a delay there is no honest way to
+    wait for. Maximising hands the arithmetic to the window manager, which knows
+    how thick its own decorations are. The one case this leaves rough is a
+    screen tall enough for the client area but not for the title bar too, where
+    the window sticks out by the height of that bar.
+    """
+
+    available = window.screen().availableGeometry()
+
+    if width > available.width() or height > available.height():
+        window.showMaximized()
+        return
+
+    window.resize(width, height)
+    window.show()

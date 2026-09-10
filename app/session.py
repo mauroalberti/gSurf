@@ -48,24 +48,40 @@ class Session:
     # -- opening -----------------------------------------------------------
 
     @classmethod
-    def open(cls, dem_path=None, vectors=()):
+    def open(cls, dem_path=None, vectors=(), frame_layers=()):
         """
         Opens a session on a DEM, on some vector layers, or on both.
 
-        At least one of the two: with neither there is no projection and no
-        area, and nothing that could be drawn.
+        At least one source: with none there is no projection and no area.
+
+        `frame_layers` say where we are without being drawn. A tool's own data
+        is usually one of these -- the fold-axis module reads its attitudes
+        itself, and drawing them a second time as a backdrop would put two
+        symbols on every station and an entry in the legend for the layer the
+        whole window is about. Contributing to the frame and being drawn are
+        two different jobs, and the same layer can do the first without the
+        second.
         """
 
         specs = [dict(spec) for spec in vectors]
+
+        # The frame layers go first, and that ordering is the point rather than
+        # an accident: the projection is taken from the first layer that
+        # declares one, and a tool's own data has a better claim to it than
+        # whichever backdrop happens to have been listed first. Backdrops are
+        # decoration and are often in whatever CRS they were downloaded in --
+        # geographic, as often as not, which would put the whole session in
+        # degrees.
+        framing = [dict(spec) for spec in frame_layers] + specs
 
         dem = Dem(dem_path) if dem_path else None
 
         if dem is not None:
             crs, bounds = dem.crs, tuple(dem.bounds)
             base_path = dem.path
-        elif specs:
-            crs, bounds = cls._frame_from_vectors(specs)
-            base_path = Path(specs[0]["path"])
+        elif framing:
+            crs, bounds = cls._frame_from_vectors(framing)
+            base_path = Path(framing[0]["path"])
         else:
             raise ValueError("a session needs a DEM or at least one vector layer")
 
