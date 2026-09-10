@@ -76,11 +76,11 @@ from rasterio.windows import Window
 import PyQt6.QtCore  # noqa: F401
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from misah.kernels import intersect_plane_grid
+
+from app.mapview import MapView
 
 
 def hillshade(z, dx, dy, azimuth=315.0, altitude=45.0):
@@ -710,48 +710,6 @@ def merged_traces(points, segments):
     return list(merged.geoms) if hasattr(merged, "geoms") else [merged]
 
 
-class Toolbar(NavigationToolbar2QT):
-    """
-    The navigation bar, with saving diverted.
-
-    The toolbar's save button calls `savefig` on its own, and that path knows
-    nothing of the animated artists: the file would come out with the map and
-    without the trace on top. Here it ends up in the same place as the "Save
-    screenshot" button, so the two cannot drift apart.
-    """
-
-    def __init__(self, canvas, parent, save_handler, view_changed):
-        super().__init__(canvas, parent)
-        self._save_handler = save_handler
-        self._view_changed = view_changed
-
-    def save_figure(self, *args):
-        self._save_handler()
-
-    # Every way the bar can change the framing has to report it, or the
-    # background stays at the previous resolution.
-
-    def release_pan(self, event):
-        super().release_pan(event)
-        self._view_changed()
-
-    def release_zoom(self, event):
-        super().release_zoom(event)
-        self._view_changed()
-
-    def home(self, *args):
-        super().home(*args)
-        self._view_changed()
-
-    def back(self, *args):
-        super().back(*args)
-        self._view_changed()
-
-    def forward(self, *args):
-        super().forward(*args)
-        self._view_changed()
-
-
 VECTOR_FILTER = (
     "Vector (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
     "All files (*)"
@@ -1101,9 +1059,15 @@ class SourcesDialog(QtWidgets.QDialog):
 
 
 class RealtimeWindow(QtWidgets.QMainWindow):
+    """
+    The plane on the DEM: the controls that aim it, and the loop that redraws it.
+
+    Everything that is not about this one calculation -- the map underneath,
+    the blitting, the navigation, the legend -- lives in `MapView`, so that the
+    next tool inherits it instead of copying it.
+    """
 
     PICK_RADIUS_PX = 12
-    ZOOM_STEP = 1.3
 
     # QDial puts its minimum at six o'clock, not at twelve: measured by
     # grabbing the widget and hunting for the needle, value 0 points 181 degrees
@@ -1111,17 +1075,6 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # an azimuth, so between the widget's scale and geological dip direction
     # there is only half a turn of offset.
     DIAL_NORTH_OFFSET = 180
-
-    # Where the legend goes. Categorised it runs to some thirty entries, and
-    # inside the map it covers the corner you were most likely looking at:
-    # beside it the map stays whole and the legend grows in its own column.
-    # Hidden is for when the tints are already known and the map just has to be
-    # read -- or for a figure whose caption lists them elsewhere.
-    LEGEND_PLACEMENTS = (
-        ("beside the map", "beside"),
-        ("inside the map", "inside"),
-        ("hidden", "hidden"),
-    )
 
     def __init__(
         self,
@@ -1137,8 +1090,6 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.dem = dem
         self.overlay = overlay
-        self.background = None
-        self.legend = None
         self.dragging = False
         self.frame_times = deque(maxlen=20)
         self.convergence = MeridianConvergence(dem.crs)
@@ -1176,24 +1127,17 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     # -- construction -----------------------------------------------------
 
     def _build_ui(self, attitude, legend):
-        self.figure = Figure(figsize=(8, 8), layout="constrained")
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.axes = self.figure.add_subplot(111)
+        self.map_view = MapView(self.dem, self.overlay, legend=legend)
 
-        self.toolbar = Toolbar(self.canvas, self, self.save_screenshot, self.schedule_shade_refresh)
+        # The legend needs the entries for the artists this tool draws; the
+        # backdrop's the map adds by itself.
+        self.map_view.legend_handles_provider = self._legend_handles
 
-        # Reloading the hillshade is paid for in tens of milliseconds: too much
-        # for every notch of the wheel, about right once the hand stops. Hence
-        # the delay.
-        self.shade_timer = QtCore.QTimer(self)
-        self.shade_timer.setSingleShot(True)
-        self.shade_timer.timeout.connect(self._refresh_shade)
-
-        self.canvas.mpl_connect("draw_event", self._on_draw)
-        self.canvas.mpl_connect("button_press_event", self._on_press)
-        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
-        self.canvas.mpl_connect("button_release_event", self._on_release)
-        self.canvas.mpl_connect("scroll_event", self._on_scroll)
+        self.map_view.pressed.connect(self._on_map_pressed)
+        self.map_view.dragged.connect(self._on_map_dragged)
+        self.map_view.released.connect(self._on_map_released)
+        self.map_view.save_requested.connect(self.save_screenshot)
+        self.map_view.status.connect(self.statusBar().showMessage)
 
         # The dial for the hand, the box for the number. The dial alone steps by
         # one degree, and meridian convergence here is 0.8: without the tenth of
@@ -1252,15 +1196,17 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         self.side_label = QtWidgets.QLabel()
         self.side_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
-        # The box is the authoritative source here too: `_apply_legend` takes no
-        # argument, it reads where the legend goes off this widget.
+        # Where the legend goes is the map's business; the box that says so is
+        # a control, and belongs in the panel with the others.
         self.legend_combo = QtWidgets.QComboBox()
-        for text, mode in self.LEGEND_PLACEMENTS:
+        for text, mode in MapView.LEGEND_PLACEMENTS:
             self.legend_combo.addItem(text, mode)
 
-        modes = [mode for _, mode in self.LEGEND_PLACEMENTS]
+        modes = [mode for _, mode in MapView.LEGEND_PLACEMENTS]
         self.legend_combo.setCurrentIndex(modes.index(legend) if legend in modes else 0)
-        self.legend_combo.currentIndexChanged.connect(lambda _: self._apply_legend())
+        self.legend_combo.currentIndexChanged.connect(
+            lambda _: self.map_view.set_legend_placement(self.legend_combo.currentData())
+        )
 
         # The source point, typeable as well as draggable: in the field a
         # station has coordinates, and re-entering them by hunting with the
@@ -1352,12 +1298,6 @@ class RealtimeWindow(QtWidgets.QMainWindow):
             button.clicked.connect(slot)
             layout.addWidget(button)
 
-        map_side = QtWidgets.QWidget()
-        map_layout = QtWidgets.QVBoxLayout(map_side)
-        map_layout.setContentsMargins(0, 0, 0, 0)
-        map_layout.addWidget(self.toolbar)
-        map_layout.addWidget(self.canvas, stretch=1)
-
         # The panel has five groups and no longer fits on a short screen: inside
         # a scroll area it shortens instead of cutting the buttons off.
         panel = QtWidgets.QScrollArea()
@@ -1369,7 +1309,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         central = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout(central)
-        main_layout.addWidget(map_side, stretch=1)
+        main_layout.addWidget(self.map_view, stretch=1)
         main_layout.addWidget(panel)
         self.setCentralWidget(central)
 
@@ -1378,143 +1318,72 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         )
 
     def _draw_base_map(self):
-        self.shade_image = self.axes.imshow(
-            self.dem.hillshade,
-            cmap="gray",
-            extent=self.dem.extent,
-            origin="upper",
-            interpolation="bilinear",
-        )
-        self.shade_step = self.dem.decimation
-        epsg = self.dem.crs.to_epsg() if self.dem.crs else "?"
-        self.axes.set_xlabel(f"E (m, EPSG:{epsg})")
-        self.axes.set_ylabel("N (m)")
-        self.axes.set_aspect("equal")
+        axes = self.map_view.axes
 
-        if self.overlay is not None:
-            self.overlay.draw(self.axes)
+        self.map_view.draw_base_map()
 
-        # animated=True keeps these artists out of the normal draw: only
-        # blitting redraws them, which is what keeps the loop inside the frame.
+        # Registered with the map as animated: they stay out of the normal draw
+        # and only blitting redraws them, which is what keeps the loop inside
+        # the frame.
         #
         # A single Line2D with NaN separators, not a LineCollection: the
         # marching-squares chords are thousands of loose segments, and for
         # matplotlib one broken path costs 4-5 times less than as many separate
         # paths (measured: 2.0 ms against 9.1 on 1000x1000).
-        (self.intersections,) = self.axes.plot(
-            [], [], "-", color="red", linewidth=1.2, animated=True
-        )
+        (line,) = axes.plot([], [], "-", color="red", linewidth=1.2)
+        self.intersections = self.map_view.add_animated(line)
 
-        (self.source_marker,) = self.axes.plot(
+        (marker,) = axes.plot(
             [self.source_point[0]],
             [self.source_point[1]],
             marker="o",
             color="yellow",
             markeredgecolor="black",
             markersize=8,
-            animated=True,
         )
+        self.source_marker = self.map_view.add_animated(marker)
 
         corner, width, height = self.window.rectangle_xy()
-        self.window_patch = Rectangle(
-            corner,
-            width,
-            height,
-            fill=False,
-            edgecolor="orange",
-            linestyle="--",
-            linewidth=1.0,
-            animated=True,
+        self.window_patch = self.map_view.add_animated(
+            Rectangle(
+                corner,
+                width,
+                height,
+                fill=False,
+                edgecolor="orange",
+                linestyle="--",
+                linewidth=1.0,
+            )
         )
-        self.axes.add_patch(self.window_patch)
+        axes.add_patch(self.window_patch)
 
-        self._apply_legend()
-
-        # The full view has to go at the bottom of the bar's stack, or "home"
-        # takes you back to the first framing the bar happened to see, which is
-        # some arbitrary point of the zoom and not the extent of the DEM.
-        self.toolbar.update()
-        self.toolbar.push_current()
+        self.map_view.refresh_legend()
+        self.map_view.anchor_home()
 
     def _legend_handles(self):
         """
-        The legend has to be built by hand: animated artists do not show up in
-        the normal draw, and geopandas polygons carry no handler.
+        This tool's own legend entries. Built by hand because animated artists
+        do not show up in the normal draw.
         """
 
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
-        handles = [
+        return [
             Line2D([], [], color="red", linewidth=1.2, label="intersection"),
             Patch(facecolor="none", edgecolor="orange", linestyle="--", label="compute window"),
         ]
 
-        if self.overlay is not None:
-            handles.extend(self.overlay.legend_handles())
-
-        return handles
-
-    def _apply_legend(self):
-        """
-        Rebuilds the legend where the box says it goes, the map included.
-
-        Rebuilt and not hidden: a legend made invisible beside the map would
-        still hold its column, and the map would stay narrow to explain
-        nothing. Outside the axes it is `figure.legend` and not `axes.legend`,
-        because only that way does the layout reserve the column for it instead
-        of letting it spill over; and it lives in the figure, not in a Qt widget
-        alongside, or it would drop out of both outputs -- the saved screenshot
-        and the copied one.
-        """
-
-        if self.legend is not None:
-            self.legend.remove()
-            self.legend = None
-
-        mode = self.legend_combo.currentData()
-
-        if mode != "hidden":
-            # With distinct units the entries are a dozen instead of three, and
-            # at normal body size they would not fit in height.
-            categorized = self.overlay is not None and self.overlay.is_categorized
-            style = dict(
-                handles=self._legend_handles(),
-                fontsize="x-small" if categorized else "small",
-                framealpha=0.85,
-            )
-
-            self.legend = (
-                self.axes.legend(loc="upper right", **style)
-                if mode == "inside"
-                else self.figure.legend(loc="outside right upper", **style)
-            )
-
-        # The axes box has just moved: the blitting background cut on the
-        # previous one would be worth nothing now. The draw_event fired from
-        # here recaptures it.
-        self.canvas.draw()
-
     # -- interaction ------------------------------------------------------
 
-    def _on_draw(self, event):
-        """The background only changes on resize or zoom: here it is recaptured."""
-
-        self.background = self.canvas.copy_from_bbox(self.axes.bbox)
-        self._draw_animated()
-
-    def _draw_animated(self):
-        self.axes.draw_artist(self.window_patch)
-        self.axes.draw_artist(self.intersections)
-        self.axes.draw_artist(self.source_marker)
-
-    def _near_source(self, event):
+    def _near_source(self, x, y):
         """Nearness measured in screen pixels, not in metres: the threshold has
         to stay the same at every zoom scale."""
 
-        px, py = self.axes.transData.transform(self.source_point[:2])
+        px, py = self.map_view.display_xy(*self.source_point[:2])
+        ex, ey = self.map_view.display_xy(x, y)
 
-        return math.hypot(event.x - px, event.y - py) <= self.PICK_RADIUS_PX
+        return math.hypot(ex - px, ey - py) <= self.PICK_RADIUS_PX
 
     def _move_source(self, x, y):
         surface = self.dem.elevation_at(x, y)
@@ -1680,97 +1549,30 @@ class RealtimeWindow(QtWidgets.QMainWindow):
     def dip_angle(self):
         return float(self.dip_angle_spin.value())
 
-    def _navigating(self):
-        """True while pan or rubber-band zoom are active in the bar.
+    def _on_map_pressed(self, x, y):
+        """A click on the map: on the point it starts a drag, elsewhere it
+        moves the point there. Pan and zoom never get this far."""
 
-        Without this check a pan would drag the source point along too, because
-        the two gestures are the same one: left button held down and moved."""
-
-        return bool(self.toolbar.mode)
-
-    def _on_press(self, event):
-        if self._navigating() or event.inaxes is not self.axes or event.xdata is None:
-            return
-
-        if self._near_source(event):
+        if self._near_source(x, y):
             self.dragging = True
             return
 
-        self._move_source(event.xdata, event.ydata)
+        self._move_source(x, y)
         self._recenter_window()
         self.update_intersection()
 
-    def _on_scroll(self, event):
-        """Zoom around the cursor, which stays put on the point it was on."""
-
-        if event.inaxes is not self.axes or event.xdata is None:
-            return
-
-        factor = 1.0 / self.ZOOM_STEP if event.button == "up" else self.ZOOM_STEP
-
-        for axis, limits, anchor in (
-            (self.axes.set_xlim, self.axes.get_xlim(), event.xdata),
-            (self.axes.set_ylim, self.axes.get_ylim(), event.ydata),
-        ):
-            low, high = limits
-            axis((anchor + (low - anchor) * factor, anchor + (high - anchor) * factor))
-
-        # Every notch goes on the stack, so the bar's back/forward arrows
-        # retrace the zooms made with the wheel as well.
-        self.toolbar.push_current()
-
-        # The background has changed: a full draw is needed, and the draw_event
-        # recaptures it for the blitting of the frames that follow.
-        self.canvas.draw()
-        self.schedule_shade_refresh()
-
-    def schedule_shade_refresh(self, delay_ms=180):
-        self.shade_timer.start(delay_ms)
-
-    def _refresh_shade(self):
-        """Re-reads the hillshade for the current view, if anything changes."""
-
-        xmin, xmax = self.axes.get_xlim()
-        ymin, ymax = self.axes.get_ylim()
-
-        result = self.dem.shade_for(xmin, xmax, ymin, ymax)
-        if result is None:
-            return
-
-        shade, extent, step = result
-        if step == self.shade_step and extent == list(self.shade_image.get_extent()):
-            return
-
-        started = perf_counter()
-
-        # set_extent rescales the axes if you let it, and the view would jump on
-        # every reload: the limits have to be put back the way they were.
-        limits = self.axes.get_xlim(), self.axes.get_ylim()
-        self.shade_image.set_data(shade)
-        self.shade_image.set_extent(extent)
-        self.axes.set_xlim(limits[0])
-        self.axes.set_ylim(limits[1])
-        self.shade_step = step
-
-        self.canvas.draw()
-
-        metres = self.dem.res_x * step
-        self.statusBar().showMessage(
-            f"background redrawn at {metres:.0f} m/cell in {(perf_counter() - started) * 1000:.0f} ms"
-        )
-
-    def _on_motion(self, event):
-        if not self.dragging or event.inaxes is not self.axes or event.xdata is None:
+    def _on_map_dragged(self, x, y):
+        if not self.dragging:
             return
 
         # During a drag the window stays put: re-reading it at every step would
         # cost 4.9 ms on 1000x1000, and the trace inside the window is right
         # anyway, because the plane is unbounded and the source point need not
         # sit inside it. It recentres on release.
-        self._move_source(event.xdata, event.ydata)
+        self._move_source(x, y)
         self.update_intersection()
 
-    def _on_release(self, event):
+    def _on_map_released(self):
         if not self.dragging:
             return
 
@@ -1825,14 +1627,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         else:
             self.intersections.set_data([], [])
 
-        if self.background is None:
-            self.canvas.draw()
-        else:
-            self.canvas.restore_region(self.background)
-            self._draw_animated()
-            self.canvas.blit(self.axes.bbox)
-
-        self.canvas.flush_events()
+        self.map_view.blit()
         drawn = perf_counter()
 
         self.frame_times.append(drawn - start)
@@ -1872,31 +1667,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
     # -- outputs ----------------------------------------------------------
 
-    def _rendered_figure(self, path, dpi=150):
-        """
-        Saves the figure with the animated artists in it too.
-
-        An animated artist takes no part in the normal draw, so savefig on its
-        own would give back the map without the trace. Here they are turned
-        off, it is saved, they are turned back on, and the final draw remakes
-        the blitting background.
-        """
-
-        animated = [self.intersections, self.source_marker, self.window_patch]
-
-        for artist in animated:
-            artist.set_animated(False)
-
-        try:
-            self.figure.savefig(path, dpi=dpi)
-        finally:
-            for artist in animated:
-                artist.set_animated(True)
-            self.canvas.draw()
-
     def copy_screenshot(self):
-        QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
-        self.statusBar().showMessage("screenshot copied to the clipboard")
+        self.map_view.copy_screenshot()
 
     def save_screenshot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
@@ -1905,7 +1677,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         if not path:
             return
 
-        self._rendered_figure(path)
+        self.map_view.rendered_figure(path)
         self.statusBar().showMessage(f"screenshot saved to {path}")
 
     def save_settings(self):
@@ -2114,7 +1886,7 @@ def main():
     )
     parser.add_argument(
         "--legend",
-        choices=[mode for _, mode in RealtimeWindow.LEGEND_PLACEMENTS],
+        choices=[mode for _, mode in MapView.LEGEND_PLACEMENTS],
         default="beside",
         help="where to put the legend at startup (default 'beside'); changeable from the panel",
     )

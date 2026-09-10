@@ -16,7 +16,13 @@ while you work.
 
 ### Status
 
-`realtime_intersection.py`, at the repository root, is the part that runs.
+`realtime_intersection.py`, at the repository root, is the part that runs. Next
+to it, `app/` holds what is not about any one calculation: `app/mapview.py` is
+the map itself — hillshade, vector backdrop, navigation, legend and the
+blitting surface — extracted so that the next tool inherits the loop rather
+than copying it. The name is `app` and not `gsurf` because the old `gSurf/`
+package is still in the tree, and on a case-insensitive filesystem the two
+would be one directory.
 
 The `gSurf/` package is the older application and **does not currently run**:
 it is kept for the code worth porting, not for use. `python -m gSurf` fails
