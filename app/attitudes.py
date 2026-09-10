@@ -95,7 +95,7 @@ class AttitudeSource:
         # A horizontal bed has no dip direction: whatever the field holds --
         # 999 in the CARG sheets, a blank, last measurement's leftover -- it is
         # not a bearing, and the pole is vertical whichever way it is read.
-        azimuth = np.where(dip == 0.0, 0.0, azimuth)
+        azimuth = np.where(dip == 0.0, 0.0, azimuth % 360.0)
 
         self.frame = frame
         self.xy = np.c_[frame.geometry.x.to_numpy(), frame.geometry.y.to_numpy()]
@@ -145,7 +145,13 @@ class AttitudeSource:
         # Zero dip is exempt: the azimuth is not read, so it cannot be wrong.
         needs_azimuth = dip_sane & (dip > 0.0)
         azimuth_known = np.isfinite(azimuth)
-        azimuth_sane = azimuth_known & (azimuth >= 0.0) & (azimuth < 360.0)
+
+        # 360 inclusive, and not the half-open range a normalised azimuth
+        # lives in. 360 is how north gets written down: on the Marsico Nuovo
+        # sheet ten attitudes carry it and not one carries 0, so a half-open
+        # rule threw away every north-dipping bed on the map and called them
+        # errors. It is normalised away below, not refused.
+        azimuth_sane = azimuth_known & (azimuth >= 0.0) & (azimuth <= 360.0)
 
         dropped["dip direction missing"] = int((needs_azimuth & ~azimuth_known).sum())
         dropped["dip direction outside 0-360"] = int(

@@ -239,6 +239,13 @@ pedantry — the CARG sheets write 999 there, and a reader that took it at face
 value would drop every horizontal bed on the map, or worse, keep it as a
 bearing. Whatever is dropped and why is printed on the way in, never silently.
 
+**And 360 is north.** The admissible range is closed at both ends, not the
+half-open one a normalised azimuth lives in: on the Marsico Nuovo sheet ten
+attitudes are written 360 and not one is written 0, so a half-open rule threw
+away every north-dipping bed there and called them errors. It cost nothing on
+the Potenza-Irsina sheet, which happens to contain no 360 at all — which is the
+argument for trying a reader on a second survey before believing it.
+
 ### Performance
 
 Measured on the 234 Mpx 5 m mosaic, dragging the dial, PyQt6 with matplotlib
