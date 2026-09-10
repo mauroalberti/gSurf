@@ -53,6 +53,28 @@ the misah kernel in 2026. Development is on `master` here on GitLab; the
 GitHub repository is archived, and the old `profiles` branch survives only
 there.
 
+### Checks
+
+```bash
+python checks/run.py            # off-screen, about ten seconds
+python checks/run.py --show     # let the windows appear
+```
+
+Seventy-eight assertions over three scripts, each also runnable on its own.
+They drive real windows through synthesized mouse events, so Qt is put in its
+off-screen mode unless you ask otherwise.
+
+They are checks and not unit tests, in that most of them assert against
+something known from outside the code: a fold axis recovered from a synthetic
+fold that has one by construction, a right-hand-rule strike agreeing with a dip
+direction, a regated field equalling a recomputed one. `check_interaction.py`
+in particular was written to run against either side of a refactor, which is
+how the map was lifted out of the intersection tool without changing it — the
+same clicks, the same window offsets, the same point counts, digit for digit.
+
+`checks/synthetic.py` is not a check but the bench the frame costs quoted below
+were measured on, and builds the synthetic DEM the others use.
+
 ### Requirements
 
 Python 3.9+, and:
