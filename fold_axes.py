@@ -64,7 +64,14 @@ from PyQt6 import QtCore, QtWidgets
 from matplotlib.patches import Circle
 
 from app.attitudes import AttitudeSource
-from app.folds import Gate, field_cost, fold_axis, fold_axis_field, grid_centres
+from app.folds import (
+    Gate,
+    describe_sampling,
+    field_cost,
+    fold_axis,
+    fold_axis_field,
+    grid_centres,
+)
 from app.mapview import MapView, fit_to_screen
 from app.session import Session
 from app.stereonet import StereonetView
@@ -181,6 +188,17 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self.step_spin.setSuffix(" m  step")
         self.step_spin.valueChanged.connect(self._refresh_cost)
 
+        # Two different kinds of thing, so two labels. The cost says how long
+        # you will wait; the sampling says what the answer is worth, and a
+        # reader who takes a field of a thousand axes for a thousand
+        # observations has misread it by a factor of fifty. Sharing one grey
+        # block would have given them the same weight, and the second one sits
+        # closest to the control that sets it.
+        self.sampling_label = QtWidgets.QLabel()
+        self.sampling_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.sampling_label.setWordWrap(True)
+        self.sampling_label.setStyleSheet("color: #7a5c00; font-size: 10px;")
+
         self.cost_label = QtWidgets.QLabel()
         self.cost_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.cost_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -214,6 +232,7 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         layout.addSpacing(8)
         layout.addWidget(QtWidgets.QLabel("Grid"))
         layout.addWidget(self.step_spin)
+        layout.addWidget(self.sampling_label)
         layout.addWidget(self.cost_label)
         layout.addWidget(self.show_refused_check)
 
@@ -522,9 +541,11 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         seconds = cost["seconds"]
         spelled = f"{seconds:.1f} s" if seconds >= 1.0 else f"{seconds * 1000:.0f} ms"
 
+        self.sampling_label.setText(
+            describe_sampling(self._field_bounds(), self.radius, float(self.step_spin.value()))
+        )
         self.cost_label.setText(
-            f"{cost['cells']} cells, about {cost['occupied']} with data\n"
-            f"roughly {spelled}"
+            f"{cost['cells']} cells, about {cost['occupied']} with data - roughly {spelled}"
         )
 
     def compute_field(self):
@@ -551,7 +572,11 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         dialog.setValue(len(centres))
 
         self._draw_field()
-        self.statusBar().showMessage(f"{self.field.summary()} in {elapsed:.1f} s")
+
+        # The time first: the summary ends with the sampling clause, and an
+        # elapsed time tacked after it read as though tiling the area were what
+        # took 1.8 seconds.
+        self.statusBar().showMessage(f"computed in {elapsed:.1f} s - {self.field.summary()}")
 
     def clear_field(self):
         self.field = None

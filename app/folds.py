@@ -225,6 +225,13 @@ class FoldAxisField:
 
         return self
 
+    @property
+    def bounds(self):
+        left, bottom = self.centres.min(axis=0)
+        right, top = self.centres.max(axis=0)
+
+        return float(left), float(bottom), float(right), float(top)
+
     def summary(self):
         total, taken = len(self), int(self.admitted.sum())
         occupied = int(self.occupied.sum())
@@ -238,7 +245,57 @@ class FoldAxisField:
             detail = ", ".join(f"{count} {reason}" for reason, count in self.refusals.items())
             text += f" ({detail})"
 
-        return text
+        # Said again after the fact, and not only before. A count of axes is
+        # the number that gets quoted, and it is the one that most needs the
+        # overlap beside it.
+        return f"{text}; {describe_sampling(self.bounds, self.radius, self.step)}"
+
+
+def sampling(bounds, radius, step):
+    """
+    How much a grid overlaps itself, which is not a thing the controls show.
+
+    The radius and the step are set in two different places and their ratio is
+    never named, so a field can be read as though its cells were separate
+    observations when they are mostly the same measurements counted again. A
+    circular window of radius R laid down every S metres covers pi R^2 / S^2
+    cells, so that is how many cells each attitude falls into: at r = 2000 and
+    a step of 500, fifty. Neighbouring cells then share nine tenths of their
+    data, and a map of a thousand axes carries perhaps fifty windows' worth of
+    it.
+
+    The two numbers multiply back to the cell count -- cells = per_attitude x
+    tiling -- which is the whole point: a denser step buys resolution in the
+    picture and no further information under it.
+
+    `tiling` counts windows that do not overlap, which is geometry. It is not a
+    count of independent observations: structures are continuous, and two
+    windows that merely fail to touch can still be looking at the same fold.
+    """
+
+    left, bottom, right, top = bounds
+    area = max(0.0, right - left) * max(0.0, top - bottom)
+    window = math.pi * radius * radius
+
+    return dict(
+        per_attitude=window / (step * step) if step > 0 else float("inf"),
+        tiling=area / window if window > 0 else 0.0,
+        overlapping=step < 2.0 * radius,
+    )
+
+
+def describe_sampling(bounds, radius, step):
+    """The overlap in one line, for a panel or a status bar."""
+
+    counts = sampling(bounds, radius, step)
+
+    if not counts["overlapping"]:
+        return "cells do not overlap"
+
+    return (
+        f"each attitude in ~{counts['per_attitude']:.0f} cells; "
+        f"~{counts['tiling']:.0f} windows would tile the area"
+    )
 
 
 def grid_centres(bounds, step):

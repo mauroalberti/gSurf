@@ -171,8 +171,25 @@ and the length of a bar cannot carry it. `Export grid` writes the cells that
 hold data, refused ones included, with their trend in both norths, K, C, n, the
 verdict and the thresholds that produced it.
 
-The step decides the cost, so the cost of the step currently typed is shown
-beside it, before the button rather than after. On the 1757 CARG attitudes:
+**A grid overlaps itself, and the panel says by how much.** A circular window
+of radius R laid down every S metres covers πR²/S² cells, so at r = 2000 with a
+500 m step every attitude falls into fifty of them and neighbouring cells share
+nine tenths of their data. The two controls sit in different groups and their
+ratio is never a thing you set, so a field of a thousand axes reads as a
+thousand observations when it carries perhaps fifty windows' worth. The line
+under the step box names both numbers — `each attitude in ~50 cells; ~50
+windows would tile the area` — and they multiply back to the cell count, which
+is the point: a denser step buys resolution in the picture and no further
+information under it. The same line follows the field into the status bar,
+because the count of axes is what gets quoted.
+
+The tiling number is geometry, not statistics. Windows that fail to overlap
+are still not independent observations: a fold is continuous, and two windows
+that do not touch can be looking at the same one.
+
+The step also decides the cost, so the cost of the step currently typed is
+shown beside it, before the button rather than after. On the 1757 CARG
+attitudes:
 
 | step | cells | with data | fold axes | time |
 |---|---|---|---|---|
