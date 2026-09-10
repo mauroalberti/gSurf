@@ -19,7 +19,9 @@ the same mathematics.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -51,17 +53,29 @@ class Gate:
         if result is None:
             return "no measurement"
 
-        if result.n < self.min_points:
-            return f"{result.n} attitudes, fewer than {self.min_points}"
+        return self.refusal_for(result.n, result.k, result.c)
 
-        if math.isnan(result.k):
+    def refusal_for(self, n, k, c):
+        """
+        The same rule, on the three numbers alone.
+
+        A field keeps its cells as arrays and not as objects, and this is what
+        lets the gate be re-applied to one without recomputing a single tensor.
+        One rule with two callers, so that a threshold moved on screen cannot
+        mean something different from the same threshold at a frame.
+        """
+
+        if n < self.min_points:
+            return f"{n} attitudes, fewer than {self.min_points}"
+
+        if math.isnan(k):
             return "no shape: the three axes are equal"
 
-        if result.k > self.max_k:
-            return f"K = {result.k:.2f}: a cluster, not a girdle"
+        if k > self.max_k:
+            return f"K = {k:.2f}: a cluster, not a girdle"
 
-        if result.c < self.min_c:
-            return f"C = {result.c:.2f}: too weak to have a direction"
+        if c < self.min_c:
+            return f"C = {c:.2f}: too weak to have a direction"
 
         return ""
 
@@ -131,4 +145,242 @@ def fold_axis(poles):
         principal=tuple((float(axis.d[0]), float(axis.d[1])) for axis in principal),
         k=float(k),
         c=float(c),
+    )
+
+
+# -- the same question, everywhere at once --------------------------------
+
+
+@dataclass
+class FoldAxisField:
+    """
+    One window's answer per cell, as arrays that line up with each other.
+
+    Aligned arrays and a tally rather than a list of objects, which is the shape
+    misah's `best_fit_planes` settled on for the same kind of result: a field is
+    read column-wise -- every trend, every K -- far more often than cell by cell,
+    and a thousand small objects would be built to be immediately taken apart.
+
+    `admitted` is the column that matters. A field where every cell carries an
+    axis is a field that has not been read: on the Potenza-Irsina sheet three
+    windows in four are clusters, and drawing those would be drawing noise with
+    the confidence of a measurement.
+    """
+
+    centres: np.ndarray         # (M, 2), the window centres in map coordinates
+    counts: np.ndarray          # (M,) attitudes in each
+    trends: np.ndarray          # (M,) axis trend, true azimuth; NaN where none
+    plunges: np.ndarray         # (M,)
+    k: np.ndarray               # (M,) Woodcock shape; NaN where none
+    c: np.ndarray               # (M,)
+    admitted: np.ndarray        # (M,) bool: cleared the gate
+    radius: float
+    step: float
+    gate: Gate
+    refusals: dict = field(default_factory=dict)
+
+    def __len__(self):
+        return len(self.centres)
+
+    @property
+    def occupied(self):
+        """Cells with at least one attitude in them."""
+
+        return self.counts > 0
+
+    def regate(self, gate):
+        """
+        Decides the whole field again against a different gate, in place.
+
+        No tensor is recomputed: K, C and the count are what the gate reads, and
+        they are already here. That is the payoff of keeping a field as arrays
+        rather than as a picture -- a threshold is a question asked of a result,
+        not part of computing it, and sweeping one over an existing field is the
+        only way to see how much of the answer depends on where it was put.
+        """
+
+        self.gate = gate
+        refusals = {}
+
+        for index in range(len(self)):
+            if self.counts[index] == 0:
+                self.admitted[index] = False
+                continue
+
+            refusal = gate.refusal_for(
+                int(self.counts[index]), float(self.k[index]), float(self.c[index])
+            )
+            self.admitted[index] = not refusal
+
+            if refusal:
+                if "fewer than" in refusal:
+                    kind = "too few attitudes"
+                elif "cluster" in refusal:
+                    kind = "cluster"
+                else:
+                    kind = "too weak"
+                refusals[kind] = refusals.get(kind, 0) + 1
+
+        self.refusals = refusals
+
+        return self
+
+    def summary(self):
+        total, taken = len(self), int(self.admitted.sum())
+        occupied = int(self.occupied.sum())
+
+        text = (
+            f"{total} cells at {self.step:.0f} m, r = {self.radius:.0f} m: "
+            f"{occupied} with data, {taken} fold axes"
+        )
+
+        if self.refusals:
+            detail = ", ".join(f"{count} {reason}" for reason, count in self.refusals.items())
+            text += f" ({detail})"
+
+        return text
+
+
+def grid_centres(bounds, step):
+    """
+    The centres of a square grid over an area, as an (M, 2) array.
+
+    The grid is anchored on the area's corner rather than on round coordinates:
+    a field is read against the data it came from, and a step that shifted with
+    the extent would make two runs on the same data incomparable.
+    """
+
+    left, bottom, right, top = bounds
+
+    xs = np.arange(left, right + step, step, dtype=float)
+    ys = np.arange(bottom, top + step, step, dtype=float)
+    gx, gy = np.meshgrid(xs, ys)
+
+    return np.c_[gx.ravel(), gy.ravel()]
+
+
+def field_cost(attitudes, centres, radius, gate=None):
+    """
+    What a field will cost, before it is asked for.
+
+    Measured on the Potenza-Irsina sheet, where the whole of it is the tensor:
+    a 16289-cell grid at 250 m takes 6.9 s, of which 6.0 is geogst and 0.9 the
+    search. The estimate is deliberately coarse -- it exists so that a step
+    typed by hand cannot start a computation of unknown length without saying
+    how long, not to be right to the millisecond.
+    """
+
+    gate = gate or Gate()
+
+    # Sampled rather than counted: counting every cell is doing the search
+    # twice, and the point is to answer before the work starts.
+    sample = centres[:: max(1, len(centres) // 200)]
+    found = [len(attitudes.within(x, y, radius)) for x, y in sample]
+
+    # Two and not `gate.min_points`: a tensor is computed wherever one is
+    # defined, so that the gate can be moved afterwards over its whole range.
+    # Counting from the gate's floor is what made this estimate read 1.5 s for a
+    # field that took 2.4.
+    computed = [n for n in found if n >= 2]
+    occupied_share = float(len(computed)) / len(found) if found else 0.0
+    mean_n = float(np.mean(computed)) if computed else 0.0
+
+    cells = len(centres)
+    occupied = int(round(cells * occupied_share))
+
+    # 17 microseconds per pole per window and a fixed 150 per window, fitted to
+    # four grids on the Potenza-Irsina sheet spanning 312 to 16289 cells; the
+    # search is about 55 nanoseconds per station per cell. Fitted to err high
+    # rather than to sit on the measurements: a wait that turns out shorter than
+    # promised costs nothing, and one that turns out longer is the reason for
+    # putting a number here at all. Within a factor of two across that range,
+    # which is what it claims and no more.
+    seconds = occupied * (mean_n * 17e-6 + 150e-6) + cells * len(attitudes) * 55e-9
+
+    return dict(cells=cells, occupied=occupied, mean_count=mean_n, seconds=seconds)
+
+
+def fold_axis_field(attitudes, centres, radius, gate=None, progress=None):
+    """
+    A fold axis under every window of a grid.
+
+    `progress` is called with the number of cells done and the total, and may
+    return False to give up -- a field of any size has to be interruptible,
+    because the step that makes it too slow is one keystroke away from the one
+    that does not.
+    """
+
+    gate = gate or Gate()
+    total = len(centres)
+
+    counts = np.zeros(total, dtype=int)
+    trends = np.full(total, np.nan)
+    plunges = np.full(total, np.nan)
+    k = np.full(total, np.nan)
+    c = np.full(total, np.nan)
+    admitted = np.zeros(total, dtype=bool)
+    refusals = {}
+
+    # Report about two hundred times whatever the size, rather than every fixed
+    # number of cells. A fixed stride of 256 left a grid of 121 cells with a
+    # single report at zero -- a progress bar that never moves and a Stop button
+    # that does nothing, on exactly the small fields where the wait is short
+    # enough that both go unnoticed and untested.
+    stride = max(1, min(256, total // 200))
+
+    for index, (x, y) in enumerate(centres):
+        if progress is not None and index % stride == 0:
+            if progress(index, total) is False:
+                break
+
+        inside = attitudes.within(x, y, radius)
+        counts[index] = len(inside)
+
+        # Computed from two poles up, and not from the gate's minimum, even
+        # though everything under it will be refused. The gate is a question
+        # asked of the result afterwards, and `regate` can only re-ask it over
+        # its whole range if the tensor is there to be asked about: stopping at
+        # today's `min_points` would silently make lowering it impossible. Two
+        # is where the tensor itself stops being defined, so that floor is the
+        # arithmetic's and not a policy.
+        if len(inside) < 2:
+            if len(inside):
+                refusals["too few attitudes"] = refusals.get("too few attitudes", 0) + 1
+            continue
+
+        result = fold_axis(attitudes.poles_at(inside))
+
+        if result is None:
+            continue
+
+        trends[index], plunges[index] = result.axis
+        k[index], c[index] = result.k, result.c
+
+        refusal = gate.refusal(result)
+        admitted[index] = not refusal
+
+        if refusal:
+            # The wording carries the numbers; the tally wants the kind.
+            if "fewer than" in refusal:
+                kind = "too few attitudes"
+            elif "cluster" in refusal:
+                kind = "cluster"
+            else:
+                kind = "too weak"
+            refusals[kind] = refusals.get(kind, 0) + 1
+
+    step = float(np.min(np.diff(np.unique(centres[:, 0])))) if len(centres) > 1 else 0.0
+
+    return FoldAxisField(
+        centres=centres,
+        counts=counts,
+        trends=trends,
+        plunges=plunges,
+        k=k,
+        c=c,
+        admitted=admitted,
+        radius=float(radius),
+        step=step,
+        gate=gate,
+        refusals=refusals,
     )

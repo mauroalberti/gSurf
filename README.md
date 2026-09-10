@@ -164,6 +164,36 @@ Read the same place at three radii and you see what the window is for. At
 312/13 from 38 attitudes with K = 0.59, at 5 km 312/19 from 162 — an axis that
 survives a change of scale is a structure, one that does not is a coincidence.
 
+**The grid** asks the same question everywhere at once: a window at every node
+of a square grid over the attitudes, `--step` apart. The ticks are drawn at the
+cells that pass, coloured by plunge — the plunge is half of what an axis is,
+and the length of a bar cannot carry it. `Export grid` writes the cells that
+hold data, refused ones included, with their trend in both norths, K, C, n, the
+verdict and the thresholds that produced it.
+
+The step decides the cost, so the cost of the step currently typed is shown
+beside it, before the button rather than after. On the 1757 CARG attitudes:
+
+| step | cells | with data | fold axes | time |
+|---|---|---|---|---|
+| 2000 m | 312 | 246 | 61 | 0.2 s |
+| 1000 m | 1104 | 932 | 241 | 0.7 s |
+| 500 m | 4140 | 3556 | 948 | 2.6 s |
+| 250 m | 16289 | 14025 | 3762 | 9.6 s |
+
+**Moving a threshold re-decides an existing grid without recomputing a single
+tensor** — 3 to 7 ms for the whole field, against seconds to build it. K, C and
+the count are what the gate reads and they are already there, which is the
+payoff of keeping a field as arrays rather than as a picture. On that sheet,
+sweeping K from 0.5 to 2.5 takes the field from 369 axes to 2049 out of 3556
+occupied cells; how much of a map depends on where a threshold was put is not a
+question you can answer by recomputing it four times, and it is not one to
+leave unasked.
+
+For the same reason the tensor is computed wherever it is defined — from two
+poles up — and not from `--min-points`. Stopping at today's minimum would make
+lowering it later impossible without recomputing, silently.
+
 ### Things worth knowing
 
 **Dip direction is true azimuth**, as a compass reads it once declination is
@@ -230,9 +260,19 @@ attitudes costs 4.5 ms a frame, of which the search is 0.1 ms and the
 orientation tensor 0.8; the rest is drawing two canvases. The tensor is
 geogst's, called once per frame — 0.39 ms for a window of 20 poles, 0.99 for
 68, 4.2 for 313 — which is affordable at a frame and is why there is no second
-copy of that mathematics here. A grid of ten thousand windows is a different
-question, and its answer belongs upstream in geogst as a vectorised orientation
-tensor.
+copy of that mathematics here.
+
+The grid was expected to be where that stopped being true, and it is not. A
+16289-cell field takes 9.6 s, of which geogst is 6.0 and the search 0.9: slow
+enough to want a progress bar and a Stop button, nowhere near slow enough to
+justify a second implementation of the orientation tensor. A vectorised one
+still belongs upstream in geogst if it is ever written, but nothing here is
+waiting for it.
+
+The search stayed a plain scan for the same reason. A KD-tree does the 16289
+windows in 0.046 s against 0.89 — nineteen times faster, and 13% of a field —
+which does not buy a dependency. It would if the tensor stopped dominating,
+which is the opposite of what happened.
 
 ### Related
 

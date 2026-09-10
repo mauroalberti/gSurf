@@ -10,7 +10,8 @@ is a window you move rather than a button you press.
 Usage:
     python fold_axes.py <attitudes.gpkg[:layer]> --dip-dir FIELD --dip FIELD
                         [--dem DEM] [--polygons PATH[:LAYER]] [--lines PATH[:LAYER]]
-                        [--radius M] [--strike-rhr] [--min-points N] [--max-k K]
+                        [--radius M] [--step M] [--strike-rhr]
+                        [--min-points N] [--max-k K]
 
 The attitude layer is the only thing required, and it is what the session is
 built on: with no DEM the projection and the extent come from the layer itself.
@@ -31,6 +32,13 @@ data rather than a fold axis. On the Potenza-Irsina sheet three windows in four
 fail that test. The axis is still drawn when it fails, in grey rather than
 hidden: watching it turn colour as the window crosses a hinge is the point of a
 live net, and a blank stereonet would say the same thing as no data at all.
+
+The same question can be asked everywhere at once: `Compute grid` puts a window
+at every node of a square grid `--step` apart and draws a tick where one passes,
+coloured by plunge. Moving a threshold afterwards re-decides the whole field
+without recomputing a tensor -- K, C and the count are what the gate reads and
+they are already there -- which is the only practical way to see how much of a
+map depends on where the threshold was put.
 
 Attitudes are read in true azimuth, as they are measured. The map is on the
 projection's grid, so the axis is turned onto the grid before it is drawn --
@@ -56,7 +64,7 @@ from PyQt6 import QtCore, QtWidgets
 from matplotlib.patches import Circle
 
 from app.attitudes import AttitudeSource
-from app.folds import Gate, fold_axis
+from app.folds import Gate, field_cost, fold_axis, fold_axis_field, grid_centres
 from app.mapview import MapView, fit_to_screen
 from app.session import Session
 from app.stereonet import StereonetView
@@ -71,16 +79,18 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
 
     PICK_RADIUS_PX = 12
 
-    def __init__(self, session, attitudes, radius=2000.0, gate=None, legend="beside"):
+    def __init__(self, session, attitudes, radius=2000.0, step=None, gate=None, legend="beside"):
         super().__init__()
 
         self.session = session
         self.attitudes = attitudes
         self.gate = gate or Gate()
         self.radius = float(radius)
+        self.step = float(step) if step else max(250.0, self.radius / 2.0)
         self.dragging = False
         self.result = None
         self.indices = np.empty(0, dtype=int)
+        self.field = None
 
         self.centre = list(session.center())
 
@@ -160,6 +170,24 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self.shape_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.shape_label.setStyleSheet("color: gray; font-size: 10px;")
 
+        # The grid asks the same question everywhere at once. Its step is the
+        # one number that decides whether that takes half a second or a minute,
+        # so the cost of the step currently typed is on screen beside it,
+        # before the button is pressed rather than after.
+        self.step_spin = QtWidgets.QSpinBox()
+        self.step_spin.setRange(25, 20000)
+        self.step_spin.setSingleStep(100)
+        self.step_spin.setValue(int(self.step))
+        self.step_spin.setSuffix(" m  step")
+        self.step_spin.valueChanged.connect(self._refresh_cost)
+
+        self.cost_label = QtWidgets.QLabel()
+        self.cost_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.cost_label.setStyleSheet("color: gray; font-size: 10px;")
+
+        self.show_refused_check = QtWidgets.QCheckBox("show cells that failed")
+        self.show_refused_check.toggled.connect(lambda _: self._draw_field())
+
         controls = QtWidgets.QWidget()
         controls.setMaximumWidth(300)
         layout = QtWidgets.QVBoxLayout(controls)
@@ -182,6 +210,21 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         layout.addWidget(QtWidgets.QLabel("A girdle needs"))
         layout.addWidget(self.min_points_spin)
         layout.addWidget(self.max_k_spin)
+
+        layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("Grid"))
+        layout.addWidget(self.step_spin)
+        layout.addWidget(self.cost_label)
+        layout.addWidget(self.show_refused_check)
+
+        for text, slot in (
+            ("Compute grid", self.compute_field),
+            ("Clear grid", self.clear_field),
+            ("Export grid...", self.export_field),
+        ):
+            button = QtWidgets.QPushButton(text)
+            button.clicked.connect(slot)
+            layout.addWidget(button)
 
         layout.addSpacing(8)
         for text, slot in (
@@ -256,14 +299,33 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         (tick,) = axes.plot([], [], "-", color="#d62728", linewidth=2.5)
         self.axis_tick = self.map_view.add_animated(tick)
 
+        # The grid's own artists are not animated: a field is computed once and
+        # then sits there, so it belongs in the background that blitting
+        # recaptures rather than being redrawn on every frame of a drag.
+        self.field_collection = None
+        self.field_colorbar = None
+
+        # Faint on purpose, and off by default. These are the cells whose
+        # answer was refused, and they exist to tell a blank patch that has no
+        # data from one whose data said no -- a distinction worth a whisper.
+        # Drawn at any real weight they outnumber the axes three to one and end
+        # up more prominent than the result, which is the confidence ordering
+        # backwards.
+        (refused,) = axes.plot(
+            [], [], linestyle="none", marker=".", markersize=1.5,
+            color="#c8c8c8", alpha=0.6, zorder=4,
+        )
+        self.refused_marker = refused
+
         self.map_view.refresh_legend()
         self.map_view.anchor_home()
+        self._refresh_cost()
 
     def _legend_handles(self):
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
-        return [
+        handles = [
             Line2D([], [], linestyle="none", marker=".", color="#555555", label="attitude"),
             Line2D(
                 [], [], linestyle="none", marker="o", markerfacecolor="#d62728",
@@ -272,6 +334,17 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
             Line2D([], [], color="#d62728", linewidth=2.5, label="fold axis"),
             Patch(facecolor="none", edgecolor="orange", linestyle="--", label="window"),
         ]
+
+        # No entry for the grid's own ticks: they are coloured by plunge, and a
+        # single swatch beside the word "grid axis" would say they are one
+        # colour. The colourbar is their legend.
+        if self.field is not None and self.show_refused_check.isChecked():
+            handles.append(
+                Line2D([], [], linestyle="none", marker=".", color="#c8c8c8",
+                       label="cell that failed")
+            )
+
+        return handles
 
     # -- interaction ------------------------------------------------------
 
@@ -317,6 +390,7 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
     def _on_radius_changed(self, value):
         self.radius = float(value)
         self.window_patch.set_radius(self.radius)
+        self._refresh_cost()
         self.update_window()
 
     def _on_gate_changed(self, value):
@@ -325,6 +399,17 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
             max_k=float(self.max_k_spin.value()),
             min_c=self.gate.min_c,
         )
+
+        # A grid already computed answers the new gate without recomputing
+        # anything: K, C and the count are what the gate reads and they are
+        # already in the field. Moving a threshold and watching how much of the
+        # map survives is how you find out whether the answer depends on it.
+        if self.field is not None:
+            self.field.regate(self.gate)
+            self._draw_field()
+            self.statusBar().showMessage(self.field.summary())
+
+        self._refresh_cost()
         self.update_window()
 
     # -- loop -------------------------------------------------------------
@@ -411,6 +496,195 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
             f"tensor {kernel_s * 1000:5.2f} ms   "
             f"draw {draw_s * 1000:5.1f} ms   "
             f"total {(search_s + kernel_s + draw_s) * 1000:5.1f} ms"
+        )
+
+    # -- the grid ---------------------------------------------------------
+
+    def _field_bounds(self):
+        """
+        The area to grid: where the attitudes are, not where the map is.
+
+        With a DEM in the session the map can be far larger than the data, and
+        gridding the difference would be computing thousands of empty cells to
+        draw nothing in them.
+        """
+
+        left, bottom = self.attitudes.xy.min(axis=0)
+        right, top = self.attitudes.xy.max(axis=0)
+
+        return float(left), float(bottom), float(right), float(top)
+
+    def _refresh_cost(self):
+        step = float(self.step_spin.value())
+        centres = grid_centres(self._field_bounds(), step)
+        cost = field_cost(self.attitudes, centres, self.radius, self.gate)
+
+        seconds = cost["seconds"]
+        spelled = f"{seconds:.1f} s" if seconds >= 1.0 else f"{seconds * 1000:.0f} ms"
+
+        self.cost_label.setText(
+            f"{cost['cells']} cells, about {cost['occupied']} with data\n"
+            f"roughly {spelled}"
+        )
+
+    def compute_field(self):
+        centres = grid_centres(self._field_bounds(), float(self.step_spin.value()))
+
+        dialog = QtWidgets.QProgressDialog(
+            f"{len(centres)} windows...", "Stop", 0, len(centres), self
+        )
+        dialog.setWindowTitle("Computing the grid")
+        dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(400)
+
+        def progress(done, total):
+            dialog.setValue(done)
+            QtWidgets.QApplication.processEvents()
+
+            return not dialog.wasCanceled()
+
+        started = perf_counter()
+        self.field = fold_axis_field(
+            self.attitudes, centres, self.radius, self.gate, progress=progress
+        )
+        elapsed = perf_counter() - started
+        dialog.setValue(len(centres))
+
+        self._draw_field()
+        self.statusBar().showMessage(f"{self.field.summary()} in {elapsed:.1f} s")
+
+    def clear_field(self):
+        self.field = None
+        self._draw_field()
+        self.statusBar().showMessage("grid cleared")
+
+    def _draw_field(self):
+        """
+        Draws the field, or takes it off the map.
+
+        The ticks are a LineCollection and not the single NaN-separated Line2D
+        that everything drawn per frame here is. That rule is about the cost of
+        a frame, and this is not paid per frame: a field is drawn once and then
+        captured into the blitting background, which buys the room to colour
+        every tick by its own plunge -- information the length of a bar cannot
+        carry, since a bar shortened by its plunge would read as a shallower
+        axis in a smaller window.
+        """
+
+        from matplotlib.collections import LineCollection
+
+        if self.field_colorbar is not None:
+            self.field_colorbar.remove()
+            self.field_colorbar = None
+
+        if self.field_collection is not None:
+            self.field_collection.remove()
+            self.field_collection = None
+
+        self.refused_marker.set_data([], [])
+
+        if self.field is not None:
+            taken = self.field.admitted
+            half = self.field.step * 0.45
+
+            if taken.any():
+                centres = self.field.centres[taken]
+                trends = np.array([
+                    self.session.convergence.to_grid(t, x, y)
+                    for t, (x, y) in zip(self.field.trends[taken], centres)
+                ])
+                dx = half * np.sin(np.radians(trends))
+                dy = half * np.cos(np.radians(trends))
+
+                segments = np.stack(
+                    [
+                        np.c_[centres[:, 0] - dx, centres[:, 1] - dy],
+                        np.c_[centres[:, 0] + dx, centres[:, 1] + dy],
+                    ],
+                    axis=1,
+                )
+
+                self.field_collection = LineCollection(
+                    segments, linewidths=1.6, cmap="viridis", zorder=7
+                )
+                self.field_collection.set_array(self.field.plunges[taken])
+                self.field_collection.set_clim(0.0, 90.0)
+                self.map_view.axes.add_collection(self.field_collection)
+
+                # A colour scale nobody can read is a decoration. The plunge is
+                # half of what an axis is, and a bar cannot carry it: a tick
+                # shortened by its own plunge would read as a shallower axis in
+                # a smaller window, which is a claim the data does not make.
+                self.field_colorbar = self.map_view.figure.colorbar(
+                    self.field_collection,
+                    ax=self.map_view.axes,
+                    fraction=0.035,
+                    pad=0.02,
+                    label="axis plunge (°)",
+                )
+
+            if self.show_refused_check.isChecked():
+                failed = self.field.occupied & ~taken
+                self.refused_marker.set_data(
+                    self.field.centres[failed, 0], self.field.centres[failed, 1]
+                )
+
+        # A full draw, not a blit: the field belongs to the background, and the
+        # draw_event this fires is what recaptures it with the field in it.
+        self.map_view.refresh_legend()
+
+    def export_field(self):
+        if self.field is None:
+            self.statusBar().showMessage("no grid to export - compute one first")
+            return
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export grid", str(self._suggested_name("_grid.gpkg")),
+            "GeoPackage (*.gpkg);;Shapefile (*.shp)",
+        )
+        if not path:
+            return
+
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        # Occupied cells only: an empty cell says nothing that the absence of a
+        # point does not say more compactly.
+        rows = np.flatnonzero(self.field.occupied)
+        centres = self.field.centres[rows]
+
+        grid_trends = [
+            self.session.convergence.to_grid(t, x, y) if np.isfinite(t) else None
+            for t, (x, y) in zip(self.field.trends[rows], centres)
+        ]
+
+        # Names within the ten characters a shapefile allows, and the gate
+        # repeated on every row: the thresholds are a choice, and a field whose
+        # verdicts cannot be checked against the rule that produced them is a
+        # picture rather than a measurement.
+        frame = gpd.GeoDataFrame(
+            {
+                "trend": self.field.trends[rows],
+                "plunge": self.field.plunges[rows],
+                "trend_grd": grid_trends,
+                "k": self.field.k[rows],
+                "c": self.field.c[rows],
+                "n": self.field.counts[rows],
+                "is_axis": self.field.admitted[rows],
+                "radius_m": self.field.radius,
+                "step_m": self.field.step,
+                "min_pts": self.field.gate.min_points,
+                "max_k": self.field.gate.max_k,
+                "min_c": self.field.gate.min_c,
+            },
+            geometry=[Point(x, y) for x, y in centres],
+            crs=self.session.crs,
+        )
+        frame.to_file(path)
+
+        self.statusBar().showMessage(
+            f"{len(frame)} cells exported to {path} "
+            f"({int(self.field.admitted[rows].sum())} of them fold axes)"
         )
 
     # -- outputs ----------------------------------------------------------
@@ -509,6 +783,8 @@ def main():
     parser.add_argument("--lines", metavar="PATH[:LAYER]", help="backdrop lines")
     parser.add_argument("--radius", type=float, default=2000.0, metavar="M",
                         help="window radius in metres (default 2000)")
+    parser.add_argument("--step", type=int, metavar="M",
+                        help="grid step in metres (default: half the radius)")
     parser.add_argument("--min-points", type=int, default=Gate.min_points, metavar="N",
                         help=f"attitudes a girdle needs (default {Gate.min_points})")
     parser.add_argument("--max-k", type=float, default=Gate.max_k, metavar="K",
@@ -569,6 +845,7 @@ def main():
         session,
         attitudes,
         radius=args.radius,
+        step=args.step,
         gate=Gate(min_points=args.min_points, max_k=args.max_k),
         legend=args.legend,
     )

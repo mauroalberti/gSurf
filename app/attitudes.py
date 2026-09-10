@@ -203,10 +203,16 @@ class AttitudeSource:
 
         A circle and not a cell: a cell would make the answer depend on which
         way the grid happens to be turned, and there is no north in the question
-        being asked. Scanned outright rather than through a spatial index --
-        measured on 1757 stations one window costs 0.05 ms against 0.013 with a
-        KD-tree, and neither is what a frame is spent on. A tree earns its place
-        when the windows are ten thousand and not one.
+        being asked.
+
+        Scanned outright rather than through a spatial index. One window on 1757
+        stations costs 0.05 ms against 0.013 with a KD-tree, and neither is what
+        a frame is spent on. This once read that a tree would earn its place at
+        ten thousand windows; measured, it does not -- a 16289-cell grid spends
+        0.89 s searching against 0.046 with a tree, out of 6.9 s in total, so the
+        tree would buy 13% of a field in exchange for a dependency. It would earn
+        its place if the tensor stopped dominating, which is the opposite of what
+        happened.
         """
 
         if not self.is_loaded:
