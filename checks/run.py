@@ -29,6 +29,7 @@ CHECKS = (
     ("check_interaction.py", "the map: clicks, drags, zoom, legend, screenshots"),
     ("check_session.py", "the session, and a map with no DEM under it"),
     ("check_folds.py", "fold axes against an axis that is known"),
+    ("check_launcher.py", "the launcher: the question each tool asks, and the handover"),
 )
 
 

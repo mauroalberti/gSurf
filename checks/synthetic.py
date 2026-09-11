@@ -53,14 +53,13 @@ def synthetic_dem(path, side=2000, cell=5.0):
 
 
 def open_window(ri, dem_path, **kwargs):
-    """The window, either side of the Session step. Returns (closeable, window)."""
+    """The window on a session of its own. Returns (closeable, window)."""
 
-    if hasattr(ri, "Session"):
-        session = ri.Session.open(dem_path=dem_path)
-        return session, ri.RealtimeWindow(session, **kwargs)
+    from gsurf.session import Session
 
-    dem = ri.Dem(dem_path)
-    return dem, ri.RealtimeWindow(dem, ri.Overlay(), **kwargs)
+    session = Session.open(dem_path=dem_path)
+
+    return session, ri.RealtimeWindow(session, **kwargs)
 
 
 def main():
@@ -72,7 +71,7 @@ def main():
 
     from PyQt6 import QtWidgets
 
-    import realtime_intersection as ri
+    from gsurf.tools import intersection as ri
 
     app = QtWidgets.QApplication(sys.argv)
 

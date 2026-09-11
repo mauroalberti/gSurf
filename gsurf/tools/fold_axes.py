@@ -8,15 +8,19 @@ over a whole map sheet is the average of every structure on it -- so the tool
 is a window you move rather than a button you press.
 
 Usage:
-    python fold_axes.py <attitudes.gpkg[:layer]> --dip-dir FIELD --dip FIELD
+    python -m gsurf               and pick it from the launcher
+    python -m gsurf.tools.fold_axes
+    python -m gsurf.tools.fold_axes <attitudes.gpkg[:layer]> --dip-dir FIELD --dip FIELD
                         [--dem DEM] [--polygons PATH[:LAYER]] [--lines PATH[:LAYER]]
                         [--radius M] [--step M] [--strike-rhr]
                         [--min-points N] [--max-k K]
 
-The attitude layer is the only thing required, and it is what the session is
-built on: with no DEM the projection and the extent come from the layer itself.
-A DEM, if given, is backdrop and nothing else -- this calculation never reads
-an elevation.
+With no arguments a dialog asks for the files, and asks for the two angle
+fields by offering the layer's numeric columns rather than making you remember
+what they are called. The attitude layer is the one it marks as required, and
+it is what the session is built on: with no DEM the projection and the extent
+come from the layer itself. A DEM, if given, is backdrop and nothing else --
+this calculation never reads an elevation.
 
 What the window reports is not one number but four, and the fourth is the one
 that decides whether the other three mean anything:
@@ -63,8 +67,8 @@ from PyQt6 import QtCore, QtWidgets
 
 from matplotlib.patches import Circle
 
-from app.attitudes import AttitudeSource
-from app.folds import (
+from gsurf.attitudes import AttitudeSource
+from gsurf.folds import (
     Gate,
     describe_sampling,
     field_cost,
@@ -72,10 +76,16 @@ from app.folds import (
     fold_axis_field,
     grid_centres,
 )
-from app.mapview import MapView, fit_to_screen
-from app.session import Session
-from app.stereonet import StereonetView
-from app.vectors import split_layer
+from gsurf.mapview import MapView, fit_to_screen
+from gsurf.sources import SourcesDialog, open_session
+from gsurf.stereonet import StereonetView
+from gsurf.vectors import split_layer
+
+# What this tool can be opened on. The attitudes are the data itself, so there
+# is nothing to compute without them; the DEM is backdrop here, which is why it
+# sits in the optional half of a tool that is otherwise about the same map as
+# the one that cannot run without it.
+WANTS = dict(attitudes="required", dem="optional", polygons="optional", lines="optional")
 
 
 class FoldAxesWindow(QtWidgets.QMainWindow):
@@ -792,14 +802,91 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         return self.session.suggested_name(suffix, tag=tag)
 
 
+def read_attitudes(session, spec, parent=None):
+    """
+    The attitude layer as a source, or None once the refusal has been shown.
+
+    The two ways in -- the command line and the dialog -- fail the same way and
+    in the same place, which is why this is not written twice.
+    """
+
+    attitudes = AttitudeSource(
+        spec["path"],
+        session.crs,
+        layer=spec.get("layer"),
+        dip_dir_field=spec.get("dip_dir_field"),
+        dip_field=spec.get("dip_field"),
+        is_rhr_strike=spec.get("is_rhr_strike", False),
+        bounds=session.bounds,
+    )
+    print(f"attitudes: {attitudes.summary()}")
+
+    if attitudes.problem:
+        QtWidgets.QMessageBox.critical(
+            parent, "Unusable attitudes", f"{spec['path']}\n\n{attitudes.problem}"
+        )
+        return None
+
+    return attitudes
+
+
+def refuse_geographic(session, parent=None):
+    """
+    True once a session in degrees has been refused, with the reason shown.
+
+    A window radius is in metres, and the search that uses it is a plain
+    distance between coordinates. On a geographic CRS those coordinates are
+    degrees, and the comparison would be quietly meaningless rather than wrong
+    in any way that shows: refused here, where it can still be said.
+    """
+
+    if session.crs is None or not session.crs.is_geographic:
+        return False
+
+    QtWidgets.QMessageBox.critical(
+        parent,
+        "Geographic CRS",
+        "The window radius is in metres and this session is in degrees "
+        f"(EPSG:{session.epsg}).\n\nReproject the attitudes, or give a "
+        "projected DEM, before looking for fold axes.",
+    )
+
+    return True
+
+
+def build(session, chosen, legend="beside"):
+    """
+    The window, on a session somebody else has already opened.
+
+    What the launcher calls. Radius, step and gate keep their defaults and are
+    all moved from inside the window, so the only thing taken out of `chosen`
+    is the attitude layer -- the one thing this tool cannot do without, and the
+    same layer that framed the session.
+    """
+
+    if refuse_geographic(session):
+        return None
+
+    source = read_attitudes(session, chosen["attitudes"])
+
+    if source is None:
+        return None
+
+    window = FoldAxesWindow(session, source, legend=legend)
+    fit_to_screen(window, 1280, 900)
+
+    return window
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("attitudes", help="point layer of attitudes, PATH[:LAYER]")
-    parser.add_argument("--dip-dir", required=True, metavar="FIELD",
+    parser.add_argument("attitudes", nargs="?",
+                        help="point layer of attitudes, PATH[:LAYER]; a dialog asks if missing")
+    parser.add_argument("--dip-dir", metavar="FIELD",
                         help="field holding the dip direction (or the strike, with --strike-rhr)")
-    parser.add_argument("--dip", required=True, metavar="FIELD",
+    parser.add_argument("--dip", metavar="FIELD",
                         help="field holding the dip angle")
     parser.add_argument("--strike-rhr", action="store_true",
                         help="read the azimuth field as a right-hand-rule strike")
@@ -818,52 +905,45 @@ def main():
                         choices=[mode for _, mode in MapView.LEGEND_PLACEMENTS])
     args = parser.parse_args()
 
+    chosen = dict(dem=args.dem)
+
     attitude_spec = split_layer(args.attitudes, "points")
 
-    backdrop = [
-        spec
-        for spec in (split_layer(args.polygons, "polygons"), split_layer(args.lines, "lines"))
-        if spec
-    ]
+    if attitude_spec:
+        attitude_spec.update(
+            dip_dir_field=args.dip_dir,
+            dip_field=args.dip,
+            is_rhr_strike=args.strike_rhr,
+        )
+        chosen["attitudes"] = attitude_spec
+
+    for backdrop in (split_layer(args.polygons, "polygons"), split_layer(args.lines, "lines")):
+        if backdrop:
+            chosen[backdrop["role"]] = backdrop
 
     # The QApplication before anything that could raise into a dialog.
     app = QtWidgets.QApplication(sys.argv)
 
-    # The attitude layer frames the session without being drawn by it: with no
-    # DEM it is what says where we are, but the stations are this tool's own
-    # data and it draws them itself.
-    session = Session.open(dem_path=args.dem, vectors=backdrop, frame_layers=[attitude_spec])
+    # Naming the layer is not the same as saying what its columns mean, and
+    # either can be left out: whatever is missing is asked for, with the layer
+    # and the fields already filled in from what was given.
+    if not attitude_spec or not args.dip_dir or not args.dip:
+        dialog = SourcesDialog(wants=WANTS, chosen=chosen, title="gSurf - fold axes")
+
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+
+        chosen = dialog.choices()
+
+    session = open_session(chosen)
     print(f"session: {session.summary()}")
 
-    # A window radius is in metres, and the search that uses it is a plain
-    # distance between coordinates. On a geographic CRS those coordinates are
-    # degrees, and the comparison would be quietly meaningless rather than
-    # wrong in any way that shows: refused here, where it can still be said.
-    if session.crs is not None and session.crs.is_geographic:
-        QtWidgets.QMessageBox.critical(
-            None,
-            "Geographic CRS",
-            "The window radius is in metres and this session is in degrees "
-            f"(EPSG:{session.epsg}).\n\nReproject the attitudes, or give a "
-            "projected DEM, before looking for fold axes.",
-        )
+    if refuse_geographic(session):
         return
 
-    attitudes = AttitudeSource(
-        attitude_spec["path"],
-        session.crs,
-        layer=attitude_spec.get("layer"),
-        dip_dir_field=args.dip_dir,
-        dip_field=args.dip,
-        is_rhr_strike=args.strike_rhr,
-        bounds=session.bounds,
-    )
-    print(f"attitudes: {attitudes.summary()}")
+    attitudes = read_attitudes(session, chosen["attitudes"])
 
-    if attitudes.problem:
-        QtWidgets.QMessageBox.critical(
-            None, "Unusable attitudes", f"{attitude_spec['path']}\n\n{attitudes.problem}"
-        )
+    if attitudes is None:
         return
 
     window = FoldAxesWindow(

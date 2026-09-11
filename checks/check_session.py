@@ -61,8 +61,8 @@ def field_data(directory):
 def main():
     from PyQt6 import QtWidgets
 
-    from app.mapview import MapView
-    from app.session import Session
+    from gsurf.mapview import MapView
+    from gsurf.session import Session
 
     app = QtWidgets.QApplication(sys.argv)
 

@@ -102,9 +102,9 @@ def as_layer(directory, name, xy, dip_dirs, dips, dip_dir_name="Immersione", dip
 def main():
     from PyQt6 import QtWidgets
 
-    from app.attitudes import AttitudeSource
-    from app.folds import Gate, fold_axis
-    from app.stereonet import StereonetView
+    from gsurf.attitudes import AttitudeSource
+    from gsurf.folds import Gate, fold_axis
+    from gsurf.stereonet import StereonetView
 
     app = QtWidgets.QApplication(sys.argv)
 
@@ -260,7 +260,7 @@ def main():
         # -- the grid ------------------------------------------------------------
         print("\n-- the grid --")
 
-        from app.folds import field_cost, fold_axis_field, grid_centres
+        from gsurf.folds import field_cost, fold_axis_field, grid_centres
 
         # Two structures side by side: a fold west of 5000, another east of it,
         # with axes 40 degrees apart. A field that cannot tell them apart is
@@ -285,7 +285,7 @@ def main():
         # How much a grid overlaps itself: the number the two controls never
         # showed, and the one that decides whether a thousand cells are a
         # thousand observations.
-        from app.folds import describe_sampling, sampling
+        from gsurf.folds import describe_sampling, sampling
 
         area = (0.0, 0.0, 10000.0, 10000.0)
         counts = sampling(area, 1500.0, 500.0)

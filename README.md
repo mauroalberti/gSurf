@@ -4,11 +4,21 @@ Structural geology you steer by hand: the answer is recomputed on every frame,
 not behind a "Calculate" button, so a parameter is something you sweep through
 rather than something you guess and check.
 
-Two tools so far. **`realtime_intersection.py`** lays an unbounded geological
-plane on a DEM and shows where it crops out while you turn the dial.
-**`fold_axes.py`** drags a circular window across a map of bedding attitudes and
-shows, on a stereonet that follows it, the girdle the poles spread on and the
-axis they turn about.
+```bash
+python -m gsurf
+```
+
+Two tools so far. **Plane on a DEM** lays an unbounded geological plane on the
+topography and shows where it crops out while you turn the dial. **Fold axes**
+drags a circular window across a map of bedding attitudes and shows, on a
+stereonet that follows it, the girdle the poles spread on and the axis they
+turn about.
+
+They are picked from one launcher, and the tool comes before the question: pick
+one and it asks for the sources *it* takes, with what it cannot run without
+marked as required — the plane needs a DEM, the fold axes need attitudes, and
+neither is asked for the other's. What you answer is put back the next time,
+and the session behind it is reopened only when the answer has changed.
 
 ![gSurf, real-time plane/DEM intersection](ims/realtime_intersection.png)
 
@@ -21,31 +31,36 @@ while you work.
 
 ### Status
 
-`realtime_intersection.py` and `fold_axes.py`, at the repository root, are the
-parts that run. Next to them, `app/` holds what is not about any one
-calculation, so that the next tool inherits it rather than copying it:
+`gsurf/tools/` holds the tools, one module each, and the package around them
+holds what is not about any one calculation, so that the next tool inherits it
+rather than copying it:
 
-- `app/session.py` — the projection, the area, and what has been opened in
+- `gsurf/__main__.py`, `gsurf/launcher.py` — the front door: the tools, what
+  each one is opened on, and the session kept between them.
+- `gsurf/session.py` — the projection, the area, and what has been opened in
   them. The DEM is one of the things in a session and not the frame itself: a
   session can be opened on vector layers alone, taking its CRS and extent from
   their metadata.
-- `app/mapview.py` — the map: hillshade if there is a DEM, vector backdrop,
+- `gsurf/sources.py` — what to open, asked once a tool has been picked. A tool
+  declares its slots and which are required; layers are listed and fields read
+  off the metadata, so the dialog filters without loading.
+- `gsurf/mapview.py` — the map: hillshade if there is a DEM, vector backdrop,
   navigation, legend, and the blitting surface a tool draws its own artists on.
-- `app/dem.py`, `app/vectors.py`, `app/convergence.py` — the DEM read by
+- `gsurf/dem.py`, `gsurf/vectors.py`, `gsurf/convergence.py` — the DEM read by
   windows, the backdrop layers, and grid north against true north.
-- `app/attitudes.py`, `app/folds.py`, `app/stereonet.py` — located attitudes
-  read strictly, the orientation tensor read as a fold, and an equal-area net
-  that redraws while you move.
+- `gsurf/attitudes.py`, `gsurf/folds.py`, `gsurf/stereonet.py` — located
+  attitudes read strictly, the orientation tensor read as a fold, and an
+  equal-area net that redraws while you move.
 
-The name is `app` and not `gsurf` because the old `gSurf/` package is still in
-the tree, and on a case-insensitive filesystem the two would be one directory.
-
-The `gSurf/` package is the older application and **does not currently run**:
-it is kept for the code worth porting, not for use. `python -m gSurf` fails
-outright — there is no `__main__.py` — and beyond that `gSurf/gSurf.py` imports
-`pygsf`, `gst` and `pygmt`, `gSurf/intersections/` still wants PyQt5, and
-`gSurf/stereoplot/` looks for a vendored `apsg` that is not in the tree. Only
-`gSurf/profiles/profiles_tools.py` imports cleanly.
+The pre-2026 application lived in a `gSurf/` package beside this one and was
+removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
+`pygmt` for the main window, PyQt5 and Python-2 implicit relative imports for
+its intersection GUI, a vendored `apsg` that was never in the tree for its
+stereoplot — and nothing outside it imported it. Two things in it are worth
+porting and are a `git show a972c58:gSurf/...` away: the topographic profiles
+of `gSurf.py`, with attitudes projected onto them, and the fault-and-slickenline
+stereoplot of `stereoplot/`, which reads a rake and a movement sense that
+`gsurf/stereonet.py` does not.
 
 Alpha stage. The repository dates from 2012-04-08, was worked on through 2019,
 lay dormant for three years, was restarted 2022-11-28, and was rebuilt around
@@ -60,7 +75,7 @@ python checks/run.py            # off-screen, about ten seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Seventy-eight assertions over three scripts, each also runnable on its own.
+A hundred and sixteen assertions over four scripts, each also runnable on its own.
 They drive real windows through synthesized mouse events, so Qt is put in its
 off-screen mode unless you ask otherwise.
 
@@ -98,7 +113,7 @@ They are imported only where they are actually used, so without them the tool
 still starts, draws the DEM and recomputes the intersection as you drag; you
 get no layers underneath, and `Export trace` raises on the way out.
 
-`fold_axes.py` needs those two as well, and additionally:
+The fold axes need those two as well, and additionally:
 
 ```bash
 pip install geogst mplstereonet
@@ -108,18 +123,45 @@ geogst is where the orientation tensor and Woodcock's parameters come from, and
 mplstereonet draws the net — `import mplstereonet` is also what registers the
 equal-area projection with matplotlib, so it is not an optional extra there.
 
-### Usage — plane on a DEM
-
-Launched bare, it asks for what it needs:
+### Usage — the launcher
 
 ```bash
-python realtime_intersection.py
+python -m gsurf
 ```
 
-Or state it up front:
+It opens on the tools and asks nothing yet. Pick one and it asks for what that
+tool takes — the plane for a DEM and three optional backdrop slots, the fold
+axes for an attitude layer and the two columns its angles are in. The slot it
+cannot run without is named `(required)` and coloured, and goes green once it
+holds something; `Open` stays refused until it does, and until at least one
+source has been named at all, since a session takes its projection and its
+extent from what was opened.
+
+What you answer is kept, slot by slot. Going to the other tool re-proposes the
+same files, so the second question is usually one keystroke — and if the answer
+comes back unchanged, the session itself is handed on as it stands rather than
+reopened, which on a large DEM is the whole cost of starting a tool. Closing a
+tool brings the launcher back with it still open.
+
+Asking per tool is also what keeps the dialog short. Asked before the tool is
+known, it has to cover every source any tool might want: a longer dialog that
+says less about the one you picked, and tall enough to push its own buttons off
+a short screen. It scrolls now, and can be dragged to any size.
+
+A tool can still be started on its own, which is what a repeated run wants:
 
 ```bash
-python realtime_intersection.py dem.tif \
+python -m gsurf.tools.intersection
+python -m gsurf.tools.fold_axes
+```
+
+Bare, each asks for what it needs in the same dialog. With arguments, each
+takes them as below and skips the asking.
+
+### Usage — plane on a DEM
+
+```bash
+python -m gsurf.tools.intersection dem.tif \
     --polygons geology.gpkg:carbonates \
     --lines    geology.gpkg:faults \
     --points   stations.shp \
@@ -153,7 +195,7 @@ keys are read as a fallback.
 ### Usage — fold axes
 
 ```bash
-python fold_axes.py attitudes.gpkg:giaciture \
+python -m gsurf.tools.fold_axes attitudes.gpkg:giaciture \
     --dip-dir Immersione --dip Inclinazione \
     --radius 2000 --dem dem.tif
 ```
@@ -163,6 +205,15 @@ built on: with no DEM the projection and the extent come from the layer itself.
 A DEM, if given, is backdrop and nothing else — this calculation never reads an
 elevation. `--strike-rhr` reads the azimuth field as a right-hand-rule strike
 instead of a dip direction.
+
+Naming the layer and saying what its columns mean are two things, and either
+can be left out — whatever is missing is asked for, with the rest filled in
+from what was given. Asked, the two angle fields are offered as the layer's
+numeric columns and guessed from their names first: on a CARG sheet
+`immersione` and `inclinazione` are already selected when the dialog opens. A
+field called `strike` also switches the convention, since that is better
+evidence of what it holds than the default is. Nothing is guessed silently —
+the guess is a selection you can see and change.
 
 Drag the circle across the map. The stereonet follows it, showing the poles of
 the bedding inside, the best-fit girdle and the axis they turn about; the panel
@@ -271,7 +322,7 @@ Coordinates in a single EPSG are unusable outside it, and the `.prj` is the
 file that goes missing first. A fold axis is written the same way: true
 azimuth, grid azimuth and the convergence between them.
 
-**A horizontal bed has no dip direction.** `fold_axes.py` reads the dip first
+**A horizontal bed has no dip direction.** The fold-axis tool reads the dip first
 and only then the azimuth, because the dip is what decides whether the azimuth
 means anything: at zero dip the field is not read at all. That is not
 pedantry — the CARG sheets write 999 there, and a reader that took it at face

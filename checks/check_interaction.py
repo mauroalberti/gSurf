@@ -76,7 +76,7 @@ def within_a_pixel(window, wanted, tolerance_px=2.0):
 def main():
     from PyQt6 import QtWidgets
 
-    import realtime_intersection as ri
+    from gsurf.tools import intersection as ri
 
     print(f"repository  {REPO}")
     print(f"surface     {'MapView' if hasattr(ri, 'MapView') else 'RealtimeWindow'}\n")

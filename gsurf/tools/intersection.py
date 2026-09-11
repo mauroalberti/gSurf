@@ -7,17 +7,19 @@ and watch the answer move. The status bar reports kernel, drawing and frame
 rate on every frame, so the cost stays visible while you work.
 
 Usage:
-    python realtime_intersection.py
-    python realtime_intersection.py <dem.tif> [--polygons PATH[:LAYER]]
-                                    [--lines PATH[:LAYER]] [--points PATH[:LAYER]]
-                                    [--categories FIELD] [--x E] [--y N] [--z Z]
-                                    [--window N] [--settings <file.json>]
+    python -m gsurf                     and pick it from the launcher
+    python -m gsurf.tools.intersection
+    python -m gsurf.tools.intersection <dem.tif> [--polygons PATH[:LAYER]]
+                                       [--lines PATH[:LAYER]] [--points PATH[:LAYER]]
+                                       [--categories FIELD] [--x E] [--y N] [--z Z]
+                                       [--window N] [--settings <file.json>]
 
-With no arguments a dialog asks for the same things. The only one required is
-the DEM: the three vector slots -- polygons, lines, points -- answer where the
+With no arguments a dialog asks for the files. The DEM is the one it marks as
+required: the three vector slots -- polygons, lines, points -- answer where the
 plane is being laid down, which is a different question from the calculation.
 The layers offered in each slot are filtered on geometry read from the
-metadata, so faults never appear among the polygons.
+metadata, so faults never appear among the polygons. The source point is not
+asked for, because it is the one thing here that is set by pointing at it.
 
 The DEM can be as large as you like: it is never loaded into memory. The
 background is a decimated overview, while the kernel runs on a full-resolution
@@ -68,20 +70,25 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-import rasterio
 
 # PyQt6 has to be imported before the backend: matplotlib picks the binding by
 # looking at what is already in sys.modules.
 import PyQt6.QtCore  # noqa: F401
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from matplotlib.patches import Rectangle
 
 from misah.kernels import intersect_plane_grid
 
-from app.mapview import MapView, fit_to_screen
-from app.session import Session
-from app.vectors import VectorSource, split_layer
+from gsurf.mapview import MapView, fit_to_screen
+from gsurf.sources import SourcesDialog, open_session
+from gsurf.vectors import split_layer
+
+# What this tool can be opened on. The DEM is the surface being intersected, so
+# there is no version of this without one; the three vector slots answer where
+# the plane is being laid down, which is a different question from the
+# calculation and one it runs perfectly well without.
+WANTS = dict(dem="required", polygons="optional", lines="optional", points="optional")
 
 
 def merged_traces(points, segments):
@@ -103,354 +110,6 @@ def merged_traces(points, segments):
     merged = linemerge(chords)
 
     return list(merged.geoms) if hasattr(merged, "geoms") else [merged]
-
-
-VECTOR_FILTER = (
-    "Vector (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
-    "All files (*)"
-)
-
-RASTER_FILTER = "Raster (*.tif *.tiff *.vrt *.asc *.img *.dt2 *.hgt);;All files (*)"
-
-
-def as_number(text):
-    """The text as a number, or None if it is empty or is not one.
-
-    A comma counts as a point: an Italian keyboard puts the comma on the numeric
-    keypad, and rejecting '1187,4' would be a small cruelty."""
-
-    text = (text or "").strip().replace(",", ".")
-
-    if not text:
-        return None
-
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-class VectorPicker(QtWidgets.QGroupBox):
-    """
-    Choosing one layer for one role: file, layer within the file, categories.
-
-    The layers offered are filtered on the role's geometry, read from the
-    metadata alone: in the polygon slot the faults simply never appear, and a
-    table without geometry appears nowhere. One less error to diagnose
-    downstream, at the cost of a read that never touches the data.
-    """
-
-    # The names a category column usually goes by. The Italian ones are kept
-    # alongside the English: the geological maps this is used on are surveyed
-    # in Italy, and their attribute tables say `sigla` and `unita`. On polygons
-    # categorisation starts on because it is almost always what you want; on
-    # lines and points it starts off, since twenty tints over four hundred
-    # faults cannot be read.
-    PREFERRED_FIELDS = ("code", "sigla", "unit", "unita", "type", "tipo", "name", "nome")
-
-    def __init__(self, role, parent=None):
-        super().__init__(role.capitalize(), parent)
-
-        self.role = role
-        self._path = None
-
-        self.path_label = QtWidgets.QLineEdit()
-        self.path_label.setReadOnly(True)
-        self.path_label.setPlaceholderText("none (optional)")
-
-        browse = QtWidgets.QPushButton("Browse...")
-        browse.clicked.connect(self._browse)
-
-        self.clear_button = QtWidgets.QPushButton("Clear")
-        self.clear_button.clicked.connect(self.clear)
-        self.clear_button.setEnabled(False)
-
-        self.layer_combo = QtWidgets.QComboBox()
-        self.layer_combo.setEnabled(False)
-        self.layer_combo.currentTextChanged.connect(self._on_layer_changed)
-
-        self.category_combo = QtWidgets.QComboBox()
-        self.category_combo.setEnabled(False)
-
-        grid = QtWidgets.QGridLayout(self)
-        grid.addWidget(self.path_label, 0, 0, 1, 2)
-        grid.addWidget(browse, 0, 2)
-        grid.addWidget(self.clear_button, 0, 3)
-        grid.addWidget(QtWidgets.QLabel("layer"), 1, 0)
-        grid.addWidget(self.layer_combo, 1, 1, 1, 3)
-        grid.addWidget(QtWidgets.QLabel("categories"), 2, 0)
-        grid.addWidget(self.category_combo, 2, 1, 1, 3)
-        grid.setColumnStretch(1, 1)
-
-    def _browse(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, f"Choose the file: {self.role}", "", VECTOR_FILTER
-        )
-
-        if path:
-            self.set_path(path)
-
-    def set_path(self, path, layer=None, category_field=None):
-        """Loads the list of layers fit for the role. Returns False if there are none."""
-
-        try:
-            candidates = VectorSource.candidate_layers(path, self.role)
-        except Exception as err:
-            QtWidgets.QMessageBox.warning(
-                self, "Unreadable file", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
-            )
-            return False
-
-        if not candidates:
-            QtWidgets.QMessageBox.information(
-                self,
-                "No suitable layer",
-                f"{Path(path).name} holds no {self.role} layer.",
-            )
-            return False
-
-        self._path = Path(path)
-        self.path_label.setText(str(path))
-        self.path_label.setToolTip(str(path))
-        self.clear_button.setEnabled(True)
-
-        with QtCore.QSignalBlocker(self.layer_combo):
-            self.layer_combo.clear()
-            self.layer_combo.addItems(candidates)
-
-            if layer and layer in candidates:
-                self.layer_combo.setCurrentText(layer)
-
-        self.layer_combo.setEnabled(True)
-        self._on_layer_changed(self.layer_combo.currentText(), preferred=category_field)
-
-        return True
-
-    def _on_layer_changed(self, layer, preferred=None):
-        if not self._path or not layer:
-            return
-
-        try:
-            fields = VectorSource.text_fields(self._path, layer)
-        except Exception:
-            fields = []
-
-        with QtCore.QSignalBlocker(self.category_combo):
-            self.category_combo.clear()
-            self.category_combo.addItem("(none)")
-            self.category_combo.addItems(fields)
-
-            chosen = None
-
-            if preferred and preferred in fields:
-                chosen = preferred
-            elif self.role == "polygons":
-                chosen = next((f for f in self.PREFERRED_FIELDS if f in fields), None)
-
-            self.category_combo.setCurrentText(chosen or "(none)")
-
-        self.category_combo.setEnabled(bool(fields))
-
-    def clear(self):
-        self._path = None
-        self.path_label.clear()
-        self.path_label.setToolTip("")
-        self.clear_button.setEnabled(False)
-        self.layer_combo.clear()
-        self.layer_combo.setEnabled(False)
-        self.category_combo.clear()
-        self.category_combo.setEnabled(False)
-
-    def value(self):
-        """The chosen role as a dictionary, or None if the slot is empty."""
-
-        if self._path is None:
-            return None
-
-        field = self.category_combo.currentText()
-
-        return dict(
-            path=str(self._path),
-            role=self.role,
-            layer=self.layer_combo.currentText() or None,
-            category_field=None if field in ("", "(none)") else field,
-        )
-
-
-class SourcesDialog(QtWidgets.QDialog):
-    """
-    What to open, asked before the working window opens.
-
-    The DEM is the only one required, because it is the only one the kernel
-    needs: the other three answer where the plane is being laid down, which is
-    a different question from the calculation.
-
-    The source point can be fixed here too, component by component: leave it
-    empty and you go to the centre of the DEM at ground elevation, and an
-    elevation typed by hand outranks the ground -- that is how a plane is laid
-    on a horizon passing above today's topography.
-    """
-
-    def __init__(self, parent=None, dem=None, vectors=(), point=(None, None, None)):
-        super().__init__(parent)
-
-        self.setWindowTitle("gSurf - sources")
-        self.setMinimumWidth(560)
-
-        self.dem_label = QtWidgets.QLineEdit()
-        self.dem_label.setReadOnly(True)
-        self.dem_label.setPlaceholderText("required")
-
-        dem_browse = QtWidgets.QPushButton("Browse...")
-        dem_browse.clicked.connect(self._browse_dem)
-
-        self.dem_info = QtWidgets.QLabel()
-        self.dem_info.setStyleSheet("color: gray; font-size: 10px;")
-
-        dem_box = QtWidgets.QGroupBox("DEM")
-        dem_grid = QtWidgets.QGridLayout(dem_box)
-        dem_grid.addWidget(self.dem_label, 0, 0)
-        dem_grid.addWidget(dem_browse, 0, 1)
-        dem_grid.addWidget(self.dem_info, 1, 0, 1, 2)
-        dem_grid.setColumnStretch(0, 1)
-
-        self.pickers = {role: VectorPicker(role) for role in VectorSource.ROLES}
-
-        # The boxes stay line edits and not spin boxes: a spin box cannot be
-        # empty, and "empty" is exactly the value that here means "you decide".
-        numeric = QtGui.QDoubleValidator()
-        numeric.setLocale(QtCore.QLocale.c())
-
-        self.easting_edit = QtWidgets.QLineEdit()
-        self.northing_edit = QtWidgets.QLineEdit()
-        self.elevation_edit = QtWidgets.QLineEdit()
-
-        for edit in (self.easting_edit, self.northing_edit, self.elevation_edit):
-            edit.setValidator(numeric)
-
-        self.easting_edit.setPlaceholderText("DEM centre")
-        self.northing_edit.setPlaceholderText("DEM centre")
-        self.elevation_edit.setPlaceholderText("DEM elevation")
-
-        point_box = QtWidgets.QGroupBox("Source point (optional)")
-        point_grid = QtWidgets.QGridLayout(point_box)
-        for column, (caption, edit) in enumerate(
-            (
-                ("E", self.easting_edit),
-                ("N", self.northing_edit),
-                ("Z", self.elevation_edit),
-            )
-        ):
-            point_grid.addWidget(QtWidgets.QLabel(caption), 0, column * 2)
-            point_grid.addWidget(edit, 0, column * 2 + 1)
-            point_grid.setColumnStretch(column * 2 + 1, 1)
-
-        note = QtWidgets.QLabel(
-            "An elevation typed here does not follow the DEM: the plane rests on it."
-        )
-        note.setStyleSheet("color: gray; font-size: 10px;")
-        point_grid.addWidget(note, 1, 0, 1, 6)
-
-        self.buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Open
-            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
-        )
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
-
-        # Qt's standard buttons already read "Open" and "Cancel" untranslated,
-        # so nothing has to be written over them here.
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(dem_box)
-        for role in VectorSource.ROLES:
-            layout.addWidget(self.pickers[role])
-        layout.addWidget(point_box)
-        layout.addWidget(self.buttons)
-
-        self._dem_path = None
-        self._set_dem(dem)
-
-        for spec in vectors or ():
-            picker = self.pickers.get(spec.get("role"))
-
-            if picker is not None:
-                picker.set_path(spec["path"], spec.get("layer"), spec.get("category_field"))
-
-        for edit, value in zip(
-            (self.easting_edit, self.northing_edit, self.elevation_edit), point
-        ):
-            if value is not None:
-                edit.setText(f"{float(value):g}")
-
-    def _browse_dem(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Choose the DEM", "", RASTER_FILTER
-        )
-
-        if path:
-            self._set_dem(path)
-
-    def _set_dem(self, path):
-        """
-        Opens the DEM for its metadata alone, and says what it is from those.
-
-        It also catches a file that is not a raster right away, rather than
-        after the dialog has closed -- and writes the real centre coordinates
-        into the placeholders, which is the value you would get by leaving them
-        empty.
-        """
-
-        self._refresh_ok()
-
-        if not path:
-            return
-
-        try:
-            with rasterio.open(path) as src:
-                epsg = src.crs.to_epsg() if src.crs else None
-                centre_x = (src.bounds.left + src.bounds.right) / 2.0
-                centre_y = (src.bounds.bottom + src.bounds.top) / 2.0
-                info = (
-                    f"{src.width}x{src.height} "
-                    f"({src.width * src.height / 1e6:.1f} Mpx), "
-                    f"EPSG:{epsg or '?'}, cell {abs(src.transform.a):g} m"
-                )
-        except Exception as err:
-            QtWidgets.QMessageBox.warning(
-                self, "Unreadable DEM", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
-            )
-            return
-
-        self._dem_path = str(path)
-        self.dem_label.setText(str(path))
-        self.dem_label.setToolTip(str(path))
-        self.dem_info.setText(info)
-
-        self.easting_edit.setPlaceholderText(f"centre: {centre_x:.0f}")
-        self.northing_edit.setPlaceholderText(f"centre: {centre_y:.0f}")
-
-        self._refresh_ok()
-
-    def _refresh_ok(self):
-        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Open).setEnabled(
-            self._dem_path is not None
-        )
-
-    def choices(self):
-        """DEM, vector layers and point, in the shape `main` knows how to use."""
-
-        vectors = [p.value() for p in self.pickers.values()]
-
-        return dict(
-            dem=self._dem_path,
-            vectors=[v for v in vectors if v],
-            point=(
-                as_number(self.easting_edit.text()),
-                as_number(self.northing_edit.text()),
-                as_number(self.elevation_edit.text()),
-            ),
-        )
 
 
 class RealtimeWindow(QtWidgets.QMainWindow):
@@ -1178,6 +837,23 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         return self.session.suggested_name(suffix, tag=attitude)
 
 
+def build(session, chosen, legend="beside"):
+    """
+    The window, on a session somebody else has already opened.
+
+    This is what the launcher calls, and it takes nothing out of `chosen` that
+    the session does not already hold: the source point starts at the centre of
+    the map and is moved by clicking on it, the window side and the attitude
+    have defaults, and all three are changed from inside the window anyway. The
+    argument is taken all the same, so that every tool is built the same way.
+    """
+
+    window = RealtimeWindow(session, legend=legend)
+    fit_to_screen(window, 1180, 880)
+
+    return window
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1266,51 +942,50 @@ def main():
 
         print(f"settings: {attitude[0]:.0f}/{attitude[1]:.0f}, window {side} px")
 
-    vectors = [
-        spec
-        for spec in (
-            split_layer(args.polygons, "polygons"),
-            split_layer(args.lines, "lines"),
-            split_layer(args.points, "points"),
-        )
-        if spec
-    ]
+    chosen = dict(dem=args.dem)
+
+    for spec in (
+        split_layer(args.polygons, "polygons"),
+        split_layer(args.lines, "lines"),
+        split_layer(args.points, "points"),
+    ):
+        if spec:
+            chosen[spec["role"]] = spec
 
     # The historical shortcut, kept because it is how this tool has always been
-    # launched: the two layers of geology.gpkg in their natural roles.
+    # launched: the two layers of geology.gpkg in their natural roles. It fills
+    # the slots left empty rather than adding to them -- naming a layer outright
+    # is the more particular statement of the two, and wins.
     if args.geology:
-        vectors.append(dict(path=args.geology, role="polygons", layer="carbonates"))
-        vectors.append(dict(path=args.geology, role="lines", layer="faults"))
+        chosen.setdefault("polygons", dict(path=args.geology, role="polygons", layer="carbonates"))
+        chosen.setdefault("lines", dict(path=args.geology, role="lines", layer="faults"))
 
-    for spec in vectors:
-        spec.setdefault(
-            "category_field",
-            None if args.categories == "none" or spec["role"] != "polygons" else args.categories,
-        )
+    for role in ("polygons", "lines", "points"):
+        if chosen.get(role):
+            chosen[role].setdefault(
+                "category_field",
+                None if args.categories == "none" or role != "polygons" else args.categories,
+            )
 
     # The QApplication before any dialog, or Qt exits without saying why.
     app = QtWidgets.QApplication(sys.argv)
 
     if not args.dem:
-        dialog = SourcesDialog(dem=args.dem, vectors=vectors, point=point)
+        dialog = SourcesDialog(
+            wants=WANTS,
+            chosen=chosen,
+            title="gSurf - plane on a DEM",
+        )
 
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
 
         chosen = dialog.choices()
-        args.dem = chosen["dem"]
-        vectors = chosen["vectors"]
-        point = chosen["point"]
 
-        # An elevation typed into the dialog is a choice like the one from the
-        # command line, and counts the same way.
-        if point[2] is not None:
-            z_follows_dem = False
-
-    session = Session.open(dem_path=args.dem, vectors=vectors)
+    session = open_session(chosen)
     print(f"session: {session.summary()}, nodata={session.dem.nodata}")
 
-    if vectors:
+    if session.overlay:
         print(f"vectors: {session.overlay.summary()}")
 
     window = RealtimeWindow(
