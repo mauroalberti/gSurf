@@ -81,6 +81,13 @@ class VectorSource:
         self.frame = None
         self.problem = None
 
+        # One artist per category, and which of them are currently off the map.
+        # A layer with no categories has a single artist under the key None, and
+        # is turned off the same way: from the legend, by its one entry.
+        self.artists = {}
+        self.hidden = set()
+        self.category_order = []
+
         try:
             complete = gpd.read_file(path, layer=layer) if layer else gpd.read_file(path)
         except Exception as err:
@@ -103,6 +110,7 @@ class VectorSource:
             return
 
         self.frame = self._categorize(complete, visible)
+        self.category_order = self._order_by_weight()
 
     # -- reading the container, without loading the data ------------------
 
@@ -192,18 +200,124 @@ class VectorSource:
 
         return visible.assign(_gsurf_category=self._values(visible))
 
+    def _order_by_weight(self):
+        """
+        The categories actually on show, heaviest first.
+
+        Weight is area for polygons, length for lines, count for points, and the
+        order matters twice. In the legend, alphabetically the cut at twelve
+        would throw out Qt, PL and Op -- which are half the map -- to make room
+        for AV, which is a single polygon. On the map, drawn in this order the
+        large units go down first and the small ones land on top of them
+        instead of under; and the two orders being the same one, a reader going
+        down the legend is going down the map as well.
+        """
+
+        if not self.colors:
+            return []
+
+        frame = self.frame
+
+        if self.role == "polygons":
+            weight = frame.area
+        elif self.role == "lines":
+            weight = frame.length
+        else:
+            weight = 1.0
+
+        return list(
+            frame.assign(_gsurf_weight=weight)
+            .groupby("_gsurf_category")["_gsurf_weight"]
+            .sum()
+            .sort_values(ascending=False)
+            .index
+        )
+
     # -- drawing -----------------------------------------------------------
 
     def draw(self, axes):
+        """
+        Draws the layer, one artist per category.
+
+        One per category rather than one for the whole layer, so that a category
+        can be taken off the map without redrawing anything: `set_visible(False)`
+        on its collection is the whole cost. That is what the legend's entries
+        switch, and the reason a formation can be got out of the way of what is
+        drawn over it -- a field of fold axes is unreadable through twenty
+        tints, and reading it is what the map is for.
+        """
+
         table = self.CATEGORY_STYLE if self.colors else self.FLAT_STYLE
         style = dict(table[self.role])
 
-        if self.colors:
-            style["color"] = [self.colors[v] for v in self.frame["_gsurf_category"]]
-        else:
-            style.setdefault("label", self.layer or self.path.stem)
+        self.artists = {}
 
-        self.frame.plot(ax=axes, zorder=self.ZORDER[self.role], **style)
+        if not self.colors:
+            style.setdefault("label", self.layer or self.path.stem)
+            self.artists[None] = self._plot(axes, self.frame, style)
+        else:
+            for value in self.category_order:
+                group = self.frame[self.frame["_gsurf_category"] == value]
+                self.artists[value] = self._plot(
+                    axes, group, dict(style, color=[self.colors[value]] * len(group))
+                )
+
+        self._apply_visibility()
+
+    def _plot(self, axes, frame, style):
+        """
+        Draws one group, and hands back the artist geopandas left behind.
+
+        There is no other way to it: `GeoDataFrame.plot` returns the axes, not
+        what it drew. One call leaves exactly one collection -- a
+        PatchCollection, a LineCollection or a PathCollection, by role -- so the
+        one that was not there before is the one.
+        """
+
+        before = len(axes.collections)
+        frame.plot(ax=axes, zorder=self.ZORDER[self.role], **style)
+        added = axes.collections[before:]
+
+        return added[-1] if added else None
+
+    # -- what is on the map ------------------------------------------------
+
+    def _apply_visibility(self):
+        for value, artist in self.artists.items():
+            if artist is not None:
+                artist.set_visible(value not in self.hidden)
+
+    def is_hidden(self, values):
+        """True when every category in the block is off."""
+
+        return all(value in self.hidden for value in values)
+
+    def toggle(self, values):
+        """
+        Turns a category on or off -- or a block of them together -- and says
+        which way it went.
+
+        A block wholly off comes back on; a block even partly on goes off.
+        Anything subtler would leave the '+N more' entry unreadable: clicking it
+        twice has to be the same as not clicking it.
+        """
+
+        values = tuple(values)
+        show = self.is_hidden(values)
+
+        for value in values:
+            if show:
+                self.hidden.discard(value)
+            else:
+                self.hidden.add(value)
+
+        self._apply_visibility()
+
+        return show
+
+    def show_all(self):
+        self.hidden.clear()
+        self._apply_visibility()
 
     def _legend_label(self, value, width=28):
         name = self.labels.get(value, "")
@@ -211,7 +325,7 @@ class VectorSource:
 
         return text if len(text) <= width else text[: width - 1] + "…"
 
-    def _handle(self, label, color=None):
+    def _handle(self, label, color=None, switches=()):
         """
         The dummy artist standing in for one legend entry.
 
@@ -219,6 +333,11 @@ class VectorSource:
         represent on its own: without these the polygons would drop out of the
         legend silently. The shape follows the role, so across three
         categorised layers you can still tell whose entry is whose.
+
+        It carries what it switches, so that a click on the entry knows which
+        artists to take off the map. The map reads that attribute and nothing
+        else about this class, and an entry a tool provided simply does not have
+        it.
         """
 
         from matplotlib.lines import Line2D
@@ -229,65 +348,87 @@ class VectorSource:
         style.pop("color", None)
 
         if self.role == "polygons":
-            return Patch(facecolor=color or style.pop("facecolor", "#4daf7c"), label=label, **style)
+            handle = Patch(
+                facecolor=color or style.pop("facecolor", "#4daf7c"), label=label, **style
+            )
+        elif self.role == "lines":
+            handle = Line2D([], [], color=color or "#1f4fd8", label=label, **style)
+        else:
+            marker = style.pop("marker", "^")
+            edge = style.pop("edgecolor", "#222222")
 
-        if self.role == "lines":
-            return Line2D([], [], color=color or "#1f4fd8", label=label, **style)
+            handle = Line2D(
+                [], [],
+                linestyle="none",
+                marker=marker,
+                markerfacecolor=color or "#d95f02",
+                markeredgecolor=edge,
+                markersize=7,
+                label=label,
+            )
 
-        marker = style.pop("marker", "^")
-        edge = style.pop("edgecolor", "#222222")
+        handle._gsurf_switch = (self, tuple(switches))
 
-        return Line2D(
-            [], [],
-            linestyle="none",
-            marker=marker,
-            markerfacecolor=color or "#d95f02",
-            markeredgecolor=edge,
-            markersize=7,
-            label=label,
+        return handle
+
+    def _layer_handle(self):
+        """
+        The layer's own entry, standing over its categories.
+
+        It is the one click that takes a whole layer off the map. Without it a
+        backdrop of twenty units costs twenty-one clicks to clear, and clearing
+        it is the thing one actually wants to do -- the backdrop is there to be
+        read under what is drawn over it, not instead of it.
+
+        It doubles as the only mark of where one layer's entries end and the
+        next one's begin, which a run of category names alone does not say.
+        """
+
+        from matplotlib.patches import Patch
+
+        handle = Patch(
+            facecolor="none", edgecolor="none", label=self.layer or self.path.stem
         )
+        handle._gsurf_switch = (self, tuple(self.category_order))
+        handle._gsurf_heading = True
+
+        return handle
 
     def legend_handles(self):
         if not self.colors:
-            return [self._handle(self.layer or self.path.stem)]
+            # One entry, named after the layer, and it already switches the
+            # whole of it: a heading over a single line would say nothing twice.
+            # Marked as one all the same, so that bold reads as "a layer" down
+            # the whole legend and plain as "a category inside the one above".
+            handle = self._handle(self.layer or self.path.stem, switches=(None,))
+            handle._gsurf_heading = True
 
-        # In the legend only the categories actually on show, and in order of
-        # weight: alphabetically, the cut at twelve would throw out Qt, PL and
-        # Op -- which are half the map -- to make room for AV, which is a
-        # single polygon. Weight is area for polygons, length for lines, count
-        # for points.
-        frame = self.frame
+            return [handle]
 
-        if self.role == "polygons":
-            weight = frame.area
-        elif self.role == "lines":
-            weight = frame.length
-        else:
-            weight = 1.0
+        # Only the categories actually on show, heaviest first: see
+        # _order_by_weight for why that order and not the alphabet.
+        listed = self.category_order[: self.MAX_LEGEND_ENTRIES]
+        rest = self.category_order[self.MAX_LEGEND_ENTRIES :]
 
-        present = list(
-            frame.assign(_gsurf_weight=weight)
-            .groupby("_gsurf_category")["_gsurf_weight"]
-            .sum()
-            .sort_values(ascending=False)
-            .index
-        )
-
-        handles = [
-            self._handle(self._legend_label(value), self.colors[value])
-            for value in present[: self.MAX_LEGEND_ENTRIES]
+        handles = [self._layer_handle()]
+        handles += [
+            self._handle(self._legend_label(value), self.colors[value], switches=(value,))
+            for value in listed
         ]
 
-        if len(present) > self.MAX_LEGEND_ENTRIES:
+        if rest:
             from matplotlib.patches import Patch
 
-            handles.append(
-                Patch(
-                    facecolor="none",
-                    edgecolor="none",
-                    label=f"+{len(present) - self.MAX_LEGEND_ENTRIES} more in {self.role}",
-                )
+            # The categories past the cut stay coloured on the map, and this
+            # entry is what they are switched by: without it they would be the
+            # only ones that cannot be taken off it.
+            handle = Patch(
+                facecolor="none",
+                edgecolor="none",
+                label=f"+{len(rest)} more in {self.role}",
             )
+            handle._gsurf_switch = (self, tuple(rest))
+            handles.append(handle)
 
         return handles
 
@@ -348,6 +489,15 @@ class Overlay:
             handles.extend(source.legend_handles())
 
         return handles
+
+    def show_all(self):
+        for source in self.sources:
+            source.show_all()
+
+    def hidden_count(self):
+        """How many legend entries are currently switched off, over all layers."""
+
+        return sum(len(source.hidden) for source in self.sources)
 
     def summary(self):
         lines = [s.summary() for s in self.sources] + [s.summary() for s in self.rejected]

@@ -349,6 +349,111 @@ def main():
         check("a field can be given up on", partial.counts[-1] == 0 and len(seen) > 1,
               f"stopped after {seen[-1]} of {len(centres)}")
 
+        # -- the net in a window of its own ---------------------------------------
+        print("\n-- the net's window --")
+
+        from gsurf.sources import open_session
+        from gsurf.tools.fold_axes import FoldAxesWindow, read_attitudes
+
+        spec = dict(
+            path=str(as_layer(tmp, "windowed", np.vstack([west_xy, east_xy]),
+                              np.r_[west_dd, east_dd], np.r_[west_d, east_d])),
+            role="points", layer="windowed",
+            dip_dir_field="Immersione", dip_field="Inclinazione",
+        )
+        session = open_session(dict(attitudes=spec))
+        window = FoldAxesWindow(session, read_attitudes(session, spec), radius=2000.0)
+        window.resize(1200, 860)
+        window.show()
+        app.processEvents()
+
+        dock = window.stereonet_dock
+
+        check("the net opens in a window of its own",
+              dock.isFloating() and dock.isVisible())
+        check("and what is in it is the stereonet", dock.widget() is window.stereonet)
+        check("showing the window we are in", window._net_is_current,
+              f"{len(window.stereonet.poles.get_xdata())} poles")
+
+        # -- closed, it is not drawn ----------------------------------------------
+        left_on_it = np.array(window.stereonet.poles.get_xdata()).copy()
+
+        dock.toggleViewAction().trigger()
+        app.processEvents()
+
+        check("it closes from the panel's button", not dock.isVisible())
+        check("which cannot disagree with it", not window.stereonet_button.isChecked())
+
+        cx, cy = session.center()
+        window._move_centre(cx + 2500.0, cy + 2500.0)
+        window.update_window()
+        app.processEvents()
+
+        # Vacuous unless the window really changed under it, so that is checked
+        # first: a net that was never going to move proves nothing about a net
+        # that was not redrawn.
+        check("the window moved to a different set of attitudes",
+              len(window.indices) != len(left_on_it),
+              f"{len(left_on_it)} -> {len(window.indices)}")
+        check("but a net that is closed is not drawn",
+              np.array_equal(left_on_it, window.stereonet.poles.get_xdata())
+              and not window._net_is_current,
+              f"{len(window.stereonet.poles.get_xdata())} poles left on it")
+
+        # -- and reopening catches it up -------------------------------------------
+        dock.toggleViewAction().trigger()
+        app.processEvents()
+
+        check("reopening shows the window we are in now, not the one it was closed on",
+              window._net_is_current
+              and len(window.stereonet.poles.get_xdata()) == len(window.indices),
+              f"{len(window.stereonet.poles.get_xdata())} poles for "
+              f"{len(window.indices)} attitudes in the window")
+
+        # -- what the tool itself drew, taken off the map --------------------------
+        print("\n-- the measurements, switched off --")
+
+        view = window.map_view
+        switches = view._legend_switches
+
+        wired = {
+            t.get_text() for t in view.legend.get_texts() if id(t) in switches
+        }
+        check("the tool's dense entries are clickable, its steering ones are not",
+              wired == {"attitude", "in the window"},
+              f"wired {sorted(wired)}")
+
+        source, values = next(
+            s for t, s in ((t, switches.get(id(t))) for t in view.legend.get_texts())
+            if s and t.get_text() == "attitude"
+        )
+        source.toggle(values)
+        check("switching 'attitude' takes the station dots off the map",
+              not window.station_dots.get_visible())
+
+        # The station dots are static -- they live in the blitting background,
+        # not in the per-frame draw -- so this is the rebuild that has to put
+        # them back, and the redraw that has to notice.
+        view.refresh_legend()
+        check("and they stay off across a legend rebuild",
+              not window.station_dots.get_visible()
+              and view.hidden_count() == 1,
+              f"{view.hidden_count()} hidden")
+
+        greyed = [t for t in view.legend.get_texts() if t.get_text() == "attitude"]
+        check("with the entry greyed like a category's",
+              greyed[0].get_color() == "#9a9a9a", greyed[0].get_color())
+
+        # It counts as hidden, so the way back from a hidden legend covers it
+        # too: without that, switching the attitudes off and the legend away
+        # would leave them off with nothing to click.
+        view.show_all_categories()
+        check("and 'show all' puts what the tool drew back as well",
+              window.station_dots.get_visible() and view.hidden_count() == 0)
+
+        window.close()
+        session.close()
+
     print()
     if FAILURES:
         print(f"{len(FAILURES)} failed: {', '.join(FAILURES)}")

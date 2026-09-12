@@ -76,7 +76,7 @@ from gsurf.folds import (
     fold_axis_field,
     grid_centres,
 )
-from gsurf.mapview import MapView, fit_to_screen
+from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.sources import SourcesDialog, open_session
 from gsurf.stereonet import StereonetView
 from gsurf.vectors import split_layer
@@ -109,6 +109,12 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self.indices = np.empty(0, dtype=int)
         self.field = None
 
+        # The net is drawn only while its window is open, so these two say
+        # whether what is on it is the window we are in, and whether it has
+        # been put where it goes yet.
+        self._net_is_current = False
+        self._net_placed = False
+
         self.centre = list(session.center())
 
         self.setWindowTitle(f"gSurf - fold axes - {session.label}")
@@ -116,6 +122,11 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self._draw_base_map()
 
         self.update_window()
+
+        # After the first window and not before it: update_window ends by
+        # reporting the frame it drew, so a message set during construction was
+        # overwritten before it could ever be read.
+        self.statusBar().showMessage(self._opening_hint)
 
     # -- construction -----------------------------------------------------
 
@@ -129,7 +140,35 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self.map_view.save_requested.connect(self.save_screenshot)
         self.map_view.status.connect(self.statusBar().showMessage)
 
+        # The net in a window of its own, floating over the map.
+        #
+        # It is the half of the answer you watch while the other hand drags the
+        # window, and in the panel it was as wide as the panel let it be. A
+        # floating dock is a Qt::Tool window: it stays above the map without
+        # standing over the rest of the desktop, closes by its own X, and docks
+        # back into the side if it is dragged there. The button that brings it
+        # back is that same action, so the two cannot fall out of step -- not
+        # even when the window is closed from its own corner.
         self.stereonet = StereonetView()
+
+        self.stereonet_dock = QtWidgets.QDockWidget("Stereonet", self)
+        self.stereonet_dock.setObjectName("stereonet")
+        self.stereonet_dock.setWidget(self.stereonet)
+        self.stereonet_dock.setAllowedAreas(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.stereonet_dock)
+        self.stereonet_dock.visibilityChanged.connect(self._on_stereonet_shown)
+
+        self.stereonet_button = QtWidgets.QToolButton()
+        self.stereonet_button.setDefaultAction(self.stereonet_dock.toggleViewAction())
+        self.stereonet_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.stereonet_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
 
         # The radius is the one parameter with no right value: too small and
         # the tensor is noise, too large and the fold is averaged away with its
@@ -216,14 +255,20 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self.show_refused_check = QtWidgets.QCheckBox("show cells that failed")
         self.show_refused_check.toggled.connect(lambda _: self._draw_field())
 
+        # This tool had no legend control at all: the three placements existed
+        # but only on the command line, where they cannot be changed once the
+        # map is open.
+        self.legend_controls = LegendControls(self.map_view, legend)
+        self.legend_combo = self.legend_controls.combo
+
         controls = QtWidgets.QWidget()
         controls.setMaximumWidth(300)
         layout = QtWidgets.QVBoxLayout(controls)
 
-        layout.addWidget(self.stereonet)
         layout.addWidget(self.axis_label)
         layout.addWidget(self.verdict_label)
         layout.addWidget(self.shape_label)
+        layout.addWidget(self.stereonet_button)
 
         layout.addSpacing(8)
         layout.addWidget(QtWidgets.QLabel("Window radius"))
@@ -256,6 +301,9 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
             layout.addWidget(button)
 
         layout.addSpacing(8)
+        layout.addWidget(self.legend_controls)
+
+        layout.addSpacing(8)
         for text, slot in (
             ("Copy screenshot", self.copy_screenshot),
             ("Save screenshot...", self.save_screenshot),
@@ -280,8 +328,12 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         main_layout.addWidget(panel)
         self.setCentralWidget(central)
 
-        self.statusBar().showMessage(
+        # There is always something to switch here -- the attitudes themselves,
+        # if nothing else -- so the hint is not conditional the way the
+        # intersection tool's is.
+        self._opening_hint = (
             "drag the circle, or click elsewhere to move it; the net follows"
+            " - click a legend entry to take what it names off the map"
         )
 
     def _draw_base_map(self):
@@ -292,11 +344,16 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         # The stations are static: they belong in the background, which
         # blitting recaptures, and cost nothing per frame there. One Line2D and
         # not a scatter, for the same reason as everywhere else.
-        axes.plot(
+        #
+        # Kept, rather than drawn and forgotten, because its legend entry
+        # switches it: on a dense survey the dots are what the computed field
+        # has to be read through.
+        (stations,) = axes.plot(
             self.attitudes.xy[:, 0], self.attitudes.xy[:, 1],
             linestyle="none", marker=".", markersize=3.0,
             color="#555555", zorder=5,
         )
+        self.station_dots = stations
 
         # What is inside the window, drawn over them. This is the half of the
         # highlight the stereonet cannot show: which measurements on the ground
@@ -354,11 +411,24 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
+        # The measurements can be taken off the map from their entries, the way
+        # the backdrop's units can. The axis and the circle cannot: those are
+        # what the hand is steering, and one dragged invisible is worse than one
+        # in the way.
+        switchable = self.map_view.switchable
+
         handles = [
-            Line2D([], [], linestyle="none", marker=".", color="#555555", label="attitude"),
-            Line2D(
-                [], [], linestyle="none", marker="o", markerfacecolor="#d62728",
-                markeredgecolor="black", color="none", label="in the window",
+            switchable(
+                Line2D([], [], linestyle="none", marker=".", color="#555555",
+                       label="attitude"),
+                self.station_dots,
+            ),
+            switchable(
+                Line2D(
+                    [], [], linestyle="none", marker="o", markerfacecolor="#d62728",
+                    markeredgecolor="black", color="none", label="in the window",
+                ),
+                self.selected_marker,
             ),
             Line2D([], [], color="#d62728", linewidth=2.5, label="fold axis"),
             Patch(facecolor="none", edgecolor="orange", linestyle="--", label="window"),
@@ -374,6 +444,72 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
             )
 
         return handles
+
+    # -- the net's window -------------------------------------------------
+
+    def showEvent(self, event):
+        """
+        Floats the net the first time the window appears, beside it if there is
+        room on the screen and tucked into its corner if there is not.
+
+        Not in the constructor: before show() the main window has no geometry to
+        be placed against, and fit_to_screen may yet maximise it. The flag is
+        because showEvent fires again on every unminimise, and a net the user
+        had docked or moved would jump back here each time.
+        """
+
+        super().showEvent(event)
+
+        if self._net_placed:
+            return
+
+        self._net_placed = True
+        self.stereonet_dock.setFloating(True)
+
+        frame = self.frameGeometry()
+        available = self.screen().availableGeometry()
+        width, height = 420, 460
+
+        left = frame.right() + 12
+        if left + width > available.right():
+            left = max(available.left(), frame.right() - width - 24)
+
+        self.stereonet_dock.setGeometry(left, frame.top() + 48, width, height)
+
+        # visibilityChanged carries the first drawing on most platforms, but not
+        # dependably: the net is one gesture behind until something moves, and
+        # that is the one frame nobody would think to look for.
+        self._refresh_stereonet()
+
+    def _refresh_stereonet(self, admitted=None):
+        """
+        Puts the current window on the net, unless the net is closed.
+
+        Closed it is not drawn at all. A canvas nobody can see still costs its
+        milliseconds, and the draw time this window reports would then be
+        measuring something that is not on screen. What that leaves is a net one
+        window behind, which is what _net_is_current remembers and why reopening
+        it comes back through here.
+        """
+
+        if not self.stereonet_dock.isVisible():
+            self._net_is_current = False
+            return
+
+        if admitted is None:
+            admitted = self.gate.admits(self.result)
+
+        self.stereonet.show_window(
+            self.attitudes.dip_directions()[self.indices],
+            self.attitudes.dips[self.indices],
+            self.result,
+            admitted,
+        )
+        self._net_is_current = True
+
+    def _on_stereonet_shown(self, visible):
+        if visible and not self._net_is_current:
+            self._refresh_stereonet()
 
     # -- interaction ------------------------------------------------------
 
@@ -459,10 +595,7 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         self._draw_axis_tick(admitted)
         self.map_view.blit()
 
-        dip_dirs = self.attitudes.dip_directions()[self.indices]
-        self.stereonet.show_window(
-            dip_dirs, self.attitudes.dips[self.indices], self.result, admitted
-        )
+        self._refresh_stereonet(admitted)
         drawn = perf_counter()
 
         self._report(admitted, found - start, computed - found, drawn - computed)

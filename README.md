@@ -45,12 +45,15 @@ rather than copying it:
   declares its slots and which are required; layers are listed and fields read
   off the metadata, so the dialog filters without loading.
 - `gsurf/mapview.py` — the map: hillshade if there is a DEM, vector backdrop,
-  navigation, legend, and the blitting surface a tool draws its own artists on.
+  navigation, the blitting surface a tool draws its own artists on, and a
+  legend whose entries are switches rather than captions — click one and what
+  it names comes off the map.
 - `gsurf/dem.py`, `gsurf/vectors.py`, `gsurf/convergence.py` — the DEM read by
   windows, the backdrop layers, and grid north against true north.
 - `gsurf/attitudes.py`, `gsurf/folds.py`, `gsurf/stereonet.py` — located
   attitudes read strictly, the orientation tensor read as a fold, and an
-  equal-area net that redraws while you move.
+  equal-area net that redraws while you move. The net is a plain widget and
+  owns no window, which is what lets the fold-axis tool float it over the map.
 
 The pre-2026 application lived in a `gSurf/` package beside this one and was
 removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
@@ -75,9 +78,9 @@ python checks/run.py            # off-screen, about ten seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-A hundred and sixteen assertions over four scripts, each also runnable on its own.
-They drive real windows through synthesized mouse events, so Qt is put in its
-off-screen mode unless you ask otherwise.
+A hundred and fifty-one assertions over four scripts, each also runnable on its
+own. They drive real windows through synthesized mouse events, so Qt is put in
+its off-screen mode unless you ask otherwise.
 
 They are checks and not unit tests, in that most of them assert against
 something known from outside the code: a fold axis recovered from a synthetic
@@ -187,6 +190,21 @@ likely looking at. The *Legend* box in the panel moves it at any time —
 Wherever it goes it belongs to the figure and not to a widget alongside, so
 both the saved and the copied screenshot carry it.
 
+**And every entry in it is a switch.** Click one and what it names comes off
+the map, click it again and it is back, the entry greyed while it is off. Over
+its categories each layer has an entry of its own, in bold, and that one click
+takes the whole layer: without it a backdrop of twenty units costs twenty-one
+clicks to clear, and clearing it is the thing one actually does. Bold reads as
+"a layer" down the whole legend and plain as "a category inside the one
+above", which is otherwise not said at all — a run of unit codes does not
+announce where one layer's entries end. The categories past the twelfth are
+listed as `+N more` and switch together, or they would be unreachable.
+
+`Show all categories`, in the same box, is the way back, and is enabled only
+when there is something to bring back. It is not a convenience: hide the
+legend with a category switched off and there is nothing left to click, which
+without that button is a dead end.
+
 `--settings file.json` reopens a saved orientation. Explicit arguments win over
 the file, so `--settings x.json --z 900` is the saved plane at a new elevation.
 Files written before the interface changed language still load: the Italian
@@ -219,6 +237,15 @@ Drag the circle across the map. The stereonet follows it, showing the poles of
 the bedding inside, the best-fit girdle and the axis they turn about; the panel
 gives that axis, Woodcock's K and C, and how many attitudes it came from.
 
+**The net has a window of its own**, floating over the map rather than wedged
+into the top of the panel at whatever width the panel allows. It closes by its
+own X and reopens from the button in the panel, which is bound to that same
+action so the two cannot fall out of step; drag it against the panel and it
+docks there instead, if that is where you want it. Closed, it is not redrawn
+at all — the frame cost in the status bar goes on measuring what is really on
+screen — and on reopening it catches up to the window you are in, not the one
+you closed it on.
+
 **The axis is only an axis if the poles form a girdle.** Above K = 1 they
 cluster instead, which is a homocline, and the minimum eigenvector of a cluster
 is the least determined direction in the data rather than a fold axis. On the
@@ -243,6 +270,17 @@ cells that pass, coloured by plunge — the plunge is half of what an axis is,
 and the length of a bar cannot carry it. `Export grid` writes the cells that
 hold data, refused ones included, with their trend in both norths, K, C, n, the
 verdict and the thresholds that produced it.
+
+**A field of axes is what made the backdrop worth switching off.** The ticks
+are on top by zorder, and twenty tints of geology under them win anyway. The
+same *Legend* box is in this panel now — `beside`, `inside`, `hidden`, with
+`--legend` for where it starts; the three placements had existed here all
+along, but only as that flag, which cannot be changed once the map is open.
+Its entries switch what they name, layer by layer or category by category, as
+above. The attitudes come off from their own entry too, and so do the ones
+inside the window: on a dense survey those dots are what the field has to be
+read through. The axis and the window circle do not, being what the hand is
+steering — one dragged invisible is worse than one in the way.
 
 **A grid overlaps itself, and the panel says by how much.** A circular window
 of radius R laid down every S metres covers πR²/S² cells, so at r = 2000 with a

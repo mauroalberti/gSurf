@@ -73,6 +73,53 @@ class Toolbar(NavigationToolbar2QT):
         self._view_changed()
 
 
+class ToolLayers:
+    """
+    What a tool drew itself, switched from the legend by the label of its entry.
+
+    The backdrop's categories keep their state in the VectorSource they were
+    read from, which outlives every legend rebuild. A tool's artists have no
+    such home, so the map holds one of these for them; same three methods, so
+    the legend does not have to know which of the two kinds it is switching.
+    """
+
+    def __init__(self):
+        self.artists = {}
+        self.hidden = set()
+
+    def register(self, label, artists):
+        """By label and not by artist: a legend entry is rebuilt on every
+        refresh, while what is off the map has to survive them."""
+
+        self.artists[label] = list(artists)
+        self._apply_visibility()
+
+    def is_hidden(self, values):
+        return all(value in self.hidden for value in values)
+
+    def toggle(self, values):
+        show = self.is_hidden(values)
+
+        for value in values:
+            if show:
+                self.hidden.discard(value)
+            else:
+                self.hidden.add(value)
+
+        self._apply_visibility()
+
+        return show
+
+    def show_all(self):
+        self.hidden.clear()
+        self._apply_visibility()
+
+    def _apply_visibility(self):
+        for label, artists in self.artists.items():
+            for artist in artists:
+                artist.set_visible(label not in self.hidden)
+
+
 class MapView(QtWidgets.QWidget):
     """
     Hillshaded DEM, vector backdrop and navigation, with a blitting surface on
@@ -102,6 +149,10 @@ class MapView(QtWidgets.QWidget):
     save_requested = QtCore.pyqtSignal()
     status = QtCore.pyqtSignal(str)
 
+    # How many legend entries are off, after one has just been switched. A
+    # panel showing a way back to all of them needs to know when there is one.
+    categories_changed = QtCore.pyqtSignal(int)
+
     def __init__(self, session, legend="beside", parent=None):
         super().__init__(parent)
 
@@ -120,6 +171,14 @@ class MapView(QtWidgets.QWidget):
         # the backdrop's are added here. Left unset the legend shows the
         # backdrop alone, which is what a tool that draws nothing would want.
         self.legend_handles_provider = None
+
+        # Which backdrop categories each clickable legend artist switches, by
+        # id: the legend draws copies of the handles it was given, so there is
+        # nothing to hang this on but the artists it made.
+        self._legend_switches = {}
+
+        # And the same for what a tool draws, which has nowhere else to live.
+        self.tool_layers = ToolLayers()
 
         self._animated = []
         self._pressing = False
@@ -140,6 +199,7 @@ class MapView(QtWidgets.QWidget):
         self.shade_timer.timeout.connect(self._refresh_shade)
 
         self.canvas.mpl_connect("draw_event", self._on_draw)
+        self.canvas.mpl_connect("pick_event", self._on_legend_pick)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
@@ -228,6 +288,22 @@ class MapView(QtWidgets.QWidget):
 
         return handles
 
+    def switchable(self, handle, *artists):
+        """
+        Lets one of a tool's own legend entries switch what it stands for.
+
+        For the data a tool puts on the map, not for what the hand is steering:
+        twelve thousand station dots hide the field drawn over them and are
+        worth taking off, while a window circle switched off leaves a handle
+        being dragged invisible. Which entry is which only the tool knows, so
+        it is the tool that asks.
+        """
+
+        self.tool_layers.register(handle.get_label(), artists)
+        handle._gsurf_switch = (self.tool_layers, (handle.get_label(),))
+
+        return handle
+
     def refresh_legend(self):
         """
         Rebuilds the legend where the placement says it goes, the map included.
@@ -245,12 +321,15 @@ class MapView(QtWidgets.QWidget):
             self.legend.remove()
             self.legend = None
 
+        self._legend_switches = {}
+
         if self.legend_placement != "hidden":
             # With distinct units the entries are a dozen instead of three, and
             # at normal body size they would not fit in height.
             categorized = self.overlay is not None and self.overlay.is_categorized
+            handles = self.legend_handles()
             style = dict(
-                handles=self.legend_handles(),
+                handles=handles,
                 fontsize="x-small" if categorized else "small",
                 framealpha=0.85,
             )
@@ -261,10 +340,97 @@ class MapView(QtWidgets.QWidget):
                 else self.figure.legend(loc="outside right upper", **style)
             )
 
+            self._wire_legend(handles)
+
         # The axes box has just moved: the blitting background cut on the
         # previous one would be worth nothing now. The draw_event fired from
         # here recaptures it.
         self.canvas.draw()
+
+    def _wire_legend(self, handles):
+        """
+        Makes the backdrop's entries clickable, and greys the ones switched off.
+
+        By position and not by identity: a legend does not draw the handles it
+        was given, it draws copies its handlers make, so the switch has to be
+        carried across on the index. An entry with no switch stays inert, which
+        is what the tools' steering artists want.
+
+        Greyed here rather than in the handle, so that the state lives in the
+        layer and its appearance in one place: every rebuild reproduces it,
+        and there is no second copy to fall out of step.
+        """
+
+        for handle, key, text in zip(
+            handles, self.legend.legend_handles, self.legend.get_texts()
+        ):
+            # A layer's own entry reads as the heading of the block under it,
+            # and not as one more thing drawn on the map.
+            if getattr(handle, "_gsurf_heading", False):
+                text.set_fontweight("bold")
+
+            switch = getattr(handle, "_gsurf_switch", None)
+
+            if switch is None:
+                continue
+
+            source, values = switch
+
+            # Both, because the swatch is a few pixels across and the label is
+            # what the hand goes for.
+            for artist in (key, text):
+                artist.set_picker(True)
+                self._legend_switches[id(artist)] = switch
+
+            if source.is_hidden(values):
+                key.set_alpha(0.25)
+                text.set_color("#9a9a9a")
+
+    def _on_legend_pick(self, event):
+        """A click on a legend entry takes its category off the map, or puts it back."""
+
+        switch = self._legend_switches.get(id(event.artist))
+
+        if switch is None:
+            return
+
+        source, values = switch
+        source.toggle(values)
+
+        # Rebuilt rather than touched up: the rebuild ends in a full draw, and
+        # that draw is what recaptures the blitting background without what has
+        # just been taken off it.
+        self.refresh_legend()
+        self._report_hidden()
+
+    def show_all_categories(self):
+        """
+        Puts every switched-off category back on the map.
+
+        The way out of the corner: with the legend hidden as a block there is
+        nothing left to click, and a category switched off before that would
+        otherwise have no way back.
+        """
+
+        if self.overlay is not None:
+            self.overlay.show_all()
+
+        self.tool_layers.show_all()
+        self.refresh_legend()
+        self._report_hidden()
+
+    def hidden_count(self):
+        backdrop = self.overlay.hidden_count() if self.overlay is not None else 0
+
+        return backdrop + len(self.tool_layers.hidden)
+
+    def _report_hidden(self):
+        hidden = self.hidden_count()
+
+        self.categories_changed.emit(hidden)
+        self.status.emit(
+            f"{hidden} legend entries hidden" if hidden else "every category is on the map"
+        )
 
     # -- the frame --------------------------------------------------------
 
@@ -313,6 +479,12 @@ class MapView(QtWidgets.QWidget):
 
     def _on_press(self, event):
         if self.is_navigating() or event.inaxes is not self.axes or event.xdata is None:
+            return
+
+        # A legend inside the map is inside the axes as well, and its entries
+        # are now clickable: without this a click on one would switch the
+        # category and move the tool's point at the same time.
+        if self.legend is not None and self.legend.contains(event)[0]:
             return
 
         self._pressing = True
@@ -432,6 +604,49 @@ class MapView(QtWidgets.QWidget):
     def copy_screenshot(self):
         QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
         self.status.emit("screenshot copied to the clipboard")
+
+
+class LegendControls(QtWidgets.QWidget):
+    """
+    Where the legend goes, and the way back from a category switched off.
+
+    Both tools want the same two controls, so they are here and not twice over
+    in the panels. The placement includes "hidden", which takes the whole legend
+    off in one go: on a backdrop of twenty tints that is the difference between
+    reading the map and reading the legend.
+    """
+
+    def __init__(self, map_view, placement="beside", parent=None):
+        super().__init__(parent)
+
+        self.map_view = map_view
+
+        self.combo = QtWidgets.QComboBox()
+        for text, mode in MapView.LEGEND_PLACEMENTS:
+            self.combo.addItem(text, mode)
+
+        modes = [mode for _, mode in MapView.LEGEND_PLACEMENTS]
+        self.combo.setCurrentIndex(modes.index(placement) if placement in modes else 0)
+        self.combo.currentIndexChanged.connect(
+            lambda _: map_view.set_legend_placement(self.combo.currentData())
+        )
+
+        # Enabled only when there is something to bring back -- and it is the
+        # only way back once the legend itself is hidden, there being nothing
+        # left to click on.
+        self.show_all = QtWidgets.QPushButton("Show all categories")
+        self.show_all.setEnabled(False)
+        self.show_all.clicked.connect(map_view.show_all_categories)
+        map_view.categories_changed.connect(
+            lambda hidden: self.show_all.setEnabled(hidden > 0)
+        )
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(QtWidgets.QLabel("Legend"))
+        layout.addWidget(self.combo)
+        layout.addWidget(self.show_all)
 
 
 def fit_to_screen(window, width, height):

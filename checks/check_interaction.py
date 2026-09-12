@@ -74,6 +74,7 @@ def within_a_pixel(window, wanted, tolerance_px=2.0):
 
 
 def main():
+    from matplotlib.backend_bases import MouseEvent
     from PyQt6 import QtWidgets
 
     from gsurf.tools import intersection as ri
@@ -188,6 +189,46 @@ def main():
 
         check("the legend carries the tool's own entries",
               any(t.get_text() == "intersection" for t in view.legend.get_texts()))
+
+        check("the way back from a switched-off category starts disabled",
+              not window.legend_controls.show_all.isEnabled())
+
+        # -- and a click on one of its entries switches it ----------------------
+        # This session has no vector backdrop, so every entry is one this tool
+        # drew: the intersection line and the compute window, which are what the
+        # hand is steering. Those stay inert -- a window circle switched off
+        # would leave a handle being dragged invisible. (The fold-axes tool does
+        # have switchable entries of its own; check_folds.py covers them.)
+        inert = all(
+            id(t) not in view._legend_switches for t in view.legend.get_texts()
+        )
+        check("the entries a tool steers with are not clickable", inert,
+              f"{len(view._legend_switches)} switches wired")
+
+        # A click on a legend placed inside the map lands inside the axes too:
+        # without the guard it would switch the entry and move the point at once.
+        window.legend_combo.setCurrentIndex(placements(ri).index("inside"))
+        app.processEvents()
+        view.canvas.draw()
+        app.processEvents()
+
+        text = view.legend.get_texts()[0]
+        box = text.get_window_extent(view.canvas.get_renderer())
+        before = tuple(window.source_point[:2])
+
+        event = MouseEvent(
+            "button_press_event", view.canvas,
+            int(box.x0 + box.width / 2), int(box.y0 + box.height / 2), button=1,
+        )
+        view.canvas.callbacks.process("button_press_event", event)
+        app.processEvents()
+
+        check("a click on a legend inside the map does not move the point",
+              tuple(window.source_point[:2]) == before,
+              f"({window.source_point[0]:.0f}, {window.source_point[1]:.0f})")
+
+        window.legend_combo.setCurrentIndex(placements(ri).index("beside"))
+        app.processEvents()
 
         # -- the saved figure keeps the trace ---------------------------------
         out = Path(tmp) / "shot.png"

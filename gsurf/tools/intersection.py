@@ -80,7 +80,7 @@ from matplotlib.patches import Rectangle
 
 from misah.kernels import intersect_plane_grid
 
-from gsurf.mapview import MapView, fit_to_screen
+from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.sources import SourcesDialog, open_session
 from gsurf.vectors import split_layer
 
@@ -182,6 +182,11 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         self.update_intersection()
 
+        # After the first frame and not before it: update_intersection ends by
+        # reporting what that frame cost, so a message set during construction
+        # was overwritten before it could ever be read.
+        self.statusBar().showMessage(self._opening_hint)
+
     # -- construction -----------------------------------------------------
 
     def _build_ui(self, attitude, legend):
@@ -256,15 +261,8 @@ class RealtimeWindow(QtWidgets.QMainWindow):
 
         # Where the legend goes is the map's business; the box that says so is
         # a control, and belongs in the panel with the others.
-        self.legend_combo = QtWidgets.QComboBox()
-        for text, mode in MapView.LEGEND_PLACEMENTS:
-            self.legend_combo.addItem(text, mode)
-
-        modes = [mode for _, mode in MapView.LEGEND_PLACEMENTS]
-        self.legend_combo.setCurrentIndex(modes.index(legend) if legend in modes else 0)
-        self.legend_combo.currentIndexChanged.connect(
-            lambda _: self.map_view.set_legend_placement(self.legend_combo.currentData())
-        )
+        self.legend_controls = LegendControls(self.map_view, legend)
+        self.legend_combo = self.legend_controls.combo
 
         # The source point, typeable as well as draggable: in the field a
         # station has coordinates, and re-entering them by hunting with the
@@ -343,8 +341,7 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.side_label)
 
         layout.addSpacing(8)
-        layout.addWidget(QtWidgets.QLabel("Legend"))
-        layout.addWidget(self.legend_combo)
+        layout.addWidget(self.legend_controls)
 
         layout.addSpacing(8)
         for text, slot in (
@@ -372,9 +369,15 @@ class RealtimeWindow(QtWidgets.QMainWindow):
         main_layout.addWidget(panel)
         self.setCentralWidget(central)
 
-        self.statusBar().showMessage(
-            "scroll to zoom; drag the yellow point, or click elsewhere to move it"
-        )
+        hint = "scroll to zoom; drag the yellow point, or click elsewhere to move it"
+
+        # Said only when there is something to click. The two entries this tool
+        # draws are what the hand is steering and switch nothing, so it takes a
+        # backdrop -- categorised or not, a layer is switched by its own entry.
+        if self.session.overlay:
+            hint += " - click a legend entry to take what it names off the map"
+
+        self._opening_hint = hint
 
     def _draw_base_map(self):
         axes = self.map_view.axes
