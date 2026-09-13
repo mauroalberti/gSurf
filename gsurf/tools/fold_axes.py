@@ -13,7 +13,8 @@ Usage:
     python -m gsurf.tools.fold_axes <attitudes.gpkg[:layer]> --dip-dir FIELD --dip FIELD
                         [--dem DEM] [--polygons PATH[:LAYER]] [--lines PATH[:LAYER]]
                         [--radius M] [--step M] [--strike-rhr]
-                        [--min-points N] [--max-k K]
+                        [--min-points N] [--max-k K] [--min-c C]
+                        [--export grid.gpkg]
 
 With no arguments a dialog asks for the files, and asks for the two angle
 fields by offering the layer's numeric columns rather than making you remember
@@ -44,10 +45,17 @@ without recomputing a tensor -- K, C and the count are what the gate reads and
 they are already there -- which is the only practical way to see how much of a
 map depends on where the threshold was put.
 
+`--export` does that grid with no window at all and writes it, which is what a
+multiscale product needs: the same attitudes at three radii is three runs, and
+the feature that survives all three is the one worth reading. It takes no
+dialogs -- the layer and both field names have to be on the command line.
+
 Attitudes are read in true azimuth, as they are measured. The map is on the
 projection's grid, so the axis is turned onto the grid before it is drawn --
 meridian convergence, taken at the window's centre. Both bearings go into the
-export.
+export, and so does the convergence itself: the export also carries S1 and S2,
+and three more grid copies would have been three more chances for a table to mix
+its norths.
 """
 
 from __future__ import annotations
@@ -813,46 +821,12 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         if not path:
             return
 
-        import geopandas as gpd
-        from shapely.geometry import Point
-
-        # Occupied cells only: an empty cell says nothing that the absence of a
-        # point does not say more compactly.
-        rows = np.flatnonzero(self.field.occupied)
-        centres = self.field.centres[rows]
-
-        grid_trends = [
-            self.session.convergence.to_grid(t, x, y) if np.isfinite(t) else None
-            for t, (x, y) in zip(self.field.trends[rows], centres)
-        ]
-
-        # Names within the ten characters a shapefile allows, and the gate
-        # repeated on every row: the thresholds are a choice, and a field whose
-        # verdicts cannot be checked against the rule that produced them is a
-        # picture rather than a measurement.
-        frame = gpd.GeoDataFrame(
-            {
-                "trend": self.field.trends[rows],
-                "plunge": self.field.plunges[rows],
-                "trend_grd": grid_trends,
-                "k": self.field.k[rows],
-                "c": self.field.c[rows],
-                "n": self.field.counts[rows],
-                "is_axis": self.field.admitted[rows],
-                "radius_m": self.field.radius,
-                "step_m": self.field.step,
-                "min_pts": self.field.gate.min_points,
-                "max_k": self.field.gate.max_k,
-                "min_c": self.field.gate.min_c,
-            },
-            geometry=[Point(x, y) for x, y in centres],
-            crs=self.session.crs,
-        )
+        frame = field_frame(self.field, self.session)
         frame.to_file(path)
 
         self.statusBar().showMessage(
             f"{len(frame)} cells exported to {path} "
-            f"({int(self.field.admitted[rows].sum())} of them fold axes)"
+            f"({int(frame['is_axis'].sum())} of them fold axes)"
         )
 
     # -- outputs ----------------------------------------------------------
@@ -935,7 +909,82 @@ class FoldAxesWindow(QtWidgets.QMainWindow):
         return self.session.suggested_name(suffix, tag=tag)
 
 
-def read_attitudes(session, spec, parent=None):
+def field_frame(field, session):
+    """
+    The field as a GeoDataFrame, one point per occupied cell.
+
+    Occupied cells only: an empty cell says nothing that the absence of a point
+    does not say more compactly.
+
+    Names within the ten characters a shapefile allows, and the gate repeated on
+    every row: the thresholds are a choice, and a field whose verdicts cannot be
+    checked against the rule that produced them is a picture rather than a
+    measurement.
+
+    Bearings are true azimuths, with the convergence beside them in `converg`
+    rather than a grid copy of each one. `trend_grd` stays because the styling
+    rotates on it, but S1 and S2 would have wanted two more columns to say what
+    one already says, and a table where some bearings are grid north and others
+    true north is the single mistake it can make that nothing downstream would
+    show. The convergence is computed once per cell and `trend_grd` derived from
+    it, so that `(trend - converg) % 360` is exactly `trend_grd` and not nearly.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    rows = np.flatnonzero(field.occupied)
+    centres = field.centres[rows]
+    trends = field.trends[rows]
+
+    convergences = np.array([session.convergence.at(x, y) for x, y in centres])
+    grid_trends = np.where(np.isfinite(trends), (trends - convergences) % 360.0, np.nan)
+
+    return gpd.GeoDataFrame(
+        {
+            "trend": trends,
+            "plunge": field.plunges[rows],
+            "trend_grd": grid_trends,
+            "converg": convergences,
+            "s1_trend": field.s1[rows, 0],
+            "s1_plunge": field.s1[rows, 1],
+            "s2_trend": field.s2[rows, 0],
+            "s2_plunge": field.s2[rows, 1],
+            "e1": field.eigenvalues[rows, 0],
+            "e2": field.eigenvalues[rows, 1],
+            "e3": field.eigenvalues[rows, 2],
+            "k": field.k[rows],
+            "c": field.c[rows],
+            "n": field.counts[rows],
+            "is_axis": field.admitted[rows],
+            "radius_m": field.radius,
+            "step_m": field.step,
+            "min_pts": field.gate.min_points,
+            "max_k": field.gate.max_k,
+            "min_c": field.gate.min_c,
+        },
+        geometry=[Point(x, y) for x, y in centres],
+        crs=session.crs,
+    )
+
+
+def refuse(title, text, parent=None, report=None):
+    """
+    Says no, on screen or on the terminal.
+
+    The batch export meets the same two refusals as the window and has nobody to
+    click a dialog: the decision stays in one place and only the telling of it
+    changes with who asked. A `QMessageBox` in a run with no display does not
+    fail, it waits.
+    """
+
+    if report is not None:
+        report(title, text)
+    else:
+        QtWidgets.QMessageBox.critical(parent, title, text)
+
+
+def read_attitudes(session, spec, parent=None, report=None):
     """
     The attitude layer as a source, or None once the refusal has been shown.
 
@@ -955,15 +1004,13 @@ def read_attitudes(session, spec, parent=None):
     print(f"attitudes: {attitudes.summary()}")
 
     if attitudes.problem:
-        QtWidgets.QMessageBox.critical(
-            parent, "Unusable attitudes", f"{spec['path']}\n\n{attitudes.problem}"
-        )
+        refuse("Unusable attitudes", f"{spec['path']}\n\n{attitudes.problem}", parent, report)
         return None
 
     return attitudes
 
 
-def refuse_geographic(session, parent=None):
+def refuse_geographic(session, parent=None, report=None):
     """
     True once a session in degrees has been refused, with the reason shown.
 
@@ -976,12 +1023,13 @@ def refuse_geographic(session, parent=None):
     if session.crs is None or not session.crs.is_geographic:
         return False
 
-    QtWidgets.QMessageBox.critical(
-        parent,
+    refuse(
         "Geographic CRS",
         "The window radius is in metres and this session is in degrees "
         f"(EPSG:{session.epsg}).\n\nReproject the attitudes, or give a "
         "projected DEM, before looking for fold axes.",
+        parent,
+        report,
     )
 
     return True
@@ -1011,6 +1059,64 @@ def build(session, chosen, legend="beside"):
     return window
 
 
+def export_batch(args, chosen, path):
+    """
+    The field computed and written with no window, for scripting.
+
+    The only thing the export ever needed a screen for was the file dialog, and
+    a multiscale product -- the same attitudes at three radii, to see which
+    features survive the window -- is three runs nobody should be clicking
+    through. What gets computed is what the window computes: `fold_axis_field`
+    over `grid_centres` on the bounds of the attitudes, the same two calls the
+    window makes and the same two `check_folds` makes.
+
+    Returns an exit status.
+    """
+
+    def to_stderr(title, text):
+        print(f"{title}: {text}", file=sys.stderr)
+
+    session = open_session(chosen)
+    print(f"session: {session.summary()}")
+
+    if refuse_geographic(session, report=to_stderr):
+        return 1
+
+    attitudes = read_attitudes(session, chosen["attitudes"], report=to_stderr)
+
+    if attitudes is None:
+        return 1
+
+    radius = float(args.radius)
+    step = float(args.step) if args.step else max(250.0, radius / 2.0)
+
+    # Where the attitudes are, not where the map is, which is what the window
+    # grids too: with a DEM in the session the map can be far larger than the
+    # data, and the difference is empty cells computed to draw nothing in.
+    left, bottom = attitudes.xy.min(axis=0)
+    right, top = attitudes.xy.max(axis=0)
+    bounds = (float(left), float(bottom), float(right), float(top))
+
+    centres = grid_centres(bounds, step)
+    gate = Gate(min_points=args.min_points, max_k=args.max_k, min_c=args.min_c)
+
+    cost = field_cost(attitudes, centres, radius, gate)
+    print(
+        f"grid: {cost['cells']} cells at {step:.0f} m, r = {radius:.0f} m, "
+        f"about {cost['occupied']} with data - roughly {cost['seconds']:.1f} s"
+    )
+    print(f"sampling: {describe_sampling(bounds, radius, step)}")
+
+    field = fold_axis_field(attitudes, centres, radius, gate)
+    print(f"field: {field.summary()}")
+
+    frame = field_frame(field, session)
+    frame.to_file(path)
+    print(f"{len(frame)} cells written to {path} ({int(frame['is_axis'].sum())} fold axes)")
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1034,6 +1140,10 @@ def main():
                         help=f"attitudes a girdle needs (default {Gate.min_points})")
     parser.add_argument("--max-k", type=float, default=Gate.max_k, metavar="K",
                         help=f"largest Woodcock K still read as a girdle (default {Gate.max_k})")
+    parser.add_argument("--min-c", type=float, default=Gate.min_c, metavar="C",
+                        help=f"weakest Woodcock C still given a direction (default {Gate.min_c})")
+    parser.add_argument("--export", metavar="PATH",
+                        help="compute the grid, write it there and exit, with no window")
     parser.add_argument("--legend", default="beside",
                         choices=[mode for _, mode in MapView.LEGEND_PLACEMENTS])
     args = parser.parse_args()
@@ -1053,6 +1163,16 @@ def main():
     for backdrop in (split_layer(args.polygons, "polygons"), split_layer(args.lines, "lines")):
         if backdrop:
             chosen[backdrop["role"]] = backdrop
+
+    # Batch before the QApplication: an export driven from a script should not
+    # need a display in order to have a file dialog that it never opens.
+    if args.export:
+        if not attitude_spec or not args.dip_dir or not args.dip:
+            parser.error(
+                "--export takes no dialogs: give the attitude layer, --dip-dir and --dip"
+            )
+
+        sys.exit(export_batch(args, chosen, args.export))
 
     # The QApplication before anything that could raise into a dialog.
     app = QtWidgets.QApplication(sys.argv)
@@ -1084,7 +1204,7 @@ def main():
         attitudes,
         radius=args.radius,
         step=args.step,
-        gate=Gate(min_points=args.min_points, max_k=args.max_k),
+        gate=Gate(min_points=args.min_points, max_k=args.max_k, min_c=args.min_c),
         legend=args.legend,
     )
     fit_to_screen(window, 1280, 900)
