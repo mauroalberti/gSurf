@@ -84,6 +84,49 @@ def cylindrical_fold(axis_trend, axis_plunge, n=120, noise_deg=0.0, seed=0, half
     return (trend + 180.0) % 360.0, 90.0 - plunge
 
 
+def poles_about(axis_trends, axis_plunges, noise_deg=0.0, seed=0, half_opening=180.0):
+    """
+    One bedding attitude per station, each perpendicular to its own local axis.
+
+    `cylindrical_fold` gives attitudes that share an axis. This gives attitudes
+    that do not, which is the only way to write down a fold whose axis turns
+    along strike: stacking domains built by the other function can produce a
+    step and nothing else, and a step and a gradient are the two cases a field
+    of axes most needs to be able to tell apart.
+    """
+
+    trends = np.asarray(axis_trends, dtype=float)
+    plunges = np.asarray(axis_plunges, dtype=float)
+    n = len(trends)
+    rng = np.random.default_rng(seed)
+
+    t, p = np.radians(trends), np.radians(plunges)
+    axes = np.c_[np.sin(t) * np.cos(p), np.cos(t) * np.cos(p), -np.sin(p)]
+
+    # Something to span the plane normal to each axis, swapped where the axis is
+    # too near it for the cross product to be well conditioned.
+    seeds = np.tile(np.array([0.0, 0.0, 1.0]), (n, 1))
+    seeds[np.abs(axes[:, 2]) > 0.9] = np.array([1.0, 0.0, 0.0])
+
+    u = np.cross(axes, seeds)
+    u /= np.linalg.norm(u, axis=1)[:, None]
+    v = np.cross(axes, u)
+
+    theta = np.radians(rng.uniform(-half_opening, half_opening, n))
+    poles = np.cos(theta)[:, None] * u + np.sin(theta)[:, None] * v
+
+    if noise_deg:
+        poles = poles + rng.normal(0.0, np.radians(noise_deg), poles.shape)
+        poles /= np.linalg.norm(poles, axis=1)[:, None]
+
+    poles[poles[:, 2] > 0] *= -1.0
+
+    plunge = np.degrees(np.arcsin(-poles[:, 2]))
+    trend = np.degrees(np.arctan2(poles[:, 0], poles[:, 1])) % 360.0
+
+    return (trend + 180.0) % 360.0, 90.0 - plunge
+
+
 def as_layer(directory, name, xy, dip_dirs, dips, dip_dir_name="Immersione", dip_name="Inclinazione"):
     import geopandas as gpd
     from shapely.geometry import Point
@@ -325,6 +368,60 @@ def main():
             check(f"the {side} half recovers its own axis {wanted[0]:.0f}/{wanted[1]:.0f}",
                   taken.sum() > 3 and max(offsets) < 8.0,
                   f"{taken.sum()} cells, worst {max(offsets):.1f} deg off")
+
+        # -- an axis that turns, rather than two that differ ---------------------
+        print("\n-- a fold axis that rotates along strike --")
+
+        # The other thing next to a step: a trend rising at a known rate, with
+        # the plunge held still so that anything the plunge does is the window's
+        # and not the model's. Two degrees per kilometre over twenty kilometres,
+        # which is 100 to 140 -- the span the Basilicata axes actually cover.
+        RATE = 2.0          # degrees of trend per kilometre
+        BASE = 100.0
+        SPAN = 20000.0
+
+        rng = np.random.default_rng(11)
+        ramp_xy = np.c_[rng.uniform(0.0, SPAN, 1200), rng.uniform(0.0, 10000.0, 1200)]
+        imposed = BASE + RATE * ramp_xy[:, 0] / 1000.0
+
+        ramp_dd, ramp_d = poles_about(imposed, np.full(1200, 10.0), noise_deg=5.0, seed=12)
+
+        ramp = AttitudeSource(
+            as_layer(tmp, "ramp", ramp_xy, ramp_dd, ramp_d),
+            "EPSG:25833", layer="ramp",
+            dip_dir_field="Immersione", dip_field="Inclinazione")
+
+        ramp_centres = grid_centres((0.0, 0.0, SPAN, 10000.0), 1000.0)
+
+        # A symmetric moving average leaves a straight line alone: every window
+        # in the interior is centred on its own cell, and the rotation it
+        # averages over is as much ahead of the centre as behind. So the rate
+        # should come back whatever the radius -- which is exactly what a step
+        # does not do, and the reason the two can be told apart at all.
+        for radius, tolerance in ((1500.0, 0.15), (3000.0, 0.15)):
+            rfield = fold_axis_field(ramp, ramp_centres, radius)
+
+            inside = (
+                rfield.admitted
+                & (rfield.centres[:, 0] >= 3000.0)
+                & (rfield.centres[:, 0] <= SPAN - 3000.0)
+            )
+            xs = rfield.centres[inside, 0] / 1000.0
+            recovered = np.polyfit(xs, rfield.trends[inside], 1)[0]
+
+            check(f"the rate comes back at r = {radius:.0f} m",
+                  inside.sum() > 20 and abs(recovered - RATE) < tolerance * RATE,
+                  f"{recovered:.2f} deg/km against {RATE:.2f} imposed, {inside.sum()} cells")
+
+            residual = rfield.trends[inside] - (BASE + RATE * xs)
+            check(f"and the trend sits on the ramp, not beside it, at r = {radius:.0f} m",
+                  abs(float(np.mean(residual))) < 2.0,
+                  f"mean residual {float(np.mean(residual)):+.2f} deg, "
+                  f"scatter {float(np.std(residual)):.2f}")
+
+            check(f"the plunge stays where it was put at r = {radius:.0f} m",
+                  abs(float(np.median(rfield.plunges[inside])) - 10.0) < 2.0,
+                  f"median {float(np.median(rfield.plunges[inside])):.1f} deg against 10")
 
         # -- regating must be the same answer, not a similar one -----------------
         for gate_now in (Gate(min_points=5, max_k=0.6),
