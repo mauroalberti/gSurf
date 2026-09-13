@@ -165,12 +165,29 @@ class FoldAxisField:
     axis is a field that has not been read: on the Potenza-Irsina sheet three
     windows in four are clusters, and drawing those would be drawing noise with
     the confidence of a measurement.
+
+    The whole eigenframe is kept and not only the axis. S1, S2 and S3 are an
+    orthonormal triad, and sign-blind in each of the three, which is the
+    symmetry of a double couple: a pair of them can be compared by the rotation
+    that carries one onto the other, the way two focal mechanisms are. The axis
+    alone cannot -- the rotations carrying one line onto another are a family,
+    not a rotation. Dropping S1 and S2 here is what made that comparison need a
+    second pass over the attitudes, so they are kept where they are computed.
+
+    They are not the equal of S3, though. S1 and S2 are only separated by
+    ln(S1/S2), and that vanishes on the good girdles: a swap of the two is a
+    quarter turn about the axis, and no symmetry of the triad undoes it. The
+    eigenvalues travel with the axes so that whoever compares two frames can
+    first ask whether the frames are determined.
     """
 
     centres: np.ndarray         # (M, 2), the window centres in map coordinates
     counts: np.ndarray          # (M,) attitudes in each
     trends: np.ndarray          # (M,) axis trend, true azimuth; NaN where none
     plunges: np.ndarray         # (M,)
+    s1: np.ndarray              # (M, 2) maximum eigenvector, (trend, plunge)
+    s2: np.ndarray              # (M, 2) intermediate; S3 is trends/plunges above
+    eigenvalues: np.ndarray     # (M, 3) S1 >= S2 >= S3, each row summing to one
     k: np.ndarray               # (M,) Woodcock shape; NaN where none
     c: np.ndarray               # (M,)
     admitted: np.ndarray        # (M,) bool: cleared the gate
@@ -373,6 +390,9 @@ def fold_axis_field(attitudes, centres, radius, gate=None, progress=None):
     counts = np.zeros(total, dtype=int)
     trends = np.full(total, np.nan)
     plunges = np.full(total, np.nan)
+    s1 = np.full((total, 2), np.nan)
+    s2 = np.full((total, 2), np.nan)
+    eigenvalues = np.full((total, 3), np.nan)
     k = np.full(total, np.nan)
     c = np.full(total, np.nan)
     admitted = np.zeros(total, dtype=bool)
@@ -411,6 +431,9 @@ def fold_axis_field(attitudes, centres, radius, gate=None, progress=None):
             continue
 
         trends[index], plunges[index] = result.axis
+        s1[index] = result.principal[0]
+        s2[index] = result.principal[1]
+        eigenvalues[index] = result.eigenvalues
         k[index], c[index] = result.k, result.c
 
         refusal = gate.refusal(result)
@@ -433,6 +456,9 @@ def fold_axis_field(attitudes, centres, radius, gate=None, progress=None):
         counts=counts,
         trends=trends,
         plunges=plunges,
+        s1=s1,
+        s2=s2,
+        eigenvalues=eigenvalues,
         k=k,
         c=c,
         admitted=admitted,
