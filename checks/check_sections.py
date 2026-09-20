@@ -72,7 +72,14 @@ def main():
         source = tool.read_traces(session, spec)
         print(f"Monte Alpi: {session.summary()}")
     else:
-        session = Session.open(dem_path=str(synthetic_dem()))
+        # Left where it is written rather than in a `with`: the session holds
+        # the DEM open for the whole run, and a temporary directory taken down
+        # at the end of this branch would take the raster with it.
+        import tempfile
+
+        session = Session.open(
+            dem_path=str(synthetic_dem(Path(tempfile.mkdtemp()) / "synthetic.tif"))
+        )
         source, spec = None, None
         print(f"synthetic: {session.summary()}")
 
@@ -189,6 +196,73 @@ def main():
 
     check("the drag is the cheaper of the two", single < bundle,
           f"{bundle / single:.1f}x")
+
+    # -- three windows, and what keeps them one tool -----------------------
+    #
+    # The section and the records are top-level windows rather than docks. Two
+    # things about that are worth holding down, and neither is visible in the
+    # window. They are parented to the map, which is what has Qt destroy them
+    # with the tool and -- the part that does not show at all -- what keeps
+    # closing one from counting as the last window closed: while a tool runs
+    # the launcher is hidden underneath, so a satellite without a parent would
+    # take the application down instead of handing it back. And closing one
+    # hides it, because the canvases inside are rebuilt at a price and a window
+    # shut by accident should not cost that.
+
+    group = window.window_group
+    satellites = {name: w for name, w in group.items() if name != "map"}
+
+    check("the map, the section and the records are three windows",
+          sorted(group) == ["map", "section", "traces"], ", ".join(sorted(group)))
+
+    check("each of them is a window in its own right",
+          all(w.isWindow() for w in satellites.values()),
+          f"{sum(w.isWindow() for w in satellites.values())} of {len(satellites)}")
+
+    check("and each is parented to the map, so closing one cannot quit the app",
+          all(w.parent() is window for w in satellites.values()))
+
+    check("showing the map brings the group up with it",
+          all(w.isVisible() for w in satellites.values()),
+          f"{sum(w.isVisible() for w in satellites.values())} of {len(satellites)} up")
+
+    def menu_action(text):
+        """The entry of the Windows menu that switches one satellite."""
+
+        for entry in window.menuBar().actions():
+            if entry.menu() is None:
+                continue
+            for action in entry.menu().actions():
+                if action.text().replace("&", "") == text:
+                    return action
+
+        return None
+
+    section_window, action = group["section"], menu_action("Section")
+
+    check("the Windows menu offers one entry per satellite",
+          action is not None and menu_action("Traces") is not None)
+
+    # Closed the way the window manager closes it, not hidden behind its back.
+    section_window.close()
+
+    check("closing a window hides it and leaves what is inside standing",
+          not section_window.isVisible()
+          and window.single is not None and window.bundle is not None,
+          "the single panel and the bundle both survive")
+
+    check("and the menu stops claiming a window that is not there",
+          not action.isChecked())
+
+    action.trigger()
+
+    check("the menu puts it back", section_window.isVisible() and action.isChecked())
+
+    # The guard that keeps a real desktop's arrangement out of this run. Without
+    # it, a section window last left as a strip would come back as one here and
+    # every ink count above would be measured on it.
+    check("off-screen there is no layout to inherit",
+          tool.remembered() is None and window.restore_geometry() is False)
 
     # -- the trace goes to the profiler as drawn ---------------------------
 
