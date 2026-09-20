@@ -12,6 +12,43 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def single_parts(geometry, wanted):
+    """
+    The single-part pieces of one geometry of the wanted type, and how many
+    pieces were of some other type.
+
+    Flattened by recursion, because the containers nest and their names do not
+    say so: a GeometryCollection holds MultiPolygons as readily as Polygons,
+    and it is the one container whose type does not begin with 'Multi'. A test
+    on the outer type therefore walks a collection straight into `.exterior`,
+    which is how the sections tool came down on the `carbonates` layer of
+    geology.gpkg -- one unit there, the Conglomerato di Santa Croce, is stored
+    as its polygon plus two dangling edges 4 and 56 m long.
+
+    What is of another type is counted rather than converted: a 4 m dangle put
+    in with the lines would be drawn across a section as a mapped contact. The
+    count is what lets the caller say so instead of swallowing it.
+    """
+
+    if geometry is None or geometry.is_empty:
+        return [], 0
+
+    if geometry.geom_type == wanted:
+        return [geometry], 0
+
+    if not hasattr(geometry, "geoms"):
+        return [], 1
+
+    kept, skipped = [], 0
+
+    for part in geometry.geoms:
+        part_kept, part_skipped = single_parts(part, wanted)
+        kept.extend(part_kept)
+        skipped += part_skipped
+
+    return kept, skipped
+
+
 class VectorSource:
     """
     One backdrop vector layer, in the role it was given.
@@ -80,6 +117,7 @@ class VectorSource:
         self.labels = {}
         self.frame = None
         self.problem = None
+        self.without_geometry = 0
 
         # One artist per category, and which of them are currently off the map.
         # A layer with no categories has a single artist under the key None, and
@@ -103,6 +141,16 @@ class VectorSource:
         left, bottom, right, top = bounds
         window = box(left, bottom, right, top)
         visible = complete.to_crs(crs)
+
+        # Counted apart from the window, because `intersects` is false for both
+        # and they are not the same news: a unit outside the area is somewhere
+        # else, one with no geometry is nowhere. Five of the 236 carbonates in
+        # geology.gpkg carry none, and the Calabrian CASMEZ sheet 299 -- enough
+        # that a count which does not add up should say why.
+        self.without_geometry = int(
+            (visible.geometry.isna() | visible.geometry.is_empty).sum()
+        )
+
         visible = visible[visible.intersects(window)]
 
         if visible.empty:
@@ -441,12 +489,17 @@ class VectorSource:
         if self.colors:
             distinct = len(set(self.frame["_gsurf_category"]))
 
-            return (
+            text = (
                 f"{self.role}: {where}, {len(self.frame)} in {distinct} "
                 f"categories ({self.category_field})"
             )
+        else:
+            text = f"{self.role}: {where}, {len(self.frame)}"
 
-        return f"{self.role}: {where}, {len(self.frame)}"
+        if self.without_geometry:
+            text += f"; {self.without_geometry} with no geometry"
+
+        return text
 
 
 class Overlay:

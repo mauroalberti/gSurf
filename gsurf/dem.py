@@ -57,6 +57,14 @@ class ComputeWindow:
 
         return left <= x <= right and bottom <= y <= top
 
+    def contains(self, box):
+        """Whether a whole rectangle is inside this window."""
+
+        left, bottom, right, top = self.bounds
+        x0, y0, x1, y1 = box
+
+        return left <= x0 and y0 >= bottom and x1 <= right and y1 <= top
+
     def rectangle_xy(self):
         left, bottom, right, top = self.bounds
 
@@ -108,6 +116,14 @@ class Dem:
             self.res_y * self.decimation,
         )
         self.z_median = float(np.nanmedian(overview))
+
+        # Off the overview, not the full raster: a section's vertical axis has
+        # to be settled before the first profile is drawn, and it has to stay
+        # settled while the trace is dragged -- an axis that rescaled under a
+        # moving profile would make every frame a different picture. The
+        # decimated minimum can miss the bottom of a gorge by a few metres,
+        # which is why what uses this pads it rather than trusting it.
+        self.z_range = (float(np.nanmin(overview)), float(np.nanmax(overview)))
 
     def close(self):
         self._src.close()
@@ -172,6 +188,47 @@ class Dem:
         left, bottom, right, top = rasterio.windows.bounds(window, self._src.transform)
 
         return shade, [left, right, bottom, top], step
+
+    def window_over(self, box, margin=0.0, nodata_as_nan=True):
+        """
+        A full-resolution window covering a rectangle, clipped to the DEM.
+
+        `window_at` is for a kernel that wants a fixed cost per frame; this is
+        for whatever has to cover an area it was given. A section trace is the
+        case: it is as long as it is drawn, and a square window sized for the
+        longest one would read tens of megabytes to sample a line.
+
+        The margin is there so a trace nudged a few metres does not fall off
+        the edge and force a reread on the next frame.
+        """
+
+        left, bottom, right, top = box
+        left, bottom = left - margin, bottom - margin
+        right, top = right + margin, top + margin
+
+        row0, col0 = self._src.index(left, top)
+        row1, col1 = self._src.index(right, bottom)
+
+        col_off = max(0, min(int(col0), int(col1)))
+        row_off = max(0, min(int(row0), int(row1)))
+        col_end = min(self.width, max(int(col0), int(col1)) + 1)
+        row_end = min(self.height, max(int(row0), int(row1)) + 1)
+
+        if col_end <= col_off or row_end <= row_off:
+            return None
+
+        window = Window(col_off, row_off, col_end - col_off, row_end - row_off)
+        band = self._src.read(1, window=window).astype(np.float64)
+
+        if nodata_as_nan and self.nodata is not None:
+            band[band == self.nodata] = np.nan
+
+        return ComputeWindow(
+            np.ascontiguousarray(band),
+            list(rasterio.windows.transform(window, self._src.transform).to_gdal()),
+            rasterio.windows.bounds(window, self._src.transform),
+            (col_off, row_off),
+        )
 
     def window_at(self, x, y, side):
         """A `side`-cell window centred on (x, y), clipped to the DEM."""

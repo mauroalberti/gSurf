@@ -32,7 +32,7 @@ import rasterio
 
 from PyQt6 import QtCore, QtWidgets
 
-from .attitudes import AttitudeSource
+from .attitudes import CONVENTIONS, numeric_fields
 from .session import Session
 from .vectors import VectorSource
 
@@ -67,20 +67,26 @@ def vectors_of(chosen):
     return [chosen[role] for role in VectorSource.ROLES if chosen.get(role)]
 
 
+# The slots that are a tool's own data: they say where we are without being
+# drawn as backdrop, because the tool draws them itself and two symbols on one
+# feature is worse than none.
+OWN_DATA_SLOTS = ("attitudes", "traces")
+
+
 def open_session(chosen):
     """
     A session on a set of choices, whoever made them.
 
-    The attitude layer frames the session without being drawn by it: with no
-    DEM it is what says where we are, but it is the tool's own data and the
-    tool draws it itself. Both ways in come through here, so that a command
-    line and a dialog cannot end up framing the same files differently.
+    A tool's own layer frames the session without being drawn by it: with no
+    DEM it is what says where we are, but the tool draws it itself. Both ways
+    in come through here, so that a command line and a dialog cannot end up
+    framing the same files differently.
     """
 
     return Session.open(
         dem_path=chosen.get("dem"),
         vectors=vectors_of(chosen),
-        frame_layers=[chosen["attitudes"]] if chosen.get("attitudes") else [],
+        frame_layers=[chosen[slot] for slot in OWN_DATA_SLOTS if chosen.get(slot)],
     )
 
 
@@ -408,9 +414,9 @@ class VectorPicker(LayerPicker):
         )
 
 
-class AttitudePicker(LayerPicker):
+class AnglePicker(LayerPicker):
     """
-    The point layer a structural tool reads, and what its columns mean.
+    A layer whose features carry an orientation, and which columns hold it.
 
     Only numeric fields are offered for the two angles, and they are guessed
     from their names before the user is asked: an Italian survey writes
@@ -420,7 +426,11 @@ class AttitudePicker(LayerPicker):
 
     The convention is a choice and not a checkbox because it changes what the
     azimuth *means* -- a right-hand-rule strike read as a dip direction is 90
-    degrees wrong on every station, and wrong in a way that still plots.
+    degrees wrong on every feature, and wrong in a way that still plots.
+
+    Two layers answer this description and the difference is the geometry: a
+    point is where a plane was measured, a line is where it crops out. What
+    they want asked is the same, so it is asked in one place.
     """
 
     DIP_DIR_FIELDS = (
@@ -429,9 +439,6 @@ class AttitudePicker(LayerPicker):
     )
 
     DIP_FIELDS = ("inclinazione", "dip", "dipangle", "dip_angle", "angolo", "incl")
-
-    def __init__(self, parent=None):
-        super().__init__("points", title="Attitudes", parent=parent)
 
     def _add_layer_rows(self, grid, row):
         self.dip_dir_combo = QtWidgets.QComboBox()
@@ -442,7 +449,7 @@ class AttitudePicker(LayerPicker):
             combo.currentTextChanged.connect(lambda _: self.changed.emit())
 
         self.convention_combo = QtWidgets.QComboBox()
-        self.convention_combo.addItems([label for label, _ in AttitudeSource.CONVENTIONS])
+        self.convention_combo.addItems([label for label, _ in CONVENTIONS])
 
         grid.addWidget(QtWidgets.QLabel("azimuth"), row, 0)
         grid.addWidget(self.dip_dir_combo, row, 1)
@@ -456,22 +463,23 @@ class AttitudePicker(LayerPicker):
             return
 
         try:
-            fields = AttitudeSource.numeric_fields(self._path, layer)
+            fields = numeric_fields(self._path, layer)
         except Exception:
             fields = []
 
-        wanted_dir, wanted_dip = preferred if preferred else (None, None)
+        wanted = dict(preferred or {})
 
-        for combo, wanted, guesses in (
-            (self.dip_dir_combo, wanted_dir, self.DIP_DIR_FIELDS),
-            (self.dip_combo, wanted_dip, self.DIP_FIELDS),
+        for key, combo, guesses in (
+            ("dip_dir_field", self.dip_dir_combo, self.DIP_DIR_FIELDS),
+            ("dip_field", self.dip_combo, self.DIP_FIELDS),
         ):
             with QtCore.QSignalBlocker(combo):
                 combo.clear()
                 combo.addItem("(choose)")
                 combo.addItems(fields)
 
-                chosen = wanted if wanted in fields else _first_match(guesses, fields)
+                asked = wanted.get(key)
+                chosen = asked if asked in fields else _first_match(guesses, fields)
                 combo.setCurrentText(chosen or "(choose)")
 
             combo.setEnabled(bool(fields))
@@ -503,11 +511,7 @@ class AttitudePicker(LayerPicker):
     def restore(self, spec):
         """Puts back a choice made earlier, convention included."""
 
-        self.set_path(
-            spec["path"],
-            spec.get("layer"),
-            (spec.get("dip_dir_field"), spec.get("dip_field")),
-        )
+        self.set_path(spec["path"], spec.get("layer"), spec)
 
         # After `set_path`, which may have guessed the convention off a field
         # called `strike`: whoever says which one it is has the better claim,
@@ -515,19 +519,96 @@ class AttitudePicker(LayerPicker):
         self.convention_combo.setCurrentIndex(1 if spec.get("is_rhr_strike") else 0)
 
     def value(self):
-        """The attitudes as a dictionary, or None while the choice is incomplete."""
+        """The choice as a dictionary, or None while it is incomplete."""
 
         if not self.is_filled:
             return None
 
         return dict(
             path=str(self._path),
-            role="points",
+            role=self.role,
             layer=self.layer,
             dip_dir_field=self.dip_dir_combo.currentText(),
             dip_field=self.dip_combo.currentText(),
-            is_rhr_strike=AttitudeSource.CONVENTIONS[self.convention_combo.currentIndex()][1],
+            is_rhr_strike=CONVENTIONS[self.convention_combo.currentIndex()][1],
         )
+
+
+class AttitudePicker(AnglePicker):
+    """The point layer a structural tool reads: one station, one measurement."""
+
+    def __init__(self, parent=None):
+        super().__init__("points", title="Attitudes", parent=parent)
+
+
+class TracePicker(AnglePicker):
+    """
+    The line layer a profile is cut against: outcrop traces carrying a plane.
+
+    One field more than the attitudes want, and it is the one that says which
+    lines belong together. A fault mapped across a sheet arrives as a dozen
+    fragments, and what a section labels is the fault, not the fragment; with
+    no field chosen the whole layer is one system, which is the right answer
+    for a file holding one.
+    """
+
+    # The same names a backdrop layer is categorised by: it is the same
+    # question asked of the same attribute tables.
+    CATEGORY_FIELDS = VectorPicker.PREFERRED_FIELDS + ("source", "sorgente", "fault", "faglia")
+
+    def __init__(self, parent=None):
+        super().__init__("lines", title="Traces with attitudes", parent=parent)
+
+    def _add_layer_rows(self, grid, row):
+        self.category_combo = QtWidgets.QComboBox()
+        self.category_combo.setEnabled(False)
+        self.category_combo.currentTextChanged.connect(lambda _: self.changed.emit())
+
+        grid.addWidget(QtWidgets.QLabel("grouped by"), row, 0)
+        grid.addWidget(self.category_combo, row, 1, 1, 3)
+
+        super()._add_layer_rows(grid, row + 1)
+
+    def _on_layer_changed(self, layer, preferred=None):
+        if not self._path or not layer:
+            return
+
+        try:
+            fields = VectorSource.text_fields(self._path, layer)
+        except Exception:
+            fields = []
+
+        asked = (preferred or {}).get("category_field")
+
+        with QtCore.QSignalBlocker(self.category_combo):
+            self.category_combo.clear()
+            self.category_combo.addItem("(none)")
+            self.category_combo.addItems(fields)
+
+            chosen = asked if asked in fields else _first_match(self.CATEGORY_FIELDS, fields)
+            self.category_combo.setCurrentText(chosen or "(none)")
+
+        self.category_combo.setEnabled(bool(fields))
+
+        super()._on_layer_changed(layer, preferred)
+
+    def _clear_layer_rows(self):
+        self.category_combo.clear()
+        self.category_combo.setEnabled(False)
+
+        super()._clear_layer_rows()
+
+    def value(self):
+        spec = super().value()
+
+        if spec is None:
+            return None
+
+        field = self.category_combo.currentText()
+        spec["role"] = "traces"
+        spec["category_field"] = None if field in ("", "(none)") else field
+
+        return spec
 
 
 def picker_for(slot):
@@ -538,6 +619,9 @@ def picker_for(slot):
 
     if slot == "attitudes":
         return AttitudePicker()
+
+    if slot == "traces":
+        return TracePicker()
 
     return VectorPicker(slot)
 
@@ -673,14 +757,19 @@ def describe(chosen):
     if chosen.get("dem"):
         lines.append(f"DEM: {Path(chosen['dem']).name}")
 
-    attitudes = chosen.get("attitudes")
+    for slot in OWN_DATA_SLOTS:
+        spec = chosen.get(slot)
 
-    if attitudes:
-        name = attitudes.get("layer") or Path(attitudes["path"]).name
-        lines.append(
-            f"attitudes: {name} "
-            f"({attitudes['dip_dir_field']}, {attitudes['dip_field']})"
-        )
+        if not spec:
+            continue
+
+        name = spec.get("layer") or Path(spec["path"]).name
+        detail = f"{spec['dip_dir_field']}, {spec['dip_field']}"
+
+        if spec.get("category_field"):
+            detail += f", by {spec['category_field']}"
+
+        lines.append(f"{slot}: {name} ({detail})")
 
     for spec in vectors_of(chosen):
         name = spec.get("layer") or Path(spec["path"]).name

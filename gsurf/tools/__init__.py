@@ -29,6 +29,11 @@ TOOLS = (
         module="gsurf.tools.fold_axes",
         summary="Drag a window over bedding attitudes and read the girdle they spread on.",
     ),
+    dict(
+        name="Sections",
+        module="gsurf.tools.profiles",
+        summary="Drag a section trace over the map and watch the geology under it.",
+    ),
 )
 
 

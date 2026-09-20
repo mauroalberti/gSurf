@@ -6,13 +6,108 @@ the points *are* the data: each carries an orientation, and what a tool does
 with them depends on that orientation being right. So the reading is strict
 where it has to be and forgiving where the geology says it should be, and it
 says out loud what it would not take.
+
+Two shapes carry an attitude and both are here. A point carries the attitude of
+the plane measured at it; a line carries the attitude of the plane it is the
+outcrop trace of, which is what a profile crosses. What they share is the
+reading of the two angles, and that is deliberately one piece of code: the
+rules in `admissible` are geology -- 999 for a horizontal bed, 360 for north,
+99 for contorted bedding -- and two copies of them would drift.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+# What the azimuth field means, shared by everything that reads one. Dip
+# direction is what an Italian survey writes down (`Immersione`); the
+# right-hand-rule strike is what an English-language one usually does.
+CONVENTIONS = (
+    ("dip direction", False),
+    ("strike, right-hand rule", True),
+)
+
+
+def numeric(column):
+    """The column as floats, with whatever will not convert becoming NaN."""
+
+    import pandas as pd
+
+    return pd.to_numeric(column, errors="coerce").to_numpy(dtype=float)
+
+
+def admissible(azimuth, dip):
+    """
+    Which rows carry an attitude, and a tally of why the others do not.
+
+    The dip decides first, because it decides whether the azimuth means
+    anything. Out of 0-90 there is no plane: the CARG sheets write 99 for
+    contorted bedding measured as a mean, and taken at face value that is a
+    plane overturned past the vertical. Only once the dip is a real one, and
+    not zero, does the azimuth have to be a bearing.
+
+    :return: the boolean mask of the rows to keep, and the reasons the others
+        were dropped with a count each -- reasons that did not occur are left
+        out rather than reported as zero.
+    """
+
+    dropped = {}
+
+    dip_known = np.isfinite(dip)
+    dip_sane = dip_known & (dip >= 0.0) & (dip <= 90.0)
+
+    dropped["dip missing"] = int((~dip_known).sum())
+    dropped["dip outside 0-90"] = int((dip_known & ~dip_sane).sum())
+
+    # Zero dip is exempt: the azimuth is not read, so it cannot be wrong.
+    needs_azimuth = dip_sane & (dip > 0.0)
+    azimuth_known = np.isfinite(azimuth)
+
+    # 360 inclusive, and not the half-open range a normalised azimuth lives in.
+    # 360 is how north gets written down: on the Marsico Nuovo sheet ten
+    # attitudes carry it and not one carries 0, so a half-open rule threw away
+    # every north-dipping bed on the map and called them errors. It is
+    # normalised away by the caller, not refused.
+    azimuth_sane = azimuth_known & (azimuth >= 0.0) & (azimuth <= 360.0)
+
+    dropped["dip direction missing"] = int((needs_azimuth & ~azimuth_known).sum())
+    dropped["dip direction outside 0-360"] = int(
+        (needs_azimuth & azimuth_known & ~azimuth_sane).sum()
+    )
+
+    keep = dip_sane & (~needs_azimuth | azimuth_sane)
+
+    return keep, {reason: count for reason, count in dropped.items() if count}
+
+
+def numeric_fields(path, layer=None):
+    """The numeric fields of the layer, which are the ones worth offering."""
+
+    import pyogrio
+
+    info = pyogrio.read_info(path, layer=layer) if layer else pyogrio.read_info(path)
+
+    return [
+        str(field)
+        for field, dtype in zip(info["fields"], info["dtypes"])
+        if str(dtype) != "object"
+    ]
+
+
+def normalised_azimuth(azimuth, dip):
+    """
+    The azimuth as a bearing, with the horizontal beds neutralised.
+
+    A horizontal bed has no dip direction: whatever the field holds -- 999 in
+    the CARG sheets, a blank, last measurement's leftover -- it is not a
+    bearing, and the pole is vertical whichever way it is read.
+    """
+
+    return np.where(dip == 0.0, 0.0, azimuth % 360.0)
 
 
 class AttitudeSource:
@@ -24,13 +119,7 @@ class AttitudeSource:
     for the same arithmetic hundreds of times a second.
     """
 
-    # What the azimuth field means. Dip direction is what an Italian survey
-    # writes down (`Immersione`); the right-hand-rule strike is what an
-    # English-language one usually does.
-    CONVENTIONS = (
-        ("dip direction", False),
-        ("strike, right-hand rule", True),
-    )
+    CONVENTIONS = CONVENTIONS
 
     def __init__(
         self,
@@ -80,22 +169,17 @@ class AttitudeSource:
             self.problem = "no point geometry"
             return
 
-        azimuth = self._numeric(frame[dip_dir_field])
-        dip = self._numeric(frame[dip_field])
+        azimuth = numeric(frame[dip_dir_field])
+        dip = numeric(frame[dip_field])
 
-        keep = self._admissible(azimuth, dip)
+        keep, self.dropped = admissible(azimuth, dip)
 
         if not keep.any():
             self.problem = "no readable attitude"
             return
 
         frame = frame[keep]
-        azimuth, dip = azimuth[keep], dip[keep]
-
-        # A horizontal bed has no dip direction: whatever the field holds --
-        # 999 in the CARG sheets, a blank, last measurement's leftover -- it is
-        # not a bearing, and the pole is vertical whichever way it is read.
-        azimuth = np.where(dip == 0.0, 0.0, azimuth % 360.0)
+        azimuth, dip = normalised_azimuth(azimuth[keep], dip[keep]), dip[keep]
 
         self.frame = frame
         self.xy = np.c_[frame.geometry.x.to_numpy(), frame.geometry.y.to_numpy()]
@@ -115,53 +199,6 @@ class AttitudeSource:
 
     # -- reading -----------------------------------------------------------
 
-    @staticmethod
-    def _numeric(column):
-        """The column as floats, with whatever will not convert becoming NaN."""
-
-        import pandas as pd
-
-        return pd.to_numeric(column, errors="coerce").to_numpy(dtype=float)
-
-    def _admissible(self, azimuth, dip):
-        """
-        Which rows carry an attitude, and a tally of why the others do not.
-
-        The dip decides first, because it decides whether the azimuth means
-        anything. Out of 0-90 there is no plane: the CARG sheets write 99 for
-        contorted bedding measured as a mean, and taken at face value that is a
-        plane overturned past the vertical. Only once the dip is a real one,
-        and not zero, does the azimuth have to be a bearing.
-        """
-
-        dropped = {}
-
-        dip_known = np.isfinite(dip)
-        dip_sane = dip_known & (dip >= 0.0) & (dip <= 90.0)
-
-        dropped["dip missing"] = int((~dip_known).sum())
-        dropped["dip outside 0-90"] = int((dip_known & ~dip_sane).sum())
-
-        # Zero dip is exempt: the azimuth is not read, so it cannot be wrong.
-        needs_azimuth = dip_sane & (dip > 0.0)
-        azimuth_known = np.isfinite(azimuth)
-
-        # 360 inclusive, and not the half-open range a normalised azimuth
-        # lives in. 360 is how north gets written down: on the Marsico Nuovo
-        # sheet ten attitudes carry it and not one carries 0, so a half-open
-        # rule threw away every north-dipping bed on the map and called them
-        # errors. It is normalised away below, not refused.
-        azimuth_sane = azimuth_known & (azimuth >= 0.0) & (azimuth <= 360.0)
-
-        dropped["dip direction missing"] = int((needs_azimuth & ~azimuth_known).sum())
-        dropped["dip direction outside 0-360"] = int(
-            (needs_azimuth & azimuth_known & ~azimuth_sane).sum()
-        )
-
-        self.dropped = {reason: count for reason, count in dropped.items() if count}
-
-        return dip_sane & (~needs_azimuth | azimuth_sane)
-
     def _pole_axes(self, azimuth, dip):
         """
         The poles as geogst axes, downward-pointing and sign-blind.
@@ -178,20 +215,6 @@ class AttitudeSource:
         return [
             Plane(float(a), float(d), is_rhr_strike=self.is_rhr_strike).normal_axis()
             for a, d in zip(azimuth, dip)
-        ]
-
-    @staticmethod
-    def numeric_fields(path, layer=None):
-        """The numeric fields of the layer, which are the ones worth offering."""
-
-        import pyogrio
-
-        info = pyogrio.read_info(path, layer=layer) if layer else pyogrio.read_info(path)
-
-        return [
-            str(field)
-            for field, dtype in zip(info["fields"], info["dtypes"])
-            if str(dtype) != "object"
         ]
 
     # -- windows -----------------------------------------------------------
@@ -244,6 +267,587 @@ class AttitudeSource:
             return f"{self.layer or self.path.stem}: {self.problem}"
 
         text = f"{self.layer or self.path.stem}: {len(self)} attitudes"
+
+        if self.dropped:
+            detail = ", ".join(f"{count} {reason}" for reason, count in self.dropped.items())
+            text += f" ({detail})"
+
+        if self.outside:
+            text += f"; {self.outside} outside the map"
+
+        return text
+
+
+# The columns a layer may carry to say where a measurement was taken and how
+# far it is held to reach. Read when present, ignored when not: a layer of
+# plain traces has none of them and behaves exactly as it did before they
+# existed. The names are the ones `gstruct/export_gsurf.py` writes.
+ANCHOR_FIELD = "anchor_s"
+SPAN_FIELDS = ("span_s0", "span_s1")
+ENABLED_FIELD = "in_section"
+
+# How far a measurement made at one point governs along the trace it was made
+# on, when nothing else says. A field measurement is a point, and extending it
+# is an interpretation -- one that belongs here rather than in whatever wrote
+# the layer, because here it can be seen against the section and changed. The
+# value is where the gstruct model puts its own default; it is a starting
+# position to argue with, which is why it is a parameter and not a constant.
+DEFAULT_HALF_SPAN = 250.0
+
+
+def clip_to_span(lines, s0, s1):
+    """
+    The part of a record's trace between two progressives, in metres.
+
+    Progressive runs from the start of the first line and carries on across the
+    others, so a trace interrupted by cover keeps one running measure -- the
+    same one an anchor read off the table was computed against.
+
+    The cut ends land inside the segment they fall in rather than on the
+    nearest vertex: on a trace digitised every 40 m a 250 m span would
+    otherwise be anything between 200 and 300, and the number the tool shows
+    would not be the number it used.
+    """
+
+    from geogst.core.geometries.shapes.lines import Ln
+
+    kept, walked = [], 0.0
+
+    for line in lines:
+        coords = line.coords
+
+        if coords is None or len(coords) < 2:
+            continue
+
+        steps = np.hypot(*np.diff(coords[:, :2], axis=0).T)
+        progressive = walked + np.concatenate(([0.0], np.cumsum(steps)))
+        walked = progressive[-1]
+
+        piece = _between(coords, progressive, s0, s1)
+
+        if piece is not None:
+            kept.append(Ln(piece))
+
+    return kept
+
+
+def _finite(value):
+    """A number, or nothing where the cell was empty."""
+
+    return None if value is None or value != value else float(value)
+
+
+def _between(coords, progressive, s0, s1):
+    """One line's coordinates between two progressives, ends interpolated."""
+
+    low, high = max(s0, progressive[0]), min(s1, progressive[-1])
+
+    if high <= low:
+        return None
+
+    inside = (progressive > low) & (progressive < high)
+
+    return np.vstack(
+        [_at(coords, progressive, low), coords[inside], _at(coords, progressive, high)]
+    )
+
+
+def _at(coords, progressive, s):
+    """The point at a progressive, interpolated within the segment holding it."""
+
+    j = int(np.searchsorted(progressive, s, side="right")) - 1
+    j = min(max(j, 0), len(coords) - 2)
+
+    step = progressive[j + 1] - progressive[j]
+    t = 0.0 if step == 0.0 else (s - progressive[j]) / step
+
+    return (coords[j] + t * (coords[j + 1] - coords[j]))[None, :]
+
+
+@dataclass
+class TraceRecord:
+    """
+    One plane, the trace it crops out on, and how far along it it is held to go.
+
+    The reach is the part that is not in the data. A plane fitted to a trace
+    owns that trace -- the trace is the evidence, and it reaches as far as it
+    is drawn. A compass reading taken at one outcrop owns a point, and how much
+    of the fault it speaks for is a judgement about that fault: metres, where
+    it is a local break; the whole kilometre, where the surface was walked and
+    validated. So `anchor` and `span` are kept apart. An anchor is a fact off
+    the table; a span is a decision, and `None` means nobody has made one yet.
+    """
+
+    category: str
+    plane: object
+    lines: list
+    length: float
+    anchor: float = None
+    span: tuple = None
+    enabled: bool = True
+    attrs: dict = field(default_factory=dict)
+
+    def extent(self, half_span):
+        """The interval actually used, in metres along the trace."""
+
+        if self.span is not None:
+            return self.span
+
+        # No anchor, no question to answer: the trace is the datum.
+        if self.anchor is None or half_span is None:
+            return 0.0, self.length
+
+        return self.anchor - half_span, self.anchor + half_span
+
+    def reach_endpoints(self, half_span):
+        """
+        Where the reach starts and ends on the ground, or None if it is whole.
+
+        Coordinates rather than progressives, because that is what a span is
+        anchored by outside this process: a progressive means nothing without
+        the line it was measured along, and the line can be redigitised.
+        """
+
+        if self.is_whole(half_span):
+            return None
+
+        s0, s1 = self.extent(half_span)
+        clipped = clip_to_span(self.lines, s0, s1)
+
+        if not clipped:
+            return None
+
+        first, last = clipped[0].coords, clipped[-1].coords
+
+        return tuple(first[0][:2]), tuple(last[-1][:2])
+
+    def is_whole(self, half_span):
+        """
+        Whether the reach covers the trace, to within a metre of either end.
+
+        Not an exact comparison, because a span read off a table has been
+        rounded on the way in and a length is summed from the geometry: a fit
+        that covers its whole trace comes out three centimetres short of it,
+        and taken literally that sends every one of them through a clip which
+        removes nothing. A metre is far inside the digitising precision of a
+        trace mapped at 1:10.000, where half a millimetre on the sheet is five.
+        """
+
+        s0, s1 = self.extent(half_span)
+
+        return s0 <= 1.0 and s1 >= self.length - 1.0
+
+
+class TraceAttitudeSource:
+    """
+    A line layer read as outcrop traces, each carrying the plane it traces.
+
+    Where a profile crosses one of these lines, the plane it belongs to cuts
+    the section at a computable apparent dip: that is the tick a geological
+    section carries, and it is what `Profilers.intersect_lines_with_attitudes`
+    is given. The traces are the data, not the backdrop -- a fault drawn from
+    `vectors.py` is a blue line and nothing else.
+
+    **Records, and why they are grouped.** A category is a name, and under it
+    sit one or more records, each a plane and the lines that are its outcrop.
+    Lines of one category that carry the *same* attitude are pooled into a
+    single record, because that is what they are: one plane, digitised in
+    pieces. On Timpa San Lorenzo six features share 67.3/39 and are the six
+    fragments of one fault's trace. Lines that carry different attitudes stay
+    separate records, and all of them are kept -- the library used to keep only
+    the last of them, which is why the grouping is worth stating rather than
+    assuming.
+
+    **Reach.** A record may say where along its trace the attitude was taken
+    (`anchor_s`) and over what interval it holds (`span_s0`, `span_s1`). A
+    layer carrying neither behaves as one plane per whole trace, which is what
+    a digitised fault system is. Where there is an anchor and no span, the
+    reach comes from `half_span` and can be changed afterwards: that number is
+    the tool's to offer and the geologist's to set, and it is deliberately not
+    baked into whatever wrote the file.
+
+    **Geometry.** Held as geogst `Ln` in the session's projection, flattened to
+    two dimensions on the way in: the intersection is computed in a horizontal
+    plane and the elevation of every crossing comes from the topography, not
+    from the trace. A MultiLineString becomes several `Ln` under one record,
+    which is what a trace interrupted by cover or by a sheet edge looks like.
+    """
+
+    CONVENTIONS = CONVENTIONS
+
+    def __init__(
+        self,
+        path,
+        crs,
+        layer=None,
+        category_field=None,
+        dip_dir_field=None,
+        dip_field=None,
+        is_rhr_strike=False,
+        bounds=None,
+        anchor_field=ANCHOR_FIELD,
+        span_fields=SPAN_FIELDS,
+        enabled_field=ENABLED_FIELD,
+        half_span=DEFAULT_HALF_SPAN,
+    ):
+        import geopandas as gpd
+
+        self.path = Path(path)
+        self.layer = layer
+        self.crs = crs
+        self.category_field = category_field
+        self.dip_dir_field = dip_dir_field
+        self.dip_field = dip_field
+        self.is_rhr_strike = bool(is_rhr_strike)
+        self.anchor_field = anchor_field
+        self.span_fields = span_fields
+        self.enabled_field = enabled_field
+        self.half_span = half_span
+        self.problem = None
+        self.dropped = {}
+        self.outside = 0
+
+        self.traces = []
+        self.num_lines = 0
+        self._records = None
+
+        try:
+            frame = gpd.read_file(path, layer=layer) if layer else gpd.read_file(path)
+        except Exception as err:
+            self.problem = str(err).split("\n")[0]
+            return
+
+        if frame.crs is None:
+            # Said plainly because it happens to real data and the cure is
+            # elsewhere: the traces of Timpa San Lorenzo ship with an empty
+            # .prj, while the profile and the faults beside them declare one.
+            self.problem = "no CRS declared by the layer"
+            return
+
+        for field in (dip_dir_field, dip_field):
+            if field not in frame.columns:
+                self.problem = f"no field '{field}'"
+                return
+
+        frame = frame.to_crs(crs)
+
+        # What can hold a line, which is not only what is named after one. A
+        # GeometryCollection is how a mapped fault comes back from a cleaning
+        # pass that left a node behind, and the line inside it is still the
+        # fault: `_lines` takes the line parts and counts the rest. Admitting
+        # it here rather than filtering it out is the difference between a
+        # trace used and a trace that disappeared without a word.
+        usable = frame.geometry.notna() & frame.geometry.geom_type.isin(
+            ("LineString", "MultiLineString", "GeometryCollection")
+        )
+
+        no_line_geometry = int((~usable).sum())
+        frame = frame[usable]
+
+        if frame.empty:
+            self.problem = "no line geometry"
+            return
+
+        azimuth = numeric(frame[dip_dir_field])
+        dip = numeric(frame[dip_field])
+
+        keep, self.dropped = admissible(azimuth, dip)
+
+        if no_line_geometry:
+            self.dropped["with no line geometry"] = no_line_geometry
+
+        if not keep.any():
+            self.problem = "no readable attitude"
+            return
+
+        frame = frame[keep]
+        azimuth, dip = normalised_azimuth(azimuth[keep], dip[keep]), dip[keep]
+
+        if bounds is not None:
+            # Kept whole or dropped whole. A trace is clipped by the profile it
+            # is intersected with, not by the map window, and cutting it here
+            # would invent an endpoint where the sheet ends.
+            from shapely.geometry import box
+
+            left, bottom, right, top = bounds
+            inside = frame.intersects(box(left, bottom, right, top)).to_numpy()
+
+            self.outside = int((~inside).sum())
+
+            frame, azimuth, dip = frame[inside], azimuth[inside], dip[inside]
+
+            if frame.empty:
+                self.problem = "no trace in the area"
+                return
+
+        self.frame = frame
+        self.traces = self._group(frame, azimuth, dip)
+        self.num_lines = sum(len(record.lines) for record in self.traces)
+
+    # -- reading -----------------------------------------------------------
+
+    def _categories(self, frame):
+        """
+        The name each row goes under, or one name for the whole layer.
+
+        With no field chosen everything is one system, named after the layer:
+        a profile still gets its ticks, and the alternative -- one category per
+        feature -- would put a legend entry on every fragment of one fault.
+        """
+
+        if not self.category_field or self.category_field not in frame.columns:
+            return [self.layer or self.path.stem] * len(frame)
+
+        return frame[self.category_field].astype("string").fillna("n/a").astype(str).tolist()
+
+    def _group(self, frame, azimuth, dip):
+        """
+        The records, pooled on (category, attitude, anchor) as read off the table.
+
+        The angles are compared as they came rather than rounded: two fragments
+        of one plane carry the identical value, having been computed from it,
+        while two measurements that differ differ for a reason and stay apart.
+
+        The anchor joins the key because two readings can agree and still be
+        two readings, taken at two places on the same fault -- pooling them
+        would leave one of the two places with nothing at it.
+        """
+
+        from geogst.core.geology.orientations import Plane
+
+        anchors = self._optional(frame, self.anchor_field)
+        starts = self._optional(frame, self.span_fields[0])
+        ends = self._optional(frame, self.span_fields[1])
+        enabled = self._flags(frame, self.enabled_field)
+
+        pooled, first = defaultdict(list), {}
+        not_lines = 0
+
+        for ndx, (category, a, d, geometry) in enumerate(
+            zip(self._categories(frame), azimuth, dip, frame.geometry)
+        ):
+            anchor = None if anchors is None else _finite(anchors[ndx])
+            key = (category, float(a), float(d), anchor)
+
+            lines, skipped = self._lines(geometry)
+
+            not_lines += skipped
+            pooled[key].extend(lines)
+            first.setdefault(key, ndx)
+
+        if not_lines:
+            self.dropped["not a line"] = not_lines
+
+        records = []
+
+        for (category, a, d, anchor), lines in pooled.items():
+            # A collection that held no line at all leaves a key behind with
+            # nothing under it. The parts are already counted; what must not
+            # happen is a row in the panel, and an entry in the legend, for a
+            # measurement with no trace to put it on.
+            if not lines:
+                continue
+
+            ndx = first[(category, a, d, anchor)]
+
+            span = None
+            if starts is not None and ends is not None:
+                s0, s1 = _finite(starts[ndx]), _finite(ends[ndx])
+                if s0 is not None and s1 is not None:
+                    span = (s0, s1)
+
+            records.append(
+                TraceRecord(
+                    category=category,
+                    plane=Plane(a, d, is_rhr_strike=self.is_rhr_strike),
+                    lines=lines,
+                    length=float(sum(line.length_2d() for line in lines)),
+                    anchor=anchor,
+                    span=span,
+                    enabled=True if enabled is None else bool(enabled[ndx]),
+                    attrs=self._attrs(frame, ndx),
+                )
+            )
+
+        return records
+
+    def _attrs(self, frame, ndx):
+        """The columns that are neither geometry nor already a field of the record."""
+
+        used = {
+            self.category_field,
+            self.dip_dir_field,
+            self.dip_field,
+            self.anchor_field,
+            self.enabled_field,
+            *self.span_fields,
+            frame.geometry.name,
+        }
+
+        row = frame.iloc[ndx]
+
+        return {
+            str(name): row[name]
+            for name in frame.columns
+            if name not in used and row[name] is not None and row[name] == row[name]
+        }
+
+    @staticmethod
+    def _optional(frame, name):
+        """A numeric column if the layer has one, else nothing to read."""
+
+        return numeric(frame[name]) if name and name in frame.columns else None
+
+    @staticmethod
+    def _flags(frame, name):
+        """A truth column, with anything unreadable counting as on."""
+
+        if not name or name not in frame.columns:
+            return None
+
+        return frame[name].fillna(True).astype(bool).to_numpy()
+
+    @staticmethod
+    def _lines(geometry):
+        """
+        One geometry as geogst lines, flat, and how many parts were not lines.
+
+        The coordinates go across as an array rather than a list of points:
+        `Ln` takes one, and the traces of a mapped fault run to hundreds of
+        vertices each.
+
+        The containers are unwrapped by `single_parts` rather than by a test on
+        the outer type, because a GeometryCollection does not announce itself
+        as one: it is the only one whose name does not begin with 'Multi', and
+        a fault that has been through a cleaning pass comes back as exactly
+        that -- its line plus whatever node the pass left behind.
+        """
+
+        from geogst.core.geometries.shapes.lines import Ln
+
+        from .vectors import single_parts
+
+        parts, skipped = single_parts(geometry, "LineString")
+
+        return [Ln(np.asarray(part.coords)[:, :2]) for part in parts], skipped
+
+    @staticmethod
+    def candidate_layers(path):
+        """The line layers in the file, from the metadata alone."""
+
+        from .vectors import VectorSource
+
+        return VectorSource.candidate_layers(path, "lines")
+
+    # -- what was read -----------------------------------------------------
+
+    @property
+    def records(self):
+        """
+        What `intersect_lines_with_attitudes` is given: category -> [(plane, lines)].
+
+        Derived rather than stored, because a span is meant to be argued with
+        while the section it feeds is on screen, and a dictionary that outlived
+        a change to one would be a section disagreeing with its own legend.
+        Held until something moves it.
+        """
+
+        if self._records is None:
+            grouped = defaultdict(list)
+
+            for record in self.traces:
+                if not record.enabled:
+                    continue
+
+                lines = record.lines
+
+                if not record.is_whole(self.half_span):
+                    s0, s1 = record.extent(self.half_span)
+                    lines = clip_to_span(lines, s0, s1)
+
+                if lines:
+                    grouped[record.category].append((record.plane, lines))
+
+            self._records = dict(grouped)
+
+        return self._records
+
+    def set_half_span(self, metres):
+        """How far an anchored measurement reaches when it says nothing itself."""
+
+        self.half_span = metres
+        self._records = None
+
+    def set_span(self, record, s0, s1):
+        """
+        Fix one record's interval, or hand it back to the default with None.
+
+        Set, not merged: this is the one record's own answer, and the caller
+        writing it down elsewhere as an assertion is what keeps the source
+        layer untouched.
+        """
+
+        record.span = None if s0 is None or s1 is None else (float(s0), float(s1))
+        self._records = None
+
+    def set_enabled(self, record, flag):
+        record.enabled = bool(flag)
+        self._records = None
+
+    def set_plane(self, record, azimuth, dip):
+        """
+        Correct one record's attitude.
+
+        A reading is transcribed before it is used and a transcription can be
+        wrong; and a fit is a calculation, which can be overruled by somebody
+        who stood on the outcrop. Either way what changes is this record, and
+        the file it was read from is not touched -- the correction is written
+        down as an assertion elsewhere, or it is not written down at all.
+        """
+
+        from geogst.core.geology.orientations import Plane
+
+        record.plane = Plane(
+            float(azimuth) % 360.0, float(dip), is_rhr_strike=self.is_rhr_strike
+        )
+        self._records = None
+
+    @property
+    def is_loaded(self):
+        return bool(self.traces)
+
+    def __len__(self):
+        """How many records: planes, not fragments."""
+
+        return len(self.traces)
+
+    def attitudes(self):
+        """Every record as (category, dip direction, dip), for a readout."""
+
+        return [
+            (record.category, record.plane.dipazim, record.plane.dipang)
+            for record in self.traces
+        ]
+
+    def summary(self):
+        if self.problem:
+            return f"{self.layer or self.path.stem}: {self.problem}"
+
+        categories = {record.category for record in self.traces}
+
+        text = (
+            f"{self.layer or self.path.stem}: {len(self)} planes in "
+            f"{len(categories)} categories, {self.num_lines} traces"
+        )
+
+        anchored = sum(1 for record in self.traces if record.anchor is not None)
+        off = sum(1 for record in self.traces if not record.enabled)
+
+        if anchored:
+            text += f"; {anchored} anchored at a point"
+
+        if off:
+            text += f", {off} held out of the section"
 
         if self.dropped:
             detail = ", ".join(f"{count} {reason}" for reason, count in self.dropped.items())
