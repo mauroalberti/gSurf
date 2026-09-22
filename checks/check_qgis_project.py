@@ -15,8 +15,12 @@ of those is something the real projects turned out to contain.
 
     QT_QPA_PLATFORM=offscreen python check_qgis_project.py
 
-Qt is never started here: the reader is the standard library and nothing else,
-which is most of the reason it is worth having as its own module.
+The first half starts no Qt at all -- the reader is the standard library and
+nothing else, which is most of the reason it is worth having as its own module.
+The second half is about what the dialog then does with it, and about the one
+thing that can go wrong afterwards: a description outliving what it described.
+A palette is one colour per value of one column, and the column can be changed
+in the box next to it.
 """
 
 import os
@@ -29,6 +33,7 @@ REPO = Path(os.environ.get("GSURF_REPO", Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(REPO))
 
 FAILURES = []
+APP = None
 
 
 def check(label, condition, detail=""):
@@ -159,6 +164,274 @@ def project_xml():
   </projectlayers>
 </qgis>
 """
+
+
+def make_data(root, directory):
+    """
+    The files the fixture project names, so that the pickers can open them.
+
+    The reader never opens anything and does not need these; the dialog does,
+    and a slot that refuses the layer would make every assertion after it pass
+    for the wrong reason.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import LineString, Point, Polygon as Shape
+
+    from synthetic import synthetic_dem
+
+    dem = synthetic_dem(root / "rasters" / "dem5m.tif", side=400)
+
+    with __import__("rasterio").open(dem) as handle:
+        left, bottom, right, top = handle.bounds
+        crs = handle.crs
+
+    def square(fx, fy, size=0.15):
+        x = left + (right - left) * fx
+        y = bottom + (top - bottom) * fy
+        side = min(right - left, top - bottom) * size
+
+        return Shape([(x, y), (x + side, y), (x + side, y + side), (x, y + side)])
+
+    sheet = directory / "sheet489.gpkg"
+
+    gpd.GeoDataFrame(
+        {
+            # The three the project colours, and one it has never heard of:
+            # a sheet revised after the project was last saved is the ordinary
+            # case, and the unnamed unit has to come out of the wheel rather
+            # than out of nothing.
+            "nome": ["Flysch Rosso", "Argille Varicolori", "Conglomerati", "Brecce"],
+            "sigla": ["FYR", "AV", "CGL", "BR"],
+        },
+        geometry=[square(0.2, 0.2), square(0.4, 0.4), square(0.6, 0.2), square(0.2, 0.6)],
+        crs=crs,
+    ).to_file(sheet, layer="geologia_poligoni", driver="GPKG")
+
+    gpd.GeoDataFrame(
+        {"nome": ["terrazzo"]},
+        geometry=[square(0.7, 0.7)],
+        crs=crs,
+    ).to_file(sheet, layer="geomorfologia_poligoni", driver="GPKG")
+
+    gpd.GeoDataFrame(
+        {"tipo_geo": ["diretta", "inversa"]},
+        geometry=[
+            LineString([(left + 100, bottom + 100), (right - 100, top - 100)]),
+            LineString([(left + 100, top - 100), (right - 100, bottom + 100)]),
+        ],
+        crs=crs,
+    ).to_file(sheet, layer="geologia_linee", driver="GPKG")
+
+    gpd.GeoDataFrame(
+        {"Immersione": [120.0, 300.0], "Inclinazione": [35.0, 20.0]},
+        geometry=[
+            Point(left + (right - left) * 0.3, bottom + (top - bottom) * 0.3),
+            Point(left + (right - left) * 0.5, bottom + (top - bottom) * 0.5),
+        ],
+        crs=crs,
+    ).to_file(directory / "survey.gpkg", layer="stations", driver="GPKG")
+
+    return str(dem)
+
+
+def check_the_dialog(root, project_path, dem_path):
+    """What the dialog does with a project, and what it stops doing with it."""
+
+    from PyQt6 import QtWidgets
+
+    from gsurf.sources import SourcesDialog, open_session
+    from gsurf.tools import TOOLS, load
+
+    # Held in a name that outlives this call: built and dropped, PyQt takes the
+    # C++ object down with the last reference and every widget after it dies
+    # complaining that no application was ever constructed.
+    global APP
+
+    APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+
+    wants = load(next(entry for entry in TOOLS if entry["name"] == "Sections")).WANTS
+
+    print("\n-- the dialog, offered a project --")
+
+    dialog = SourcesDialog(wants=wants)
+    units = dialog.boxes["polygons"]
+
+    check("before a project there is nothing on the list", units.path_combo.count() == 0)
+
+    project = dialog.use_project(str(project_path))
+
+    check("the project is read", project is not None, project.summary() if project else "")
+
+    combo = units.path_combo
+
+    check(
+        "the polygon slot is offered the one polygon layer",
+        combo.count() == 1,
+        str([combo.itemText(n) for n in range(combo.count())]),
+    )
+    check(
+        "under the name the project gives it",
+        combo.itemText(0) == "Sheet 489 - units",
+        combo.itemText(0),
+    )
+    from PyQt6 import QtCore
+
+    check(
+        "with the file it is in still readable, on hover",
+        str(combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole)).endswith("sheet489.gpkg"),
+        str(combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole)),
+    )
+    check(
+        "both line slots are offered the line layer, being unable to tell them apart",
+        dialog.boxes["lines"].path_combo.count() == 1
+        and dialog.boxes["traces"].path_combo.count() == 1,
+    )
+    check("and the DEM slot the raster", dialog.boxes["dem"].path_combo.count() == 1)
+    check(
+        "nothing was filled in by it",
+        all(box.value() is None for box in dialog.boxes.values()),
+    )
+
+    # -- picking one ------------------------------------------------------
+
+    print("\n-- what a choice from a project carries --")
+
+    combo.activated.emit(0)
+
+    spec = units.value()
+
+    check("picking it opens it", spec is not None)
+    check(
+        "the field is the project's, not a guess",
+        spec.get("category_field") == "nome",
+        str(spec.get("category_field")),
+    )
+    check(
+        "the colours come with it",
+        spec.get("colors", {}).get("Flysch Rosso") == (212 / 255, 50 / 255, 45 / 255),
+        str(spec.get("colors")),
+    )
+    check("as does what the project switched off", spec.get("hidden") == ["Conglomerati"])
+    check("and the name", spec.get("title") == "Sheet 489 - units")
+
+    # -- and what stops being true ----------------------------------------
+
+    print("\n-- a description outliving what it described --")
+
+    units.category_combo.setCurrentText("sigla")
+    moved = units.value()
+
+    check("under another field the palette is not offered", "colors" not in moved)
+    check("nor what it switched off", "hidden" not in moved)
+    check("the name survives, being about the layer", moved.get("title") == "Sheet 489 - units")
+
+    units.category_combo.setCurrentText("nome")
+
+    check("and it all comes back when the field does", units.value().get("colors"))
+
+    units.layer_combo.setCurrentText("geomorfologia_poligoni")
+    elsewhere = units.value()
+
+    check(
+        "another layer keeps none of it",
+        "colors" not in elsewhere and "title" not in elsewhere,
+        str(sorted(elsewhere)),
+    )
+
+    # -- the angle slots ---------------------------------------------------
+
+    print("\n-- the slots a project cannot answer for --")
+
+    stations = dialog.boxes["attitudes"]
+    stations.path_combo.activated.emit(0)
+    reading = stations.value()
+
+    check("an angle slot opens on the layer", reading is not None)
+    check(
+        "with its two columns guessed as they always were",
+        reading and reading.get("dip_dir_field") == "Immersione",
+        str(reading and reading.get("dip_field")),
+    )
+    check("it takes the name", reading and reading.get("title") == "Stations")
+    check("and no palette, having nothing to draw with one", "colors" not in (reading or {}))
+
+    # -- two lists, one box -------------------------------------------------
+
+    print("\n-- the history and the project, in one list --")
+
+    mixed = SourcesDialog(wants=wants)
+    mixed.boxes["polygons"].offer([dict(path=str(root / "elsewhere.gpkg"), layer="units")])
+
+    def separators(box):
+        """A separator is an item with nothing behind it, which nothing selects."""
+
+        return sum(
+            1 for n in range(box.path_combo.count()) if box.path_combo.itemData(n) is None
+        )
+
+    check("a history alone is not divided", separators(mixed.boxes["polygons"]) == 0)
+
+    mixed.use_project(str(project_path))
+
+    check(
+        "with a project it is, once",
+        separators(mixed.boxes["polygons"]) == 1,
+        str([mixed.boxes["polygons"].path_combo.itemText(n)
+             for n in range(mixed.boxes["polygons"].path_combo.count())]),
+    )
+    check(
+        "the project's layers first, the history under it",
+        mixed.boxes["polygons"].path_combo.itemText(0) == "Sheet 489 - units",
+    )
+
+    # -- and through to what is drawn ---------------------------------------
+
+    print("\n-- the colours, where they are actually used --")
+
+    # Back onto the layer they were said of. That alone is not enough: the
+    # picker guesses a field for every layer it lands on and guesses `sigla`
+    # here, `sigla` coming before `nome` in its list -- so the palette stays
+    # out until the field it is keyed to is back as well, which is the rule
+    # doing its job rather than getting in the way.
+    units.layer_combo.setCurrentText("geologia_poligoni")
+
+    check(
+        "coming back to the layer is not yet coming back to the palette",
+        "colors" not in units.value(),
+        str(units.value().get("category_field")),
+    )
+
+    units.category_combo.setCurrentText("nome")
+
+    check("and with the field back, so is it", units.value().get("colors"))
+
+    session = open_session(dict(dem=dem_path, polygons=units.value()))
+    source = session.overlay.sources[0]
+
+    check(
+        "the layer is drawn in the project's colours",
+        source.colors["Flysch Rosso"] == (212 / 255, 50 / 255, 45 / 255),
+        str(source.colors.get("Flysch Rosso")),
+    )
+    check(
+        "a unit the project never saw still gets one",
+        source.colors.get("Brecce") is not None
+        and source.colors["Brecce"] not in (
+            source.colors["Flysch Rosso"],
+            source.colors["Argille Varicolori"],
+        ),
+        str(source.colors.get("Brecce")),
+    )
+    check(
+        "and one switched off in the project starts off the map",
+        source.hidden == {"Conglomerati"},
+        str(source.hidden),
+    )
+
+    session.close()
+    dialog.close()
+    mixed.close()
 
 
 def main():
@@ -379,6 +652,8 @@ def main():
         blank = Project("nowhere.qgs")
 
         check("a project with no layers offers none", blank.entries_for("polygons") == [])
+
+        check_the_dialog(root, plain, make_data(root, directory))
 
     print()
 

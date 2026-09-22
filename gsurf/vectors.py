@@ -105,7 +105,18 @@ class VectorSource:
     # the categories in excess stay coloured, they are just not listed.
     MAX_LEGEND_ENTRIES = 12
 
-    def __init__(self, path, role, crs, bounds, layer=None, category_field=None):
+    def __init__(
+        self,
+        path,
+        role,
+        crs,
+        bounds,
+        layer=None,
+        category_field=None,
+        colors=None,
+        labels=None,
+        hidden=(),
+    ):
         import geopandas as gpd  # heavy to import: only when actually needed
         from shapely.geometry import box
 
@@ -114,16 +125,27 @@ class VectorSource:
         self.layer = layer
         self.category_field = category_field
         self.colors = {}
-        self.labels = {}
+        self.labels = dict(labels or {})
         self.frame = None
         self.problem = None
         self.without_geometry = 0
 
+        # What a QGIS project said this layer is drawn in, when the choice came
+        # from one. It is kept apart from `colors` because it covers the
+        # categories the project had and not the ones this file turns out to
+        # hold, and the two differ whenever the project is older than the data.
+        self.given_colors = {value: tuple(colour) for value, colour in (colors or {}).items()}
+
         # One artist per category, and which of them are currently off the map.
         # A layer with no categories has a single artist under the key None, and
         # is turned off the same way: from the legend, by its one entry.
+        #
+        # Starting non-empty when a project said so. A sheet is brought into a
+        # project with all of its units on and then quietened down to the few
+        # being worked on, and arriving here with all 118 back on would undo
+        # that -- the legend is still where they are switched back.
         self.artists = {}
-        self.hidden = set()
+        self.hidden = set(hidden)
         self.category_order = []
 
         try:
@@ -223,6 +245,15 @@ class VectorSource:
         colours came from whichever categories happen to fall in the window,
         the same formation would change colour as you pan or change DEM, and
         that is the one thing a legend cannot afford.
+
+        A project's colours are used where it has one, and the wheel fills in
+        the rest. The wheel is forty colours long, which is short: the CASMEZ
+        sheet of Calabria carries 181 units and the 1:50,000 of Moliterno and
+        Lauria 118, so past the fortieth it comes round and two formations are
+        drawn alike. That is not a palette that can be widened -- forty
+        distinguishable colours is about what there are -- so where it matters
+        the answer has to come from outside, and a project is where it has
+        already been decided once.
         """
 
         values = self._values(complete)
@@ -237,14 +268,23 @@ class VectorSource:
         wheel = list(colormaps["tab20"].colors) + list(colormaps["tab20b"].colors)
         order = sorted(values.unique())
 
-        self.colors = {value: wheel[i % len(wheel)] for i, value in enumerate(order)}
+        self.colors = {
+            value: self.given_colors.get(value) or wheel[i % len(wheel)]
+            for i, value in enumerate(order)
+        }
 
         if self.CATEGORY_FALLBACK in complete.columns and self.category_field != self.CATEGORY_FALLBACK:
             named = complete[self.CATEGORY_FALLBACK].astype("string")
-            self.labels = {
+            derived = {
                 value: (group.dropna().iloc[0] if len(group.dropna()) else "")
                 for value, group in named.groupby(values)
             }
+
+            # A label the project wrote wins over one read off a second column:
+            # it is what the legend in QGIS says, and the point of taking it is
+            # that the two legends read the same.
+            derived.update(self.labels)
+            self.labels = derived
 
         return visible.assign(_gsurf_category=self._values(visible))
 

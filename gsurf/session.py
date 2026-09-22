@@ -93,6 +93,9 @@ class Session:
                 bounds,
                 layer=spec.get("layer"),
                 category_field=spec.get("category_field"),
+                colors=spec.get("colors"),
+                labels=spec.get("labels"),
+                hidden=spec.get("hidden") or (),
             )
             for spec in specs
         )

@@ -44,6 +44,8 @@ VECTOR_FILTER = (
 
 RASTER_FILTER = "Raster (*.tif *.tiff *.vrt *.asc *.img *.dt2 *.hgt);;All files (*)"
 
+PROJECT_FILTER = "QGIS project (*.qgs *.qgz);;All files (*)"
+
 # The same two the fold axes already use for a verdict: green once a required
 # slot holds something, dark orange while it does not.
 FILLED_COLOUR = "#1a7f37"
@@ -114,6 +116,12 @@ class SlotBox(QtWidgets.QGroupBox):
         # picker's own `restore` takes. Empty until the dialog offers them.
         self.entries = []
 
+        # And what a QGIS project holds that would fit it. Kept apart rather
+        # than merged into one list, because the two answer different questions
+        # -- what was opened here, against what this project has -- and a list
+        # that mixed them would make the second unfindable in the first.
+        self.project_entries = []
+
         self.changed.connect(self._mark)
 
     # -- what was opened here before ---------------------------------------
@@ -149,36 +157,89 @@ class SlotBox(QtWidgets.QGroupBox):
         self.entries = [entry for entry in entries if entry]
         self._relist()
 
+    def offer_project(self, entries):
+        """
+        The layers a project holds that would fit this slot, over the history.
+
+        Whatever is chosen stays chosen: loading a project is asking to be
+        shown what is in it, not asking for the slot to be emptied. It is read
+        off the list rather than from the picker because only the list knows
+        the whole entry -- `value` gives back what the widgets hold, which for
+        a half-filled angle slot is nothing at all.
+        """
+
+        self.project_entries = [entry for entry in entries if entry]
+
+        # Said on the closed box, because nothing else on it changes. A slot
+        # that offers nothing and a slot that now offers twenty-eight both read
+        # "none" until the list is opened, and a button whose effect is
+        # invisible until you go looking for it is a button that did nothing.
+        if self.project_entries:
+            self.path_combo.setPlaceholderText(
+                f"none - {len(self.project_entries)} in the project"
+            )
+
+        self._relist(self.path_combo.currentData())
+
+    def _add_item(self, entry):
+        self.path_combo.addItem(self._label(entry), entry)
+
+        # The whole path on hover: the list shows file names, and two surveys
+        # of the same area name their DEM the same thing.
+        self.path_combo.setItemData(
+            self.path_combo.count() - 1,
+            identity(entry)[0],
+            QtCore.Qt.ItemDataRole.ToolTipRole,
+        )
+
     def _relist(self, current=None):
         """
-        Refills the list: what is chosen now first, then the rest of the history.
+        Refills the list: what is chosen now first, then where it could come from.
 
         Built rather than appended to, so that one path cannot appear twice
         under two spellings of the same choice -- the file just browsed to is
-        very often the one at the top already.
+        very often the one at the top already, and a project very often holds
+        the layer that was opened from it yesterday.
+
+        The separators appear only once a project has been loaded. Until then
+        there is one list and nothing to divide, and a rule drawn across a
+        history of three files would be furniture.
         """
 
-        items = list(self.entries)
+        seen = set() if current is None else {identity(current)}
+        groups = []
 
-        if current is not None:
-            wanted = identity(current)
-            items = [current] + [
-                entry for entry in items if identity(entry) != wanted
-            ]
+        for group in (self.project_entries, self.entries):
+            unique = []
+
+            for entry in group:
+                key = identity(entry)
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+                unique.append(entry)
+
+            groups.append(unique)
+
+        divided = bool(self.project_entries)
 
         with QtCore.QSignalBlocker(self.path_combo):
             self.path_combo.clear()
 
-            for entry in items:
-                self.path_combo.addItem(self._label(entry), entry)
+            if current is not None:
+                self._add_item(current)
 
-                # The whole path on hover: the list shows file names, and two
-                # surveys of the same area name their DEM the same thing.
-                self.path_combo.setItemData(
-                    self.path_combo.count() - 1,
-                    identity(entry)[0],
-                    QtCore.Qt.ItemDataRole.ToolTipRole,
-                )
+            for group in groups:
+                if not group:
+                    continue
+
+                if divided and self.path_combo.count():
+                    self.path_combo.insertSeparator(self.path_combo.count())
+
+                for entry in group:
+                    self._add_item(entry)
 
             self.path_combo.setCurrentIndex(0 if current is not None else -1)
 
@@ -195,7 +256,15 @@ class SlotBox(QtWidgets.QGroupBox):
         One geopackage commonly holds the polygons and the faults both, and a
         list offering the same filename twice says nothing about which is
         which.
+
+        A layer that came from a project is named as the project names it.
+        `CARG_489_MarsicoNuovo - geologia_poligoni` is what has been read in
+        the layer panel for weeks, and the file it sits in is a path nobody
+        looks at -- it is still there, on hover.
         """
+
+        if isinstance(entry, dict) and entry.get("title"):
+            return entry["title"]
 
         path, layer = identity(entry)
         name = Path(path).name
@@ -328,11 +397,23 @@ class LayerPicker(SlotBox):
     `_add_layer_rows` and fills them in `_on_layer_changed`.
     """
 
+    # What a project said about a choice, beyond the file and the layer: the
+    # name it shows it under, and for a backdrop the colour of each category.
+    DESCRIBED = ("title", "colors", "labels", "hidden")
+
     def __init__(self, role, title=None, parent=None):
         super().__init__(title or role.capitalize(), parent)
 
         self.role = role
         self._path = None
+
+        # What a project said about what is in this slot, kept together with
+        # what it was said *about*. Checked against that when read rather than
+        # cleared wherever it could go stale: the layer combo and the category
+        # combo can both move without passing through here, and a description
+        # that is verified where it is used cannot be left behind by a path
+        # neither of them took.
+        self.described = {}
 
         self.path_combo = self.new_path_combo()
 
@@ -378,8 +459,52 @@ class LayerPicker(SlotBox):
         if path:
             self.set_path(path)
 
+    def describe(self, spec):
+        """
+        Keeps what a project said, against the layer and field it said it of.
+
+        The layer is taken as it ended up rather than as the spec asked for it:
+        a shapefile names no layer, and the one the picker settled on is the
+        one the description is now about.
+        """
+
+        said = {key: spec[key] for key in self.DESCRIBED if spec.get(key)}
+
+        if said:
+            said["layer"] = self.layer
+            said["category_field"] = spec.get("category_field")
+
+        self.described = said
+
+    def described_now(self, field=None):
+        """
+        The part of it that still describes what is chosen here.
+
+        The name survives a change of category field, being about the layer.
+        The colours do not: they are one colour per value of one column, and
+        under another column they are a palette for values that are not there.
+        """
+
+        said = self.described
+
+        if not said or said.get("layer") != self.layer:
+            return {}
+
+        kept = {"title": said["title"]} if said.get("title") else {}
+
+        if field is not None and said.get("category_field") == field:
+            for key in ("colors", "labels", "hidden"):
+                if said.get(key):
+                    kept[key] = said[key]
+
+        return kept
+
     def set_path(self, path, layer=None, preferred=None, quiet=False):
         """Loads the list of layers fit for the role. Returns False if there are none."""
+
+        # Said of the file that was here, which this is not. `restore` puts it
+        # back afterwards, being the only caller that has anything to put.
+        self.described = {}
 
         try:
             candidates = VectorSource.candidate_layers(path, self.role)
@@ -494,6 +619,8 @@ class VectorPicker(LayerPicker):
         ):
             return False
 
+        self.describe(spec)
+
         # `set_path` listed what it knew, which is the file and the layer. The
         # whole spec is better: picked out of the list again later, it comes
         # back with its category field rather than with a fresh guess at one.
@@ -508,13 +635,23 @@ class VectorPicker(LayerPicker):
             return None
 
         field = self.category_combo.currentText()
+        field = None if field in ("", "(none)") else field
 
-        return dict(
+        spec = dict(
             path=str(self._path),
             role=self.role,
             layer=self.layer,
-            category_field=None if field in ("", "(none)") else field,
+            category_field=field,
         )
+
+        # The colours ride along in the choice, which is what carries them to
+        # the map and to the section without a second way in. They are written
+        # down with it too: a palette is a few kilobytes of JSON next to a
+        # path, and paying that once is better than reparsing a four-megabyte
+        # project on every startup to draw the same units the same way.
+        spec.update(self.described_now(field))
+
+        return spec
 
 
 class AnglePicker(LayerPicker):
@@ -622,6 +759,8 @@ class AnglePicker(LayerPicker):
         # including when what they say is the default.
         self.convention_combo.setCurrentIndex(1 if spec.get("is_rhr_strike") else 0)
 
+        self.describe(spec)
+
         # And the whole spec into the list, over the file and layer `set_path`
         # put there: chosen again later it keeps its two columns and its
         # convention, which is most of what made it worth remembering.
@@ -635,7 +774,7 @@ class AnglePicker(LayerPicker):
         if not self.is_filled:
             return None
 
-        return dict(
+        spec = dict(
             path=str(self._path),
             role=self.role,
             layer=self.layer,
@@ -643,6 +782,13 @@ class AnglePicker(LayerPicker):
             dip_field=self.dip_combo.currentText(),
             is_rhr_strike=CONVENTIONS[self.convention_combo.currentIndex()][1],
         )
+
+        # Only the name: these layers are drawn by the tool that asked for
+        # them, symbol by symbol, and a backdrop palette has nothing to say
+        # about a dip tick.
+        spec.update(self.described_now())
+
+        return spec
 
 
 class AttitudePicker(AnglePicker):
@@ -769,10 +915,13 @@ class SourcesDialog(QtWidgets.QDialog):
         chosen = dict(chosen or {})
 
         self.boxes = {}
+        self.project = None
 
         content = QtWidgets.QWidget()
         stack = QtWidgets.QVBoxLayout(content)
         stack.setContentsMargins(0, 0, 0, 0)
+
+        stack.addLayout(self._project_row())
 
         for slot, level in self.wants.items():
             box = picker_for(slot)
@@ -822,6 +971,75 @@ class SourcesDialog(QtWidgets.QDialog):
         self.refused = self.restore(chosen)
 
         self._fit(content, layout)
+
+    # -- a whole project at once -------------------------------------------
+
+    def _project_row(self):
+        """
+        The one control that is not about a single slot.
+
+        Above the boxes rather than inside any of them, because what it fills
+        is all of them: a project is where a DEM and the sheets drawn over it
+        were last seen together, and offering it per slot would make choosing
+        it five times the way to use it once.
+        """
+
+        self.project_button = QtWidgets.QPushButton("From a QGIS project...")
+        self.project_button.clicked.connect(self._browse_project)
+
+        self.project_label = QtWidgets.QLabel()
+        self.project_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.project_label.setWordWrap(True)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.project_button)
+        row.addWidget(self.project_label, 1)
+
+        return row
+
+    def _browse_project(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose a QGIS project", "", PROJECT_FILTER
+        )
+
+        if path:
+            self.use_project(path)
+
+    def use_project(self, path):
+        """
+        Reads a project and offers what it holds to every slot on show.
+
+        Offers and does not fill. Two slots take lines and two take points, and
+        nothing in a layer says whether it was meant as a backdrop or as the
+        data a tool reads -- the geometry narrows a hundred layers to the
+        twenty-eight that could be the polygons, and which one it is stays the
+        question the dialog was opened to ask.
+
+        A project that cannot be read is reported and changes nothing, unlike a
+        remembered choice that quietly does not come back: this one was asked
+        for, just now, by hand.
+        """
+
+        from . import qgis_project
+
+        try:
+            project = qgis_project.read(path)
+        except Exception as err:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Unreadable project",
+                f"{Path(path).name}\n\n{str(err).splitlines()[0]}",
+            )
+            return None
+
+        self.project = project
+
+        for slot, box in self.boxes.items():
+            box.offer_project(project.entries_for(slot))
+
+        self.project_label.setText(project.summary())
+
+        return project
 
     def restore(self, chosen):
         """

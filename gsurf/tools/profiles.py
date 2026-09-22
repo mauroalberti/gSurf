@@ -96,6 +96,13 @@ Z_MARGIN = 200.0
 # with and what a MultiPolygon is made of.
 BACKDROP_ROLES = ("polygons", "lines")
 
+# How many units a section can be given colours for. The same number the map
+# cuts its own legend at, and for the same reason: past a dozen entries the
+# legend eats the thing it is there to explain. It is a cap on the legend and
+# not on the colouring -- see `_polygon_colors` for why the library makes them
+# the same decision.
+MAX_SECTION_COLORS = VectorSource.MAX_LEGEND_ENTRIES
+
 
 class SectionCanvas(QtWidgets.QWidget):
     """
@@ -1040,6 +1047,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         """
 
         from collections import defaultdict
+        from itertools import repeat
 
         from geogst.core.geometries.shapes.lines import Ln
         from geogst.core.geometries.shapes.polygons import Polygon
@@ -1053,9 +1061,19 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
             wanted = VectorSource.GEOMETRY_SUFFIX[source.role]
 
-            for category, geometry in zip(
-                source.frame["_gsurf_category"], source.frame.geometry
-            ):
+            # A layer categorised by nothing has no such column: `_categorize`
+            # adds it only when there is a field to categorise by. That is not
+            # an edge: no field is guessed for a line backdrop, so a fault
+            # layer taken as it comes has none, and this used to end the tool
+            # here with a KeyError the launcher could only repeat verbatim.
+            # Uncategorised, the layer is one category named after itself --
+            # which is what its single legend entry has always said.
+            if "_gsurf_category" in source.frame.columns:
+                categories = source.frame["_gsurf_category"]
+            else:
+                categories = repeat(source.layer or source.path.stem)
+
+            for category, geometry in zip(categories, source.frame.geometry):
                 if geometry is None or geometry.is_empty:
                     dropped["with no geometry"] += 1
                     continue
@@ -1149,6 +1167,44 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             vertical_exaggeration=1.0,
         )
 
+    def _polygon_colors(self):
+        """
+        The colour of each unit, so that the section is drawn in the map's.
+
+        Handed over, the library uses them; withheld, it spreads a hue ramp of
+        its own over whatever it was given -- and the map above was meanwhile
+        colouring the same units from a different wheel entirely. Two palettes,
+        neither wrong on its own, disagreeing about the one thing a section and
+        the map over it have in common. This is the whole of the fix, and it
+        applies whether or not the colours came from a QGIS project.
+
+        Every unit in the window, not the ones the current trace happens to
+        cross: the library paints an unknown category red, and a palette that
+        changed as the trace moved would repaint the section under the hand
+        moving it.
+
+        And only up to a point, which is not about colour at all. Handing the
+        palette over also turns the library's legend on, one entry per colour
+        and every one of them drawn, in a column a fifth of the panel wide:
+        the 54 units of sheet 489 come out clipped at both ends, running off
+        the bottom, having taken a third of the figure from the sections. The
+        map solved this years ago with a cut and a "+N more" entry that
+        switches the rest; the same cut here would have to be made inside
+        `geogst`, and until it is, a palette too big to show is left unsent
+        and the library keeps its ramp.
+        """
+
+        colors = {}
+
+        for source in self.session.overlay.sources:
+            if source.role != "polygons":
+                continue
+
+            for value, colour in source.colors.items():
+                colors[str(value)] = colour
+
+        return colors if len(colors) <= MAX_SECTION_COLORS else {}
+
     def _view_for(self, geoprofiles, s_max):
         from geogst.plots.profiles import ProfilesView
 
@@ -1157,6 +1213,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             axis_params=self._axis_params(s_max),
             height=1.6,
             line_attitudes_intersections=_dock_style(),
+            polygon_intersections=self._polygon_colors(),
         )
 
     def update_single(self):

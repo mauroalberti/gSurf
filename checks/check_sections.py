@@ -461,6 +461,53 @@ def main():
           and mixed_source.dropped.get("not a line") == 3,
           str(mixed_source.dropped))
 
+    # -- a backdrop nobody categorised --------------------------------------
+
+    print("\n-- a backdrop layer taken as it comes --")
+
+    import tempfile as tempfile_module
+
+    with tempfile_module.TemporaryDirectory() as tmp:
+        plain = Path(tmp) / "plain.gpkg"
+        left, bottom, right, top = session.bounds
+
+        gpd.GeoDataFrame(
+            {"nota": ["a", "b"]},
+            geometry=[
+                LineString([(left + 200, bottom + 200), (right - 200, top - 200)]),
+                LineString([(left + 200, top - 200), (right - 200, bottom + 200)]),
+            ],
+            crs=session.crs,
+        ).to_file(plain, layer="faglie", driver="GPKG")
+
+        # No category field, which for a line backdrop is not a corner: the
+        # picker guesses one only for polygons, so a fault layer arrives this
+        # way unless somebody goes and chooses. The frame then has no category
+        # column at all, and reading one ended the tool here with a KeyError
+        # that the launcher could only show verbatim.
+        bare = Session.open(
+            dem_path=str(session.dem.path) if session.dem is not None else None,
+            vectors=[dict(path=str(plain), role="lines", layer="faglie")],
+        )
+
+        try:
+            second = tool.ProfilesWindow(bare, num_profiles=1)
+            opened, reason = True, ""
+        except Exception as err:
+            second, opened, reason = None, False, f"{type(err).__name__}: {err}"
+
+        check("the tool opens on it", opened, reason)
+
+        if second is not None:
+            check(
+                "and the layer is one category, named after itself",
+                list(second.lines) == ["faglie"],
+                str(list(second.lines)),
+            )
+            second.close()
+
+        bare.close()
+
     window.close()
 
     print()
