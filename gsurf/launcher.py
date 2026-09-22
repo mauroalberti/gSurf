@@ -14,12 +14,20 @@ from one tool to the other re-proposes the files already named rather than
 asking for them again. The session is kept as well, and reopened only when the
 answer has actually changed -- opening a DEM is the slow part of starting a
 tool, and running the same one twice on the same data should not pay it twice.
+
+That keeping now outlives the run, through `recent`. The launcher is the only
+place it has to happen: all three tools are started from here and all three ask
+through the same dialog, so a store wired in at this one point is a store every
+tool has. What comes back from it seeds `chosen`, which is the same slot-by-slot
+dictionary the tools were already being handed -- from below, nothing has
+changed except that the first dialog of a run is no longer empty.
 """
 
 from __future__ import annotations
 
 from PyQt6 import QtCore, QtWidgets
 
+from .recent import Recent
 from .sources import SourcesDialog, describe, open_session
 from .tools import TOOLS, load
 
@@ -27,12 +35,19 @@ from .tools import TOOLS, load
 class Launcher(QtWidgets.QMainWindow):
     """The window you come back to: the tools, and what is open behind them."""
 
-    def __init__(self, chosen=None, session=None):
+    def __init__(self, chosen=None, session=None, recent=None):
         super().__init__()
+
+        # What earlier runs left. Handed in by the checks, which want one that
+        # is theirs; taken from this machine otherwise, and off-screen that is
+        # an empty one that never writes.
+        self.recent = recent if recent is not None else Recent.load()
 
         # Every slot ever answered, whichever tool asked. A tool is shown what
         # it wants out of this; the rest stays here for the tool that wants it.
-        self.chosen = dict(chosen or {})
+        # Seeded from the store, so the first tool of a run is asked the same
+        # question the last tool of the last run was.
+        self.chosen = dict(chosen) if chosen else self.recent.proposed()
 
         # The session, and the subset of the choices it was opened on -- which
         # is what says whether it can be handed to the next tool as it is.
@@ -93,6 +108,13 @@ class Launcher(QtWidgets.QMainWindow):
             title=f"gSurf - {entry['name'].lower()}",
         )
 
+        # A remembered choice the dialog could not put back is a dead entry in
+        # the store, and it is dropped before it can be offered again. Only
+        # ones that got past `Recent.entries`, which means the file is still
+        # there and is no longer readable as what it was.
+        for slot in dialog.refused:
+            self.recent.forget(slot, self.chosen.pop(slot, None))
+
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return None
 
@@ -101,6 +123,10 @@ class Launcher(QtWidgets.QMainWindow):
         # Remembered for the next tool, which may want what this one did not
         # ask about: only the slots that were on screen can have changed.
         self.chosen.update(chosen)
+
+        # And for the next run. Cancelling is deliberately above this: a
+        # question backed out of was not an answer.
+        self.recent.remember(chosen)
 
         return chosen
 

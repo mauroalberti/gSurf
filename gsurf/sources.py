@@ -178,7 +178,7 @@ class RasterPicker(SlotBox):
         if path:
             self.set_path(path)
 
-    def set_path(self, path):
+    def set_path(self, path, quiet=False):
         """
         Opens the DEM for its header alone, and says what it is from that.
 
@@ -198,9 +198,12 @@ class RasterPicker(SlotBox):
                     f"EPSG:{epsg or '?'}, cell {abs(src.transform.a):g} m"
                 )
         except Exception as err:
-            QtWidgets.QMessageBox.warning(
-                self, "Unreadable DEM", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
-            )
+            if not quiet:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Unreadable DEM",
+                    f"{Path(path).name}\n\n{str(err).splitlines()[0]}",
+                )
             return False
 
         self._path = str(path)
@@ -223,7 +226,7 @@ class RasterPicker(SlotBox):
         self.changed.emit()
 
     def restore(self, path):
-        self.set_path(path)
+        return self.set_path(path, quiet=True)
 
     def value(self):
         return self._path
@@ -290,23 +293,27 @@ class LayerPicker(SlotBox):
         if path:
             self.set_path(path)
 
-    def set_path(self, path, layer=None, preferred=None):
+    def set_path(self, path, layer=None, preferred=None, quiet=False):
         """Loads the list of layers fit for the role. Returns False if there are none."""
 
         try:
             candidates = VectorSource.candidate_layers(path, self.role)
         except Exception as err:
-            QtWidgets.QMessageBox.warning(
-                self, "Unreadable file", f"{Path(path).name}\n\n{str(err).splitlines()[0]}"
-            )
+            if not quiet:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Unreadable file",
+                    f"{Path(path).name}\n\n{str(err).splitlines()[0]}",
+                )
             return False
 
         if not candidates:
-            QtWidgets.QMessageBox.information(
-                self,
-                "No suitable layer",
-                f"{Path(path).name} holds no {self.role} layer.",
-            )
+            if not quiet:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "No suitable layer",
+                    f"{Path(path).name} holds no {self.role} layer.",
+                )
             return False
 
         self._path = Path(path)
@@ -396,7 +403,9 @@ class VectorPicker(LayerPicker):
         self.category_combo.setEnabled(False)
 
     def restore(self, spec):
-        self.set_path(spec["path"], spec.get("layer"), spec.get("category_field"))
+        return self.set_path(
+            spec["path"], spec.get("layer"), spec.get("category_field"), quiet=True
+        )
 
     def value(self):
         """The chosen role as a dictionary, or None if the slot is empty."""
@@ -511,12 +520,15 @@ class AnglePicker(LayerPicker):
     def restore(self, spec):
         """Puts back a choice made earlier, convention included."""
 
-        self.set_path(spec["path"], spec.get("layer"), spec)
+        if not self.set_path(spec["path"], spec.get("layer"), spec, quiet=True):
+            return False
 
         # After `set_path`, which may have guessed the convention off a field
         # called `strike`: whoever says which one it is has the better claim,
         # including when what they say is the default.
         self.convention_combo.setCurrentIndex(1 if spec.get("is_rhr_strike") else 0)
+
+        return True
 
     def value(self):
         """The choice as a dictionary, or None while it is incomplete."""
@@ -697,17 +709,41 @@ class SourcesDialog(QtWidgets.QDialog):
         layout.addWidget(scroll, 1)
         layout.addWidget(self.buttons)
 
-        self.restore(chosen)
+        # The slots that were offered a remembered choice and could not take
+        # it. Kept rather than only acted on, because the dialog is built
+        # before the caller gets it back and the caller is who owns the list
+        # the choice came from.
+        self.refused = self.restore(chosen)
+
         self._fit(content, layout)
 
     def restore(self, chosen):
-        """Fills the slots from an earlier answer, ignoring what is not asked for."""
+        """
+        Fills the slots from an earlier answer, ignoring what is not asked for.
+
+        Quietly, and that is the part that matters once answers outlive the
+        run they were given in. Inside one session every remembered file was
+        opened minutes ago and a failure is worth a box; across runs a file
+        that has moved, a share not mounted this morning or a layer since
+        renamed are all ordinary, and a gSurf that opened onto a stack of
+        warnings would be reporting the weather. Picking a file is an act that
+        deserves an answer, having one put back for you is not -- so a refused
+        slot is left empty, coloured if the tool needs it, and named in the
+        list this returns.
+        """
+
+        refused = []
 
         for slot, box in self.boxes.items():
-            if chosen.get(slot):
-                box.restore(chosen[slot])
+            if not chosen.get(slot):
+                continue
+
+            if box.restore(chosen[slot]) is False:
+                refused.append(slot)
 
         self._refresh_ok()
+
+        return refused
 
     def _fit(self, content, layout):
         """As tall as it needs to be, and never taller than the screen."""

@@ -31,6 +31,7 @@ CHECKS = (
     ("check_folds.py", "fold axes against an axis that is known"),
     ("check_rotations.py", "how an axis field turns, against a rotation that is known"),
     ("check_launcher.py", "the launcher: the question each tool asks, and the handover"),
+    ("check_recent.py", "the answers, kept from one run to the next"),
     ("check_sections.py", "sections: one profile dragged, the bundle on release"),
 )
 

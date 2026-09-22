@@ -7,7 +7,7 @@ Offers the tools, and asks what to open only once one has been picked -- a tool
 knows which sources it takes, and which of them it cannot run without, so the
 question is a short one with the required parts marked. What you answer is put
 back the next time, so moving between tools does not mean naming the same files
-again.
+again -- and it is written down, so neither does coming back tomorrow.
 
 A tool can still be started on its own -- `python -m gsurf.tools.fold_axes`,
 with or without arguments -- which is what a repeated run wants.
