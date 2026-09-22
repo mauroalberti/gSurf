@@ -204,6 +204,69 @@ def main():
             f"{len(deep.slots['dem'])} kept",
         )
 
+        # -- the list, as the dialog shows it ------------------------------------
+
+        print("\n-- the list on screen --")
+
+        listed = Recent(store_in(directory, "listed.ini"))
+        listed.remember(dict(dem=dem_path, attitudes=attitudes))
+        listed.remember(dict(dem=other_dem))
+
+        shown = SourcesDialog(
+            wants=modules["Plane on a DEM"].WANTS,
+            chosen=listed.proposed(),
+            recent=listed,
+        )
+        combo = shown.boxes["dem"].path_combo
+
+        check(
+            "both DEMs are on the list",
+            combo.count() == 2,
+            str([combo.itemText(n) for n in range(combo.count())]),
+        )
+        check(
+            "the one being opened on is the one selected",
+            combo.currentIndex() == 0 and combo.itemData(0) == other_dem,
+            combo.currentText(),
+        )
+        check(
+            "and named by its file rather than its path",
+            combo.itemText(0) == Path(other_dem).name,
+            combo.itemText(0),
+        )
+
+        # Reaching for the older one by hand, which is what the list is for:
+        # `activated` is what a click emits, and only a click emits it.
+        combo.setCurrentIndex(1)
+        combo.activated.emit(1)
+
+        check("picking an older one opens it", shown.boxes["dem"].value() == dem_path)
+        check(
+            "and it moves to the top without doubling",
+            combo.count() == 2 and combo.itemData(0) == dem_path,
+            str([combo.itemText(n) for n in range(combo.count())]),
+        )
+
+        folds_shown = SourcesDialog(
+            wants=modules["Fold axes"].WANTS, chosen=listed.proposed(), recent=listed
+        )
+        remembered = folds_shown.boxes["attitudes"]
+
+        check(
+            "a layer entry keeps its fields for the next time it is picked",
+            remembered.path_combo.itemData(0) == attitudes,
+            str(remembered.path_combo.itemData(0)),
+        )
+        check("and is restored whole", remembered.value() == attitudes)
+
+        bare = SourcesDialog(wants=modules["Plane on a DEM"].WANTS)
+
+        check(
+            "a slot with no history is the empty box it always was",
+            bare.boxes["dem"].path_combo.count() == 0
+            and bare.boxes["dem"].value() is None,
+        )
+
         # -- what is not an answer ---------------------------------------------
 
         print("\n-- what does not get remembered --")

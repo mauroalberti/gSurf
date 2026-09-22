@@ -33,6 +33,7 @@ import rasterio
 from PyQt6 import QtCore, QtWidgets
 
 from .attitudes import CONVENTIONS, numeric_fields
+from .recent import identity
 from .session import Session
 from .vectors import VectorSource
 
@@ -109,7 +110,97 @@ class SlotBox(QtWidgets.QGroupBox):
         self.base_title = title
         self.level = "optional"
 
+        # What this slot has held before, newest first, in whatever shape this
+        # picker's own `restore` takes. Empty until the dialog offers them.
+        self.entries = []
+
         self.changed.connect(self._mark)
+
+    # -- what was opened here before ---------------------------------------
+
+    def new_path_combo(self):
+        """
+        The path widget: what is chosen now, over the list of what was before.
+
+        A combo box and not the read-only line edit this used to be, which is
+        the whole of the visible change -- Browse still browses, and a slot
+        with nothing behind it looks as it always did, a box reading "none".
+
+        `activated` and not `currentIndexChanged`, because only a choice made
+        by hand should reopen a file. Every other way the index moves here is
+        this class moving it, having already opened what it is moving to.
+        """
+
+        combo = QtWidgets.QComboBox()
+        combo.setPlaceholderText("none")
+        combo.setMinimumContentsLength(28)
+        # Qt6 kept only the "WithIcon" spelling of this policy; there are no
+        # icons here, so it is the plain one under a longer name.
+        combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.activated.connect(self._recent_chosen)
+
+        return combo
+
+    def offer(self, entries):
+        """The remembered choices for this slot, before anything is restored."""
+
+        self.entries = [entry for entry in entries if entry]
+        self._relist()
+
+    def _relist(self, current=None):
+        """
+        Refills the list: what is chosen now first, then the rest of the history.
+
+        Built rather than appended to, so that one path cannot appear twice
+        under two spellings of the same choice -- the file just browsed to is
+        very often the one at the top already.
+        """
+
+        items = list(self.entries)
+
+        if current is not None:
+            wanted = identity(current)
+            items = [current] + [
+                entry for entry in items if identity(entry) != wanted
+            ]
+
+        with QtCore.QSignalBlocker(self.path_combo):
+            self.path_combo.clear()
+
+            for entry in items:
+                self.path_combo.addItem(self._label(entry), entry)
+
+                # The whole path on hover: the list shows file names, and two
+                # surveys of the same area name their DEM the same thing.
+                self.path_combo.setItemData(
+                    self.path_combo.count() - 1,
+                    identity(entry)[0],
+                    QtCore.Qt.ItemDataRole.ToolTipRole,
+                )
+
+            self.path_combo.setCurrentIndex(0 if current is not None else -1)
+
+    def _recent_chosen(self, index):
+        entry = self.path_combo.itemData(index)
+
+        if entry is not None:
+            self.restore(entry)
+
+    def _label(self, entry):
+        """
+        The name to show. The file alone, unless the layer is what tells them apart.
+
+        One geopackage commonly holds the polygons and the faults both, and a
+        list offering the same filename twice says nothing about which is
+        which.
+        """
+
+        path, layer = identity(entry)
+        name = Path(path).name
+
+        return f"{name} - {layer}" if layer else name
 
     def set_requirement(self, level):
         self.level = level
@@ -149,9 +240,7 @@ class RasterPicker(SlotBox):
 
         self._path = None
 
-        self.path_label = QtWidgets.QLineEdit()
-        self.path_label.setReadOnly(True)
-        self.path_label.setPlaceholderText("none")
+        self.path_combo = self.new_path_combo()
 
         browse = QtWidgets.QPushButton("Browse...")
         browse.clicked.connect(self._browse)
@@ -164,7 +253,7 @@ class RasterPicker(SlotBox):
         self.info_label.setStyleSheet("color: gray; font-size: 10px;")
 
         grid = QtWidgets.QGridLayout(self)
-        grid.addWidget(self.path_label, 0, 0)
+        grid.addWidget(self.path_combo, 0, 0)
         grid.addWidget(browse, 0, 1)
         grid.addWidget(self.clear_button, 0, 2)
         grid.addWidget(self.info_label, 1, 0, 1, 3)
@@ -207,8 +296,7 @@ class RasterPicker(SlotBox):
             return False
 
         self._path = str(path)
-        self.path_label.setText(str(path))
-        self.path_label.setToolTip(str(path))
+        self._relist(self._path)
         self.info_label.setText(info)
         self.clear_button.setEnabled(True)
 
@@ -218,8 +306,7 @@ class RasterPicker(SlotBox):
 
     def clear(self):
         self._path = None
-        self.path_label.clear()
-        self.path_label.setToolTip("")
+        self._relist()
         self.info_label.clear()
         self.clear_button.setEnabled(False)
 
@@ -247,9 +334,7 @@ class LayerPicker(SlotBox):
         self.role = role
         self._path = None
 
-        self.path_label = QtWidgets.QLineEdit()
-        self.path_label.setReadOnly(True)
-        self.path_label.setPlaceholderText("none")
+        self.path_combo = self.new_path_combo()
 
         browse = QtWidgets.QPushButton("Browse...")
         browse.clicked.connect(self._browse)
@@ -263,7 +348,7 @@ class LayerPicker(SlotBox):
         self.layer_combo.currentTextChanged.connect(self._on_layer_changed)
 
         self.grid = QtWidgets.QGridLayout(self)
-        self.grid.addWidget(self.path_label, 0, 0, 1, 2)
+        self.grid.addWidget(self.path_combo, 0, 0, 1, 2)
         self.grid.addWidget(browse, 0, 2)
         self.grid.addWidget(self.clear_button, 0, 3)
         self.grid.addWidget(QtWidgets.QLabel("layer"), 1, 0)
@@ -317,8 +402,6 @@ class LayerPicker(SlotBox):
             return False
 
         self._path = Path(path)
-        self.path_label.setText(str(path))
-        self.path_label.setToolTip(str(path))
         self.clear_button.setEnabled(True)
 
         with QtCore.QSignalBlocker(self.layer_combo):
@@ -329,6 +412,10 @@ class LayerPicker(SlotBox):
                 self.layer_combo.setCurrentText(layer)
 
         self.layer_combo.setEnabled(True)
+
+        # After the layer is settled, because the list names an entry by both
+        # and one of the two was only just decided.
+        self._relist(dict(path=str(path), layer=self.layer_combo.currentText()))
         self._on_layer_changed(self.layer_combo.currentText(), preferred=preferred)
 
         self.changed.emit()
@@ -337,8 +424,7 @@ class LayerPicker(SlotBox):
 
     def clear(self):
         self._path = None
-        self.path_label.clear()
-        self.path_label.setToolTip("")
+        self._relist()
         self.clear_button.setEnabled(False)
         self.layer_combo.clear()
         self.layer_combo.setEnabled(False)
@@ -403,9 +489,17 @@ class VectorPicker(LayerPicker):
         self.category_combo.setEnabled(False)
 
     def restore(self, spec):
-        return self.set_path(
+        if not self.set_path(
             spec["path"], spec.get("layer"), spec.get("category_field"), quiet=True
-        )
+        ):
+            return False
+
+        # `set_path` listed what it knew, which is the file and the layer. The
+        # whole spec is better: picked out of the list again later, it comes
+        # back with its category field rather than with a fresh guess at one.
+        self._relist(spec)
+
+        return True
 
     def value(self):
         """The chosen role as a dictionary, or None if the slot is empty."""
@@ -527,6 +621,11 @@ class AnglePicker(LayerPicker):
         # called `strike`: whoever says which one it is has the better claim,
         # including when what they say is the default.
         self.convention_combo.setCurrentIndex(1 if spec.get("is_rhr_strike") else 0)
+
+        # And the whole spec into the list, over the file and layer `set_path`
+        # put there: chosen again later it keeps its two columns and its
+        # convention, which is most of what made it worth remembering.
+        self._relist(spec)
 
         return True
 
@@ -657,7 +756,9 @@ class SourcesDialog(QtWidgets.QDialog):
     scrolled either.
     """
 
-    def __init__(self, parent=None, wants=None, chosen=None, title="gSurf - sources"):
+    def __init__(
+        self, parent=None, wants=None, chosen=None, recent=None, title="gSurf - sources"
+    ):
         super().__init__(parent)
 
         self.setWindowTitle(title)
@@ -677,6 +778,11 @@ class SourcesDialog(QtWidgets.QDialog):
             box = picker_for(slot)
             box.set_requirement(level)
             box.changed.connect(self._refresh_ok)
+
+            # Before `restore`, which puts the choice being put back at the top
+            # of this list rather than beside itself somewhere down it.
+            if recent is not None:
+                box.offer(recent.entries(slot))
 
             self.boxes[slot] = box
             stack.addWidget(box)

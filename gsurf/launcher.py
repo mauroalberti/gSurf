@@ -105,6 +105,7 @@ class Launcher(QtWidgets.QMainWindow):
             self,
             wants=wants,
             chosen=self.chosen,
+            recent=self.recent,
             title=f"gSurf - {entry['name'].lower()}",
         )
 

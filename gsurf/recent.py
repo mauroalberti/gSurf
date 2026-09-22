@@ -64,7 +64,7 @@ def default_settings():
     return QtCore.QSettings("gSurf", "sources")
 
 
-def _identity(entry):
+def identity(entry):
     """
     What makes two entries the same choice, so the newer replaces the older.
 
@@ -195,11 +195,11 @@ class Recent:
             if not entry:
                 continue
 
-            wanted = _identity(entry)
+            wanted = identity(entry)
             kept = [
                 other
                 for other in self.slots.get(slot, [])
-                if _identity(other) != wanted
+                if identity(other) != wanted
             ]
 
             self.slots[slot] = [entry] + kept[: DEPTH - 1]
@@ -221,9 +221,9 @@ class Recent:
         if self.settings is None or not entry:
             return
 
-        wanted = _identity(entry)
+        wanted = identity(entry)
         kept = [
-            other for other in self.slots.get(slot, []) if _identity(other) != wanted
+            other for other in self.slots.get(slot, []) if identity(other) != wanted
         ]
 
         if len(kept) != len(self.slots.get(slot, [])):
