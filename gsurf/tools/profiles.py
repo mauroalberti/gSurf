@@ -96,13 +96,6 @@ Z_MARGIN = 200.0
 # with and what a MultiPolygon is made of.
 BACKDROP_ROLES = ("polygons", "lines")
 
-# How many units a section can be given colours for. The same number the map
-# cuts its own legend at, and for the same reason: past a dozen entries the
-# legend eats the thing it is there to explain. It is a cap on the legend and
-# not on the colouring -- see `_polygon_colors` for why the library makes them
-# the same decision.
-MAX_SECTION_COLORS = VectorSource.MAX_LEGEND_ENTRIES
-
 
 class SectionCanvas(QtWidgets.QWidget):
     """
@@ -1181,17 +1174,15 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         Every unit in the window, not the ones the current trace happens to
         cross: the library paints an unknown category red, and a palette that
         changed as the trace moved would repaint the section under the hand
-        moving it.
+        moving it. All of them, however many there are -- a sheet's worth is
+        scores, and what that costs is a dict of tuples.
 
-        And only up to a point, which is not about colour at all. Handing the
-        palette over also turns the library's legend on, one entry per colour
-        and every one of them drawn, in a column a fifth of the panel wide:
-        the 54 units of sheet 489 come out clipped at both ends, running off
-        the bottom, having taken a third of the figure from the sections. The
-        map solved this years ago with a cut and a "+N more" entry that
-        switches the rest; the same cut here would have to be made inside
-        `geogst`, and until it is, a palette too big to show is left unsent
-        and the library keeps its ramp.
+        Which is why the legend goes with it. The library reads a palette this
+        wide as a legend that wide, and settles it at build: the section panel
+        would carry the names of units the trace has since been dragged away
+        from. The map above is doing the dragging and has the same colours in
+        its own legend, cut and switchable, so the section says the colours and
+        the map says what they mean.
         """
 
         colors = {}
@@ -1203,7 +1194,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             for value, colour in source.colors.items():
                 colors[str(value)] = colour
 
-        return colors if len(colors) <= MAX_SECTION_COLORS else {}
+        return colors
 
     def _view_for(self, geoprofiles, s_max):
         from geogst.plots.profiles import ProfilesView
@@ -1214,6 +1205,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             height=1.6,
             line_attitudes_intersections=_dock_style(),
             polygon_intersections=self._polygon_colors(),
+            polygon_intersections_legend=False,
         )
 
     def update_single(self):
