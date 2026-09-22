@@ -1039,6 +1039,18 @@ class SourcesDialog(QtWidgets.QDialog):
 
         self.project_label.setText(project.summary())
 
+        # The count has been on the label all along and the reasons nowhere,
+        # which leaves the one question a skipped layer raises unanswered:
+        # which ones, and why. It is not an idle question -- the geology of
+        # this area is in its project twice, once as the sheets and once as
+        # the SGN service, and the service cannot be opened by anything here.
+        # A layer called "Unita geologiche" that is not among the units looks
+        # exactly like a layer that went missing.
+        self.project_label.setToolTip(
+            "\n".join(f"{title}  --  {why}" for title, why in project.skipped)
+            or "every layer of the project was offered to some slot"
+        )
+
         return project
 
     def restore(self, chosen):

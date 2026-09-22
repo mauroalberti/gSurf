@@ -235,6 +235,142 @@ def make_data(root, directory):
     return str(dem)
 
 
+def check_awkward_layers(directory):
+    """
+    The layers a container describes in the two ways that used to hide them.
+
+    Not hypothetical, either of them. Every section trace drawn here is a
+    `LineString Z`, because a trace is surveyed on a DEM and comes back with
+    heights on it; and every ViDEPI layer is `Unknown`, because the archive
+    publishes KML and KML declares nothing. Between them they took 23 of the
+    92 vector layers of this area's project out of the dialog -- offered on the
+    list, because a project says what its layers are, and then refused on
+    opening with "no suitable layer", which is the worst of both ways to fail.
+    """
+
+    import geopandas as gpd
+    import pyogrio
+    from shapely.geometry import LineString, Point, Polygon as Shape
+
+    print("\n-- layers whose type is written awkwardly --")
+
+    awkward = directory / "awkward.gpkg"
+
+    square = Shape([(0, 0), (10, 0), (10, 10), (0, 10)])
+
+    # With heights, which is what a trace drawn over a DEM comes back carrying.
+    gpd.GeoDataFrame(
+        {"nome": ["sezione"]},
+        geometry=[LineString([(0, 0, 100), (10, 10, 250)])],
+        crs="EPSG:25833",
+    ).to_file(awkward, layer="traccia_z", driver="GPKG")
+
+    gpd.GeoDataFrame(
+        {"nome": ["cava"]},
+        geometry=[Shape([(0, 0, 5), (10, 0, 5), (10, 10, 5), (0, 10, 5)])],
+        crs="EPSG:25833",
+    ).to_file(awkward, layer="poligoni_z", driver="GPKG")
+
+    declared = dict((str(n), str(g)) for n, g in pyogrio.list_layers(awkward))
+
+    check(
+        "a layer with heights on it is declared with a dimension",
+        declared.get("traccia_z", "").endswith(" Z"),
+        str(declared),
+    )
+
+    # Told nothing, which is what a KML import writes.
+    for layer, geometry in (
+        ("titoli", [square]),
+        ("linee", [LineString([(0, 0), (10, 10)])]),
+        ("pozzi", [Point(5, 5)]),
+    ):
+        pyogrio.write_dataframe(
+            gpd.GeoDataFrame({"nome": ["x"]}, geometry=geometry, crs="EPSG:25833"),
+            awkward,
+            layer=layer,
+            driver="GPKG",
+            geometry_type="Unknown",
+            append=True,
+        )
+
+    # Told nothing and holding nothing: there is no first feature to judge it
+    # by, and a layer that would draw nothing belongs in no slot.
+    pyogrio.write_dataframe(
+        gpd.GeoDataFrame({"nome": []}, geometry=[], crs="EPSG:25833"),
+        awkward,
+        layer="vuoto",
+        driver="GPKG",
+        geometry_type="Unknown",
+        append=True,
+    )
+
+    # A plain table, which has contents but no geometry at all.
+    gpd.pd.DataFrame({"pozzo": ["A", "B"], "quota": [1, 2]}).to_csv(
+        directory / "tabella.csv", index=False
+    )
+
+    from gsurf.vectors import VectorSource
+
+    check(
+        "the dimension does not hide a line",
+        VectorSource.geometry_role("LineString Z") == "lines"
+        and VectorSource.geometry_role("MultiPolygon ZM") == "polygons"
+        and VectorSource.geometry_role("Point M") == "points",
+    )
+    check(
+        "and the ordinary spellings still read as they did",
+        VectorSource.geometry_role("MultiLineString") == "lines"
+        and VectorSource.geometry_role("Polygon") == "polygons"
+        and VectorSource.geometry_role("MultiPoint") == "points",
+    )
+    check(
+        "a table is no geometry and not a shape that was not named",
+        VectorSource.geometry_role(None) is None
+        and VectorSource.geometry_role("Unknown") is None,
+    )
+
+    lines = VectorSource.candidate_layers(awkward, "lines")
+    polygons = VectorSource.candidate_layers(awkward, "polygons")
+    points = VectorSource.candidate_layers(awkward, "points")
+
+    check("the trace with heights is offered as a line", "traccia_z" in lines, str(lines))
+    check(
+        "and the quarry with them as a polygon", "poligoni_z" in polygons, str(polygons)
+    )
+    check(
+        "a layer that declares nothing is offered for what it holds",
+        polygons == ["poligoni_z", "titoli"]
+        and lines == ["traccia_z", "linee"]
+        and points == ["pozzi"],
+        f"polygons {polygons}, lines {lines}, points {points}",
+    )
+    check(
+        "an empty one is offered nowhere, there being nothing to judge it by",
+        not any("vuoto" in found for found in (polygons, lines, points)),
+    )
+
+    # Reading the contents is the expensive half, and the dialog asks the same
+    # file once per role: the second question must not reopen it.
+    from time import perf_counter
+
+    VectorSource._CONTENTS.clear()
+
+    started = perf_counter()
+    VectorSource.candidate_layers(awkward, "polygons")
+    cold = perf_counter() - started
+
+    started = perf_counter()
+    VectorSource.candidate_layers(awkward, "lines")
+    warm = perf_counter() - started
+
+    check(
+        "and what was read is not read again for the next role",
+        warm < cold / 2,
+        f"{cold * 1000:.0f} ms then {warm * 1000:.0f} ms",
+    )
+
+
 def check_the_dialog(root, project_path, dem_path):
     """What the dialog does with a project, and what it stops doing with it."""
 
@@ -262,6 +398,16 @@ def check_the_dialog(root, project_path, dem_path):
     project = dialog.use_project(str(project_path))
 
     check("the project is read", project is not None, project.summary() if project else "")
+
+    # The count says some were passed over; the reasons say which, and are the
+    # difference between a limitation and a layer that looks lost.
+    hint = dialog.project_label.toolTip()
+
+    check(
+        "what was passed over is named, with its reason, behind the count",
+        all(title in hint and why in hint for title, why in project.skipped),
+        hint.replace("\n", " | "),
+    )
 
     combo = units.path_combo
 
@@ -652,6 +798,8 @@ def main():
         blank = Project("nowhere.qgs")
 
         check("a project with no layers offers none", blank.entries_for("polygons") == [])
+
+        check_awkward_layers(directory)
 
         check_the_dialog(root, plain, make_data(root, directory))
 

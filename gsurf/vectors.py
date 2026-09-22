@@ -79,6 +79,18 @@ class VectorSource:
         "points": "Point",
     }
 
+    # What OGR writes after the type when the coordinates carry more than two
+    # numbers. It is a property of the coordinates and not of the shape: a
+    # `LineString Z` is a line, and a rule that matched the bare suffix read it
+    # as no geometry at all.
+    DIMENSIONS = (" ZM", " Z", " M")
+
+    # What was found inside the layers that would not say, keyed on the file,
+    # the layer and the file's mtime. The dialog asks the same container once
+    # per role, and a project of ViDEPI layers would otherwise be read through
+    # three times over to answer three questions about the same seven layers.
+    _CONTENTS = {}
+
     FLAT_STYLE = {
         "polygons": dict(facecolor="#4daf7c", edgecolor="#2f7a52", alpha=0.25, linewidth=0.5),
         "lines": dict(color="#1f4fd8", linewidth=1.0),
@@ -185,24 +197,107 @@ class VectorSource:
     # -- reading the container, without loading the data ------------------
 
     @staticmethod
+    def geometry_role(declared):
+        """
+        The role a declared OGR type fills, or None if the type does not say.
+
+        The dimension comes off first, because a layer with heights on it is
+        still a layer of the shape it says: OGR writes `LineString Z` for a
+        trace surveyed in three dimensions, `Point M` for one carrying a
+        measure along it, `MultiPolygon ZM` for both. Matching the bare suffix
+        read all three as nothing, and this area's project alone lost 17 of its
+        45 line layers that way -- the section traces among them, which are
+        exactly the layers whose vertices carry a height.
+        """
+
+        if declared is None:
+            return None
+
+        name = str(declared)
+
+        for dimension in VectorSource.DIMENSIONS:
+            if name.endswith(dimension):
+                name = name[: -len(dimension)]
+                break
+
+        for role, suffix in VectorSource.GEOMETRY_SUFFIX.items():
+            if name.endswith(suffix):
+                return role
+
+        return None
+
+    @staticmethod
+    def role_of_contents(path, layer=None):
+        """
+        The role of the first feature, for a layer whose metadata does not say.
+
+        `Unknown` is what a container writes when it was never told, and it is
+        not a rarity: the seven ViDEPI layers of this area, carried over from
+        the KML the archive publishes, are every one of them Unknown -- the
+        wells, the seismic lines, the expired concessions. Read on the
+        declaration alone they are not offered anywhere, and a layer that is
+        simply not in the list is a layer the user goes looking for a bug over.
+
+        One feature, geometry only, for the few layers that gave no answer:
+        about 10 ms each on those. A layer of mixed shapes is judged by its
+        first, which is a guess -- but the cost of a wrong guess is a layer
+        offered in the wrong slot, where it can be seen and passed over, and
+        the cost of not guessing is a layer that cannot be reached at all.
+
+        Nothing is read twice: `_CONTENTS` keys on the file, the layer and the
+        file's mtime, so a container edited while the dialog is open is asked
+        again and one left alone is not.
+        """
+
+        key = (str(path), layer, Path(path).stat().st_mtime_ns)
+
+        if key in VectorSource._CONTENTS:
+            return VectorSource._CONTENTS[key]
+
+        import pyogrio
+
+        try:
+            frame = pyogrio.read_dataframe(path, layer=layer, columns=[], max_features=1)
+            first = None if frame.empty else frame.geometry.iloc[0]
+            role = None if first is None else VectorSource.geometry_role(first.geom_type)
+        except Exception:
+            # Unreadable is the picker's news to break, not this one's: it
+            # opens the file itself a moment later and says so properly.
+            role = None
+
+        VectorSource._CONTENTS[key] = role
+
+        return role
+
+    @staticmethod
     def candidate_layers(path, role):
         """
         The layers in the file whose geometry fits the role.
 
-        Read from the metadata alone, so listing the layers of a half-gigabyte
-        geopackage costs what listing an empty one costs -- and that is what
-        lets the dialog filter while the user chooses.
+        Read from the metadata wherever the metadata says, so listing the
+        layers of a half-gigabyte geopackage costs what listing an empty one
+        costs -- and that is what lets the dialog filter while the user
+        chooses. The layers that declare nothing are the exception, and are
+        paid for one feature at a time; see `role_of_contents`.
         """
 
         import pyogrio
 
-        suffix = VectorSource.GEOMETRY_SUFFIX[role]
+        found = []
 
-        return [
-            str(name)
-            for name, geometry in pyogrio.list_layers(path)
-            if geometry is not None and str(geometry).endswith(suffix)
-        ]
+        for name, declared in pyogrio.list_layers(path):
+            name = str(name)
+            fits = VectorSource.geometry_role(declared)
+
+            # 'None' is a table and has no contents worth asking about;
+            # 'Unknown' is a layer that was never asked.
+            if fits is None and str(declared).startswith("Unknown"):
+                fits = VectorSource.role_of_contents(path, name)
+
+            if fits == role:
+                found.append(name)
+
+        return found
 
     @staticmethod
     def text_fields(path, layer=None):
