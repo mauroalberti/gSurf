@@ -269,6 +269,45 @@ class MapView(QtWidgets.QWidget):
         self.toolbar.update()
         self.toolbar.push_current()
 
+    @property
+    def framing(self):
+        """What is on screen now, in the order `Session.extent` uses."""
+
+        left, right = self.axes.get_xlim()
+        bottom, top = self.axes.get_ylim()
+
+        return [float(left), float(right), float(bottom), float(top)]
+
+    def restore_framing(self, extent):
+        """
+        Frames the map on an extent that was remembered, leaving home alone.
+
+        To be called after `anchor_home`, and that ordering is the point: the
+        bottom of the navigation stack is what the bar calls home, and home is
+        the whole area rather than whichever corner of it the last run happened
+        to end on. The remembered framing is pushed over it, so both are on the
+        stack -- which leaves the back arrow as the way out of a restored zoom,
+        the same as it is out of a zoom made by hand.
+
+        The aspect is equal, so these limits are what the view is fitted from
+        and not what it comes out as to the metre: a window restored a few
+        pixels narrower shows a few metres more. The alternative is storing a
+        centre and a scale and doing the fitting here, which is what matplotlib
+        is already doing correctly.
+        """
+
+        left, right, bottom, top = (float(v) for v in extent)
+
+        self.axes.set_xlim(left, right)
+        self.axes.set_ylim(bottom, top)
+
+        self.toolbar.push_current()
+
+        # The background has changed scale: a full draw, and then the hillshade
+        # reread for it -- the same pair `_on_scroll` ends on.
+        self.canvas.draw()
+        self.schedule_shade_refresh()
+
     # -- legend -----------------------------------------------------------
 
     def set_legend_placement(self, mode):

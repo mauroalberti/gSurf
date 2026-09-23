@@ -12,8 +12,10 @@ Run against real data when it is there, against a synthetic DEM otherwise:
     QT_QPA_PLATFORM=offscreen python checks/check_sections.py
 """
 
+import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -75,8 +77,6 @@ def main():
         # Left where it is written rather than in a `with`: the session holds
         # the DEM open for the whole run, and a temporary directory taken down
         # at the end of this branch would take the raster with it.
-        import tempfile
-
         session = Session.open(
             dem_path=str(synthetic_dem(Path(tempfile.mkdtemp()) / "synthetic.tif"))
         )
@@ -264,6 +264,193 @@ def main():
     check("off-screen there is no layout to inherit",
           tool.remembered() is None and window.restore_geometry() is False)
 
+    check("and nothing to inherit about the section either",
+          tool.read_state(tool.remembered()) == {})
+
+    # -- turning the section round -----------------------------------------
+
+    def bundle_ends():
+        """Where each profile of the bundle starts and where it ends."""
+
+        return np.array([
+            [line.coords[0, :2], line.coords[-1, :2]]
+            for line in window.geoprofiles.profilers.lines
+        ])
+
+    before = [tuple(end) for end in window.trace]
+    length_before = window._length()
+    panels_before = window.bundle
+    original_bundle = bundle_ends()
+
+    window.reverse()
+
+    check("reverse swaps the two ends",
+          [tuple(end) for end in window.trace] == [before[1], before[0]])
+
+    check("and leaves the section the same length",
+          abs(window._length() - length_before) < 1e-6,
+          f"{length_before / 1000.0:.2f} km")
+
+    # A reversal is the one edit that cannot change the length, so the fitted
+    # axis still fits and the panels must be reused rather than rebuilt --
+    # which is what makes the button cheap enough to press twice in a row.
+    check("the panels are kept, not rebuilt", window.bundle is panels_before)
+
+    flipped = bundle_ends()
+
+    # The bundle is laid out central around the trace -- half the profiles
+    # offset to its left and half to its right -- so reversing the trace makes
+    # each side the other. The set of lines on the ground is the same one; what
+    # changes is which panel it is and which way it is read. Both at once, and
+    # that is the whole claim: profile order reversed, and each profile's two
+    # ends swapped.
+    check("reversing mirrors the bundle: each side becomes the other",
+          np.allclose(flipped, original_bundle[::-1, ::-1]),
+          f"{len(flipped)} profiles, order and direction both turned round")
+
+    window.reverse()
+
+    check("and reversing twice comes back to where it started",
+          [tuple(end) for end in window.trace] == before
+          and np.allclose(bundle_ends(), original_bundle))
+
+    check("the start end is drawn, so the direction is on the map",
+          window.start_marker.get_xydata().tolist() == [list(window.trace[0])])
+
+    # -- what is carried from one run to the next --------------------------
+
+    # Zoomed in before the state is read, and that is not decoration: over the
+    # whole DEM "the framing came back" is the claim that the whole DEM comes
+    # back as the whole DEM, which it would whether anything was restored or
+    # not. Here the remembered framing is a twelve-kilometre window on an
+    # eighty-kilometre mosaic and only a restore can produce it.
+    cx, cy = session.center()
+    window.map_view.axes.set_xlim(cx - 6000.0, cx + 6000.0)
+    window.map_view.axes.set_ylim(cy - 5000.0, cy + 5000.0)
+    window.map_view.canvas.draw()
+
+    state = window.current_state()
+
+    check("the framing read back is the one on screen, not the DEM's",
+          state["extent"] != session.extent,
+          f"{(state['extent'][1] - state['extent'][0]) / 1000.0:.1f} km "
+          f"of {(session.extent[1] - session.extent[0]) / 1000.0:.1f}")
+
+    check("the state written is the section as it stands",
+          [tuple(end) for end in state["trace"]] == before
+          and state["profiles"] == window.num_profiles
+          and state["extent"] == window.map_view.framing,
+          f"{state['profiles']} profiles, {state['offset']:.0f} m apart")
+
+    settings = QtCore.QSettings(
+        str(Path(tempfile.mkdtemp()) / "sections.conf"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    settings.setValue(tool.STATE_KEY, json.dumps(state))
+
+    check("and it survives the round trip through the store",
+          tool.applicable(session, tool.read_state(settings)).get("trace")
+          == [tuple(end) for end in state["trace"]])
+
+    # The gate. Coordinates are metres in a projection: the same pair is
+    # somewhere else under another one and nowhere at all on another DEM.
+    elsewhere = dict(state, source="/somewhere/else.tif")
+    rotated = dict(state, epsg=(session.epsg or 0) + 1)
+
+    check("a trace from another source is not restored onto this one",
+          "trace" not in tool.applicable(session, elsewhere)
+          and "extent" not in tool.applicable(session, elsewhere))
+
+    check("nor one written under another projection",
+          "trace" not in tool.applicable(session, rotated))
+
+    check("but the way of working carries across anyway",
+          tool.applicable(session, elsewhere).get("profiles") == state["profiles"]
+          and tool.applicable(session, elsewhere).get("offset") == state["offset"],
+          "profiles, spacing and reach are habits, not places")
+
+    left, bottom, right, top = session.bounds
+    off_dem = dict(state, trace=[[left - 5000.0, bottom - 5000.0], [right, top]])
+
+    check("a trace that is no longer on the DEM is dropped, not shown empty",
+          "trace" not in tool.applicable(session, off_dem))
+
+    check("and so is a state that was never written",
+          tool.applicable(session, {}) == {})
+
+    # The conf is a file a hand can reach, and a window is built on it before
+    # there is an application running to show an error in. An even count is the
+    # one that matters: `Profilers` raises on it during construction, so a
+    # number this tool never wrote would be a window that cannot be opened at
+    # all without finding and deleting the file.
+    check("an even count from an edited file is dropped, not built on",
+          "profiles" not in tool.applicable(session, dict(state, profiles=4)))
+
+    check("and so is a spacing the spin box could not hold",
+          "offset" not in tool.applicable(session, dict(state, offset=1e9))
+          and "offset" not in tool.applicable(session, dict(state, offset=0.0)),
+          "a box clamped to 20 km over a section computed at 1000 km")
+
+    check("but a reach of none is a value, not a missing one",
+          tool.applicable(session, dict(state, reach=None)).get("reach", "gone")
+          is None,
+          "'whole trace' has to survive the round trip")
+
+    # -- a window that comes up on what was left behind --------------------
+
+    kept = dict(state, profiles=3, offset=750.0, reach=180.0)
+    continued = tool.ProfilesWindow(session, traces=source, state=kept)
+    continued.resize(1400, 950)
+    continued.show()
+    app.processEvents()
+    continued.map_view.canvas.draw()
+
+    check("a new window opens on the remembered trace",
+          [tuple(end) for end in continued.trace] == before)
+
+    check("and on its bundle, with the controls saying so",
+          continued.num_profiles == 3 and continued.offset == 750.0
+          and continued.count_spin.value() == 3
+          and continued.offset_spin.value() == 750.0)
+
+    # The reach reaches the source and not just the box: it is the source the
+    # section is computed from, and a spin box agreeing with a state nobody
+    # applied would be the failure this cannot tell apart otherwise.
+    check("and the reach is the source's again, not just the box's",
+          continued.traces.half_span == 180.0
+          and continued.reach_spin.value() == 180.0,
+          "180 m either side")
+
+    # The bar holds one action and no icon, and a toolbar left on its default
+    # style shows icons: a button that came out as an empty 20 pixels would
+    # pass every other check here.
+    section_bar = next(
+        bar for bar in continued.findChildren(QtWidgets.QToolBar)
+        if bar.windowTitle() == "section"
+    )
+    reverse_button = section_bar.widgetForAction(continued.reverse_action)
+
+    check("the reverse button is on the bar, wide enough to read",
+          reverse_button is not None
+          and reverse_button.text() == "Reverse"
+          and reverse_button.sizeHint().width() > 40
+          and continued.reverse_action.shortcut().toString() == "Ctrl+R",
+          f"{reverse_button.sizeHint().width()} px, Ctrl+R")
+
+    check("the remembered framing is what the map comes up on",
+          np.allclose(continued.map_view.framing, state["extent"], atol=1.0),
+          f"{continued.map_view.framing[1] - continued.map_view.framing[0]:.0f} m wide")
+
+    # Home has to be the DEM and not the corner the last run ended on, or a
+    # restored zoom would be one there is no way back out of.
+    continued.map_view.toolbar.home()
+
+    check("and home is still the whole area, not that framing",
+          np.allclose(continued.map_view.framing, session.extent, atol=1.0),
+          "the bar's home is anchored before the framing is pushed over it")
+
+    continued.close()
+
     # -- the trace goes to the profiler as drawn ---------------------------
 
     profilers = window._profilers(1)
@@ -412,7 +599,6 @@ def main():
     # back from a cleaning pass as a collection vanished with its measurement.
 
     import geopandas as gpd
-    import tempfile
 
     from gsurf.attitudes import TraceAttitudeSource
 
@@ -465,9 +651,7 @@ def main():
 
     print("\n-- a backdrop layer taken as it comes --")
 
-    import tempfile as tempfile_module
-
-    with tempfile_module.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         plain = Path(tmp) / "plain.gpkg"
         left, bottom, right, top = session.bounds
 

@@ -36,10 +36,21 @@ given a screen and the size a section wants rather than the strip a dock leaves
 it. They are parented to the map all the same, which is what has Qt destroy
 them with the tool and what keeps closing one from taking the application down
 while the launcher waits hidden underneath. Where they were left is remembered.
+
+**What is remembered, and what a remembered number means.** A section is
+arrived at rather than specified -- you drag until it crosses the thing you
+are after -- and closing the window used to throw that away and come up west
+to east through the middle again. So the trace, the framing, the bundle and
+the reach are written on the way out. They divide, though, into habits and
+places: how many profiles at what spacing is a way of working and carries to
+whatever opens next, while a trace is metres in a projection and means
+somewhere else under another one. Places come back only over the source they
+were written on. See `applicable`.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from time import perf_counter
@@ -68,6 +79,16 @@ WANTS = dict(
 BUNDLE_DEFAULT = 5
 OFFSET_DEFAULT = 500.0
 MAX_DEFAULT_LENGTH = 10000.0
+
+# What the controls can hold, in one place because a remembered state is
+# checked against the same bounds: a number the spin box would clamp and a
+# section computed from the number before clamping are two different things,
+# and the gap between them is a box that disagrees with the map. The count is
+# odd throughout -- a central bundle has a middle, and `Profilers` raises
+# without one.
+BUNDLE_RANGE = (1, 41)
+OFFSET_RANGE = (10.0, 20000.0)
+REACH_RANGE = (0.0, 50000.0)
 
 PANEL_MIN_PX = 130
 PANEL_WIDTH_PX = 430
@@ -481,6 +502,140 @@ def remembered():
     return QtCore.QSettings("gSurf", "sections")
 
 
+# The section itself, in the same store as the layout. One JSON string rather
+# than a key per number, for the reason `recent.py` gives about its own lists:
+# QSettings has no faithful round trip for a nested list, and reads a
+# one-element one back as a scalar.
+STATE_KEY = "state/last"
+
+
+def read_state(settings):
+    """What the last run wrote about the section, or nothing."""
+
+    if settings is None:
+        return {}
+
+    raw = settings.value(STATE_KEY)
+
+    if not isinstance(raw, str):
+        return {}
+
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        return {}
+
+    return state if isinstance(state, dict) else {}
+
+
+def applicable(session, state):
+    """
+    The part of a remembered state that belongs to the session being opened.
+
+    Two kinds of thing are in there and they travel differently.
+
+    How many profiles at what spacing, and how far a point measurement
+    reaches, are ways of working. They are not tied to anywhere and they come
+    back whatever is open -- somebody who works in bundles of thirteen at
+    250 m works that way in the next area too.
+
+    Where the trace was and how the map was framed are *places*: metres in a
+    projection. The same pair of numbers is somewhere else under a different
+    projection and nowhere at all under a DEM of another region, so those come
+    back only over the source they were written on, and are dropped rather
+    than guessed at -- a section restored off the DEM would come up empty with
+    nothing to say why, which is worse than coming up in the middle.
+    """
+
+    kept = {}
+    count, offset = state.get("profiles"), state.get("offset")
+
+    # Checked against what the controls hold rather than taken as written. This
+    # file is one a hand can reach, and a window is built on it before there is
+    # a running application to put an error in front of: an even count would
+    # come out of `Profilers` as an exception during construction, and an
+    # out-of-range spacing as a spin box quietly saying something the section
+    # was not computed from. Anything that fails falls back to the default,
+    # which is the one number known to work.
+    if isinstance(count, int) and count % 2 == 1 and _within(count, BUNDLE_RANGE):
+        kept["profiles"] = int(count)
+
+    if isinstance(offset, (int, float)) and _within(offset, OFFSET_RANGE):
+        kept["offset"] = float(offset)
+
+    # None is a value here and the one the box calls "whole trace", so it is
+    # kept as it comes; a zero is not, the box reading that as the whole trace
+    # too and `_on_reach_changed` never writing one.
+    reach = state.get("reach")
+
+    if reach is None and "reach" in state:
+        kept["reach"] = None
+    elif isinstance(reach, (int, float)) and REACH_RANGE[0] < reach <= REACH_RANGE[1]:
+        kept["reach"] = float(reach)
+
+    if state.get("source") != _source_key(session) or state.get("epsg") != session.epsg:
+        return kept
+
+    trace = _as_trace(state.get("trace"), session.bounds)
+    if trace is not None:
+        kept["trace"] = trace
+
+    extent = _as_extent(state.get("extent"))
+    if extent is not None:
+        kept["extent"] = extent
+
+    return kept
+
+
+def _within(value, limits):
+    return limits[0] <= value <= limits[1]
+
+
+def _source_key(session):
+    """What the coordinates in a state were measured on."""
+
+    return str(session.base_path) if session.base_path is not None else ""
+
+
+def _as_trace(value, bounds):
+    """Two ends on this DEM, or None for anything else."""
+
+    try:
+        (x0, y0), (x1, y1) = ((float(x), float(y)) for x, y in value)
+    except (TypeError, ValueError):
+        return None
+
+    left, bottom, right, top = bounds
+
+    for x, y in ((x0, y0), (x1, y1)):
+        if not (left <= x <= right and bottom <= y <= top):
+            return None
+
+    # A section with no length is what the tool refuses to compute anyway, and
+    # a press with no drag after it leaves exactly that behind.
+    if np.hypot(x1 - x0, y1 - y0) < 1.0:
+        return None
+
+    return [(x0, y0), (x1, y1)]
+
+
+def _as_extent(value):
+    """A framing that can be set on an axis, or None."""
+
+    try:
+        left, right, bottom, top = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+
+    if not np.isfinite([left, right, bottom, top]).all():
+        return None
+
+    if not (left < right and bottom < top):
+        return None
+
+    return [left, right, bottom, top]
+
+
 class SatelliteWindow(QtWidgets.QWidget):
     """
     A panel that used to be a dock, given a window of its own.
@@ -543,6 +698,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         num_profiles=BUNDLE_DEFAULT,
         offset=OFFSET_DEFAULT,
         legend="beside",
+        state=None,
     ):
         super().__init__()
 
@@ -572,11 +728,27 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
         self.trace = [(cx - span, cy), (cx + span, cy)]
 
+        # Where the last run left off, over the defaults and before anything is
+        # built from them: the spin boxes take their values from these
+        # attributes, and the first bundle is computed once, on the trace that
+        # is being continued rather than on the one nobody asked for.
+        if state is None:
+            state = read_state(remembered())
+
+        state = applicable(session, state)
+        self._apply_state(state)
+
         self.polygons, self.lines, self.overlay_dropped = self._overlay_geometry()
 
         self.setWindowTitle(f"gSurf - sections - {session.label}")
         self._build_ui(legend)
         self._draw_base_map()
+
+        # After the base map, which is what settles the axis limits in the
+        # first place: set before it, the hillshade's own extent would overrule
+        # them.
+        if "extent" in state:
+            self.map_view.restore_framing(state["extent"])
 
         self.update_bundle()
 
@@ -648,8 +820,14 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         bar = self.addToolBar("section")
         bar.setMovable(False)
 
+        # Said outright because the bar holds one action and it has no icon. A
+        # QToolButton does fall back to its text when the icon is null, but
+        # that is a fallback and not a promise, and an empty 20-pixel button
+        # would be a hard thing to guess at.
+        bar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+
         self.count_spin = QtWidgets.QSpinBox()
-        self.count_spin.setRange(1, 41)
+        self.count_spin.setRange(*BUNDLE_RANGE)
         self.count_spin.setSingleStep(2)
         self.count_spin.setValue(self.num_profiles)
         self.count_spin.setToolTip(
@@ -659,13 +837,26 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.count_spin.valueChanged.connect(self._on_count_changed)
 
         self.offset_spin = QtWidgets.QDoubleSpinBox()
-        self.offset_spin.setRange(10.0, 20000.0)
+        self.offset_spin.setRange(*OFFSET_RANGE)
         self.offset_spin.setSingleStep(100.0)
         self.offset_spin.setDecimals(0)
         self.offset_spin.setSuffix(" m")
         self.offset_spin.setValue(self.offset)
         self.offset_spin.setToolTip("Spacing between the parallel profiles.")
         self.offset_spin.valueChanged.connect(self._on_offset_changed)
+
+        # Next to the trace's own numbers rather than in a menu: turning a
+        # section round is something you do while looking at it, often twice in
+        # a row to see which way reads better.
+        self.reverse_action = QtGui.QAction("&Reverse", self)
+        self.reverse_action.setShortcut("Ctrl+R")
+        self.reverse_action.setToolTip(
+            "Turn the section round (Ctrl+R). The profile is mirrored and the "
+            "panels of the bundle arrive in the opposite order; the lines on "
+            "the map do not move."
+        )
+        self.reverse_action.triggered.connect(self.reverse)
+        self.addAction(self.reverse_action)
 
         bar.addWidget(QtWidgets.QLabel("  profiles "))
         bar.addWidget(self.count_spin)
@@ -674,7 +865,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
         if self.traces is not None:
             self.reach_spin = QtWidgets.QDoubleSpinBox()
-            self.reach_spin.setRange(0.0, 50000.0)
+            self.reach_spin.setRange(*REACH_RANGE)
             self.reach_spin.setSingleStep(50.0)
             self.reach_spin.setDecimals(0)
             self.reach_spin.setSuffix(" m")
@@ -689,6 +880,9 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
             bar.addWidget(QtWidgets.QLabel("  reach "))
             bar.addWidget(self.reach_spin)
+
+        bar.addSeparator()
+        bar.addAction(self.reverse_action)
 
     # -- the window group --------------------------------------------------
 
@@ -826,11 +1020,58 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         for name, window in self.window_group.items():
             settings.setValue(f"geometry/{name}", window.saveGeometry())
 
+    # -- the section, from one run to the next -----------------------------
+
+    def _apply_state(self, state):
+        """
+        Takes on whatever of a remembered state has survived `applicable`.
+
+        Called before the controls exist, so it writes the attributes and not
+        the widgets: `_build_controls` reads these to set the spin boxes, and
+        doing it the other way round would fire their signals and recompute a
+        bundle per restored number.
+        """
+
+        if "profiles" in state:
+            self.num_profiles = int(state["profiles"])
+
+        if "offset" in state:
+            self.offset = float(state["offset"])
+
+        if "trace" in state:
+            self.trace = list(state["trace"])
+
+        if "reach" in state and self.traces is not None:
+            self.traces.set_half_span(state["reach"])
+
+    def current_state(self):
+        """The section as it stands, in the shape `read_state` hands back."""
+
+        return {
+            "source": _source_key(self.session),
+            "epsg": self.session.epsg,
+            "trace": [[float(x), float(y)] for x, y in self.trace],
+            "extent": self.map_view.framing,
+            "profiles": int(self.num_profiles),
+            "offset": float(self.offset),
+            "reach": self.traces.half_span if self.traces is not None else None,
+        }
+
+    def save_state(self):
+        settings = remembered()
+
+        if settings is None:
+            return
+
+        settings.setValue(STATE_KEY, json.dumps(self.current_state()))
+
     def closeEvent(self, event):
         # Saved on the way out rather than as each window moves: the arrangement
         # worth keeping is the one the work ended on, and a window dragged
         # across a screen would otherwise write settings on every frame of it.
+        # The same argument covers the trace, which moves a great deal more.
         self.save_geometry()
+        self.save_state()
 
         super().closeEvent(event)
 
@@ -874,9 +1115,34 @@ class ProfilesWindow(QtWidgets.QMainWindow):
                 Line2D([], [], color="#1f77b4", linewidth=2.2, alpha=0.85, zorder=4)
             )
         )
+
+        # Which end the section starts at, drawn over the handle that grabs it.
+        # Without it the trace is a line with two identical ends and reversing
+        # it changes nothing anyone can see on the map -- the section panel
+        # mirrors, and the map stays exactly as it was.
+        self.start_marker = self.map_view.add_animated(
+            axes.add_line(
+                Line2D(
+                    [x0],
+                    [y0],
+                    linestyle="None",
+                    marker="o",
+                    markersize=4,
+                    markerfacecolor="crimson",
+                    markeredgecolor="crimson",
+                    zorder=8,
+                )
+            )
+        )
+
         self._draw_reach()
 
         self.map_view.refresh_legend()
+
+        # Home is the whole area, not whichever framing the bar first saw --
+        # which matters more here than in the other tools, since a run that
+        # comes up on a remembered zoom would otherwise have no way back out.
+        self.map_view.anchor_home()
 
     def _legend_handles(self):
         # The section itself is not switchable: it is what the hand is
@@ -944,6 +1210,30 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
         self.trace_line.set_data([x0, x1], [y0, y1])
         self.handles.set_data([x0, x1], [y0, y1])
+        self.start_marker.set_data([x0], [y0])
+
+    def reverse(self):
+        """
+        Turns the section round: the end it starts from becomes the end it ends on.
+
+        Not cosmetic, and not a move either -- nothing on the ground changes.
+        A profile is read from its own start, so the section comes out mirrored:
+        the fault that was on the left of the panel is on the right of it. And
+        the bundle is laid out from the trace's direction, `Profilers` putting
+        half of it to the left of the line and half to the right, so the same
+        set of lines comes back indexed the other way and the panels arrive in
+        the opposite order down the window. Which is the point of the button: a
+        section read against the way the ground is usually drawn reads as a
+        structure dipping the wrong way, and the fix is not to redraw it.
+
+        The two ends only swap, so the length cannot change: the fitted axis
+        still fits, and this costs one bundle and no rebuild of the panels.
+        """
+
+        self.trace = [self.trace[1], self.trace[0]]
+
+        self._redraw_trace()
+        self.update_bundle()
 
     def _on_count_changed(self, value):
         self.num_profiles = int(value)
