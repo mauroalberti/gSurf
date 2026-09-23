@@ -41,11 +41,11 @@ while the launcher waits hidden underneath. Where they were left is remembered.
 arrived at rather than specified -- you drag until it crosses the thing you
 are after -- and closing the window used to throw that away and come up west
 to east through the middle again. So the trace, the framing, the bundle and
-the reach are written on the way out. They divide, though, into habits and
-places: how many profiles at what spacing is a way of working and carries to
-whatever opens next, while a trace is metres in a projection and means
-somewhere else under another one. Places come back only over the source they
-were written on. See `applicable`.
+the reach are written on the way out, and so is whether the legend is up. They
+divide, though, into habits and places: how many profiles at what spacing is a
+way of working and carries to whatever opens next, while a trace is metres in a
+projection and means somewhere else under another one. Places come back only
+over the source they were written on. See `applicable`.
 """
 
 from __future__ import annotations
@@ -93,11 +93,18 @@ REACH_RANGE = (0.0, 50000.0)
 PANEL_MIN_PX = 130
 PANEL_WIDTH_PX = 430
 
+# What the legend beside the panels takes, and how many names it spells out in
+# a group before it starts counting instead. Narrow: it holds unit names, and a
+# name that does not fit is cut rather than given room the section wants.
+SECTION_LEGEND_PX = 210
+SECTION_LEGEND_NOTES = 6
+
 # What the satellites come up as, the first time and nothing being remembered.
 # The section is wider and taller than the dock it replaces because it no
 # longer has to leave room for a map underneath it: 520 px is three panels of
-# a bundle before the scroll area has anything to do.
-SECTION_WINDOW_PX = (900, 520)
+# a bundle before the scroll area has anything to do. The legend is added to
+# that width rather than taken out of it, so the panels keep the 900 they had.
+SECTION_WINDOW_PX = (900 + SECTION_LEGEND_PX, 520)
 TRACES_WINDOW_PX = (PANEL_WIDTH_PX, 620)
 
 # Below this there is no arrangement of three windows that does not cover the
@@ -192,6 +199,186 @@ class SectionCanvas(QtWidgets.QWidget):
 
         self.canvas.blit(self.view.figure.bbox)
         self.canvas.flush_events()
+
+
+class SectionLegend(QtWidgets.QScrollArea):
+    """
+    What the colours in the panels stand for, for the section now drawn.
+
+    Not the map's legend moved across. That one is the *window's* -- every unit
+    in it, in the project's order, each entry a click that takes what it names
+    off the map -- and it answers "what is around here". A section asks the
+    narrower question, "what does this line go through", so this one lists what
+    the profiles actually cross and nothing else. It switches nothing: a panel
+    is redrawn from the intersections, and the library takes the palette as
+    given.
+
+    The library offers a legend of its own, and the reason gSurf leaves it off
+    (`polygon_intersections_legend=False`) is what decides the shape of this
+    class. A figure's legend is settled when the figure is built, and the
+    bundle's figure is rebuilt only when the panel count or the section's
+    length changes -- so dragged across a sheet it would go on naming the units
+    of a section that is no longer on screen. This one is offered every frame
+    and rebuilt only when what it would say has changed, which makes a drag
+    along one unit a tuple comparison and crossing into a new one a column of
+    labels.
+    """
+
+    SWATCH_PX = (20, 12)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._entries = None
+
+        body = QtWidgets.QWidget()
+
+        self._rows = QtWidgets.QVBoxLayout(body)
+        self._rows.setContentsMargins(8, 8, 8, 8)
+        self._rows.setSpacing(2)
+        self._rows.addStretch(1)
+
+        self.setWidget(body)
+        self.setWidgetResizable(True)
+        self.setFixedWidth(SECTION_LEGEND_PX)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        # A name too long for the column is cut where it is built, so there is
+        # nothing to scroll sideways to; a bundle through a sheet's worth of
+        # units does need the vertical one.
+        self.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+    def set_entries(self, entries):
+        """Rebuilds the column, unless this is what it is already showing."""
+
+        entries = tuple(entries)
+
+        if entries == self._entries:
+            return
+
+        self._entries = entries
+
+        # Unparented *and* deleted, in that order, and the first half is what
+        # matters. Taking the item out of the layout leaves the widget a child
+        # of the body, drawn where it was, and `deleteLater` only gets to it
+        # when the event loop next runs -- which during a drag is after several
+        # more frames. Without the unparenting the old column stays on screen
+        # under the new one, two legends deep and both legible.
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            widget = item.widget()
+
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        for kind, label, color in entries:
+            self._rows.addWidget(self._row(kind, label, color))
+
+        # Last, so a short legend sits at the top of the column rather than
+        # spreading itself down the height of the window.
+        self._rows.addStretch(1)
+
+    def _row(self, kind, label, color):
+        if kind == "heading":
+            heading = QtWidgets.QLabel(label)
+
+            font = heading.font()
+            font.setBold(True)
+            heading.setFont(font)
+            heading.setContentsMargins(0, 6, 0, 0)
+
+            return heading
+
+        row = QtWidgets.QWidget()
+
+        line = QtWidgets.QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(6)
+
+        # Kept even when there is nothing to put in it: an entry with no colour
+        # of its own -- a count, or a name in a group that shares one mark --
+        # then lines up under the ones that have, indented by the space a
+        # swatch would have taken.
+        swatch = QtWidgets.QLabel()
+        swatch.setFixedSize(*self.SWATCH_PX)
+
+        if color is not None:
+            swatch.setPixmap(self._swatch(kind, color))
+
+        # Cut with an ellipsis rather than left to run off the edge of the
+        # column, which is what a plain label does: `Membro di Ganca di Campo
+        # Longo` clipped mid-word reads as the name of something else. The
+        # whole of it is a hover away.
+        text = QtWidgets.QLabel()
+        text.setToolTip(label)
+        text.setText(
+            text.fontMetrics().elidedText(
+                label, QtCore.Qt.TextElideMode.ElideRight, self._room()
+            )
+        )
+
+        line.addWidget(swatch)
+        line.addWidget(text, stretch=1)
+
+        return row
+
+    def _room(self):
+        """The width a label has, once the swatch and the margins are out."""
+
+        margins = self._rows.contentsMargins()
+
+        return (
+            SECTION_LEGEND_PX
+            - self.SWATCH_PX[0]
+            - self._rows.spacing()
+            - margins.left()
+            - margins.right()
+            # The vertical scroll bar, whether or not it is up: a legend that
+            # reflowed the moment it grew past the window would be worse than
+            # one that is a few pixels shy of the frame.
+            - self.style().pixelMetric(
+                QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent
+            )
+        )
+
+    def _swatch(self, kind, color):
+        """The mark the panel draws this with, at the size of a line of text."""
+
+        from matplotlib.colors import to_rgba
+
+        width, height = self.SWATCH_PX
+
+        pixmap = QtGui.QPixmap(width, height)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+
+        # Alpha and all: an attitude tick is drawn at half opacity and a
+        # swatch that showed it solid would be a swatch of another colour.
+        shade = QtGui.QColor.fromRgbF(*to_rgba(color))
+
+        if kind == "patch":
+            painter.fillRect(0, 3, width, height - 6, shade)
+        elif kind == "dot":
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(shade)
+            painter.drawEllipse(QtCore.QPointF(width / 2.0, height / 2.0), 3.0, 3.0)
+        else:
+            pen = QtGui.QPen(shade)
+            pen.setWidthF(2.5)
+
+            painter.setPen(pen)
+            painter.drawLine(
+                QtCore.QPointF(2.0, height - 2.0), QtCore.QPointF(width - 2.0, 2.0)
+            )
+
+        painter.end()
+
+        return pixmap
 
 
 class TracePanel(QtWidgets.QWidget):
@@ -573,6 +760,12 @@ def applicable(session, state):
     elif isinstance(reach, (int, float)) and REACH_RANGE[0] < reach <= REACH_RANGE[1]:
         kept["reach"] = float(reach)
 
+    # Whether the legend is up is a habit like the rest of them: somebody
+    # reading sections wants the names, somebody preparing a figure does not,
+    # and neither has anything to do with which DEM is open.
+    if isinstance(state.get("legend"), bool):
+        kept["legend"] = state["legend"]
+
     if state.get("source") != _source_key(session) or state.get("epsg") != session.epsg:
         return kept
 
@@ -778,6 +971,11 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self._bundle_reach = None
         self._satellites_up = False
 
+        # On, because a section whose colours are not explained anywhere is
+        # what the legend was added for; off is for the run where the section
+        # window is a figure being got ready rather than something being read.
+        self.legend_beside_section = True
+
         left, bottom, right, top = session.bounds
         cx, cy = session.center()
 
@@ -852,8 +1050,21 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.stack)
 
+        self.section_legend = SectionLegend()
+        self.section_legend.setVisible(self.legend_beside_section)
+
+        # Outside the scroll area, not in it: the panels scroll and the legend
+        # is the same for all of them, being the bundle's and not one profile's.
+        framed = QtWidgets.QWidget()
+
+        beside = QtWidgets.QHBoxLayout(framed)
+        beside.setContentsMargins(0, 0, 0, 0)
+        beside.setSpacing(0)
+        beside.addWidget(scroll, stretch=1)
+        beside.addWidget(self.section_legend)
+
         self.section_window = SatelliteWindow(
-            "gSurf - section", scroll, SECTION_WINDOW_PX, parent=self
+            "gSurf - section", framed, SECTION_WINDOW_PX, parent=self
         )
 
         self.panel = None
@@ -987,9 +1198,33 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
         menu.addSeparator()
 
+        # Here rather than on the section's own frame, which has no bar of its
+        # own to put it on, and next to the windows because that is what it is:
+        # a piece of the section window being shown or not.
+        self.legend_action = QtGui.QAction("Section &legend", self)
+        self.legend_action.setCheckable(True)
+        self.legend_action.setChecked(self.legend_beside_section)
+        self.legend_action.setToolTip(
+            "The units, lines and attitudes the section crosses, named beside "
+            "the panels."
+        )
+        self.legend_action.toggled.connect(self._show_section_legend)
+        menu.addAction(self.legend_action)
+
+        menu.addSeparator()
+
         front = QtGui.QAction("Bring all to &front", self)
         front.triggered.connect(self._raise_group)
         menu.addAction(front)
+
+    def _show_section_legend(self, shown):
+        self.legend_beside_section = bool(shown)
+        self.section_legend.setVisible(self.legend_beside_section)
+
+        # What it would have said while it was hidden was never worked out, so
+        # it is caught up here rather than at the next release of the trace.
+        if self.legend_beside_section and self.geoprofiles is not None:
+            self._refresh_section_legend(self.geoprofiles)
 
     def _show_satellite(self, window, shown):
         window.setVisible(shown)
@@ -1117,6 +1352,9 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         if "reach" in state and self.traces is not None:
             self.traces.set_half_span(state["reach"])
 
+        if "legend" in state:
+            self.legend_beside_section = bool(state["legend"])
+
     def current_state(self):
         """The section as it stands, in the shape `read_state` hands back."""
 
@@ -1128,6 +1366,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             "profiles": int(self.num_profiles),
             "offset": float(self.offset),
             "reach": self.traces.half_span if self.traces is not None else None,
+            "legend": bool(self.legend_beside_section),
         }
 
     def save_state(self):
@@ -1567,9 +1806,158 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             axis_params=self._axis_params(s_max),
             height=1.6,
             line_attitudes_intersections=_dock_style(),
+            line_intersections=_crossing_style(),
             polygon_intersections=self._polygon_colors(),
             polygon_intersections_legend=False,
         )
+
+    # -- what the panels are showing, said beside them --------------------
+
+    def _refresh_section_legend(self, geoprofiles):
+        """
+        The legend brought up to what has just been drawn, if it is on show.
+
+        Hidden it is not computed either: the walk over the intersections is
+        cheap but it is per frame, and a frame during a drag has 26 ms to
+        spend. `_show_section_legend` is what catches it up on the way back.
+
+        What it costs when it is up, on the Monte Alpi backdrop and a bundle of
+        five: 0.14 ms to work out what to say, 0.001 ms to find that it is
+        already saying it, and 1.8 ms on the frame where it actually changes --
+        which is the frame the section crossed into a new unit on.
+        """
+
+        if not self.legend_beside_section:
+            return
+
+        self.section_legend.set_entries(self._section_legend_entries(geoprofiles))
+
+    def _section_legend_entries(self, geoprofiles):
+        """
+        What to say beside the panels about the section that was just drawn.
+
+        Read off the intersections and not off the layers, because the layers
+        are the window and the window is a sheet: a bundle over Monte Alpi
+        crosses twelve of the thirty carbonate units, and a legend naming all
+        thirty would be the map's legend, which is already open next to it.
+
+        The colour each unit gets is the one the panel draws it in, which is
+        not always the one the map used. The library paints a category its
+        palette does not name in a default red, and an uncategorised polygon
+        layer hands over no palette at all -- so `red` here is not a guess, it
+        is what is on the screen. That the map has the same unit in green is a
+        disagreement to see rather than to hide.
+
+        The lines go the other way round. They are crossed by category and the
+        categories are worth reading -- thirty-one crossings of `n/a` and nine
+        of `?transcurrent` is the fault picture of a section -- but the panel
+        draws every one of them in the same colour, so the colour is claimed
+        once and the categories are listed under it as names, heaviest first.
+        See `_crossing_style`.
+        """
+
+        from matplotlib.colors import to_rgba
+
+        entries = []
+        palette = self._polygon_colors()
+        crossed = _crossings(geoprofiles.polygons_intersections)
+
+        for source in self.session.overlay.sources:
+            if source.role != "polygons":
+                continue
+
+            # A layer categorised by nothing is one category named after
+            # itself, which is the name `_overlay_geometry` gave its geometry
+            # and so the one the intersections come back under.
+            heading = source.layer or source.path.stem
+            order = source.category_order or [heading]
+
+            listed = [value for value in order if crossed.get(str(value))]
+
+            if not listed:
+                continue
+
+            entries.append(("heading", heading, None))
+
+            shown = listed[: VectorSource.MAX_LEGEND_ENTRIES]
+            rest = listed[VectorSource.MAX_LEGEND_ENTRIES :]
+
+            for value in shown:
+                colour = palette.get(str(value), "red")
+
+                # `_legend_label` on purpose, private as it is: a unit spelled
+                # one way beside the map and another beside the section would
+                # read as two units.
+                entries.append(
+                    ("patch", source._legend_label(value), _as_color(colour))
+                )
+
+            if rest:
+                entries.append(("note", f"+{len(rest)} more", None))
+
+        met = sorted(
+            ((name, count) for name, count in
+             _crossings(geoprofiles.lines_intersections).items() if count),
+            key=lambda pair: (-pair[1], pair[0]),
+        )
+
+        if met:
+            style = _crossing_style()
+
+            entries.append(("heading", self._role_heading("lines"), None))
+            entries.append(
+                (
+                    "dot",
+                    f"crossings ({sum(count for _, count in met)})",
+                    _as_color(to_rgba(style.color, style.alpha)),
+                )
+            )
+
+            for name, count in met[:SECTION_LEGEND_NOTES]:
+                # An empty category is a row with no value in the field it was
+                # categorised by, and it is usually the commonest one there is.
+                entries.append(("note", f"{name or '(unnamed)'} ({count})", None))
+
+            if len(met) > SECTION_LEGEND_NOTES:
+                entries.append(
+                    ("note", f"+{len(met) - SECTION_LEGEND_NOTES} more", None)
+                )
+
+        crossings = _attitude_crossings(geoprofiles)
+
+        if crossings:
+            style = _dock_style()
+
+            entries.append(
+                ("heading", self.traces.layer or self.traces.path.stem, None)
+            )
+            entries.append(
+                (
+                    "tick",
+                    f"attitudes ({crossings})",
+                    _as_color(to_rgba(style.color, style.alpha)),
+                )
+            )
+
+        return entries
+
+    def _role_heading(self, role):
+        """
+        What to call a group whose crossings arrive merged.
+
+        `_overlay_geometry` keys its geometry by category and not by layer, so
+        two fault layers crossing one section come back as one set of
+        categories with no way to say which file each came from. Both names,
+        then, rather than one of them chosen silently.
+        """
+
+        names = [
+            source.layer or source.path.stem
+            for source in self.session.overlay.sources
+            if source.role == role
+        ]
+
+        return ", ".join(names) if names else role
 
     def update_single(self):
         """One profile, while the trace is moving."""
@@ -1594,6 +1982,10 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.stack.setCurrentWidget(self.single)
         self.single.redraw(geoprofiles)
         self.map_view.blit()
+
+        # Of the one profile on screen, not of the bundle it will become: the
+        # legend names what is being looked at, and during a drag that is this.
+        self._refresh_section_legend(geoprofiles)
 
         self._report(geoprofiles, 1, computed - start, perf_counter() - computed)
 
@@ -1637,6 +2029,8 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.map_view.blit()
 
         self.geoprofiles = geoprofiles
+
+        self._refresh_section_legend(geoprofiles)
 
         if self.panel is not None:
             self.panel.show_crossings(geoprofiles)
@@ -1708,6 +2102,87 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             f"compute {compute_s * 1000:6.1f} ms   draw {draw_s * 1000:5.1f} ms   "
             f"total {total * 1000:6.1f} ms   {1.0 / total if total else 0.0:4.1f} fps"
         )
+
+
+def _crossings(intersections):
+    """
+    How many pieces each category contributes, whatever the nesting.
+
+    Walked rather than indexed: how deep the lists go is the library's
+    business, and the leaves are what carry an id.
+
+    Counted and not collected, which is the whole reason this exists. A
+    category can be in there with nothing in it -- the profiler hands back an
+    entry per category it was given, crossed or not, and on Monte Alpi that is
+    thirty entries for the twelve units a bundle actually goes through. The
+    library's own `polygon_intersections_categories` reads the ids and not the
+    lengths, so it cannot be used as the list of what is on the panel.
+    """
+
+    counts = {}
+
+    def walk(node):
+        if node is None:
+            return
+
+        if isinstance(node, (list, tuple)):
+            for child in node:
+                walk(child)
+
+            return
+
+        name, pieces = getattr(node, "id", None), getattr(node, "arrays", None)
+
+        if name is None or pieces is None:
+            return
+
+        counts[str(name)] = counts.get(str(name), 0) + len(list(pieces))
+
+    walk(intersections)
+
+    return counts
+
+
+def _as_color(value):
+    """
+    A colour in a shape that can be compared for equality.
+
+    The legend decides whether to rebuild by comparing what it is about to
+    show with what it is showing, and a palette read from a QGIS project comes
+    back as lists: two equal colours in two lists are equal, but a list cannot
+    sit in the tuple the comparison is made on without the whole thing becoming
+    unhashable further down the line. Names pass through as they are.
+    """
+
+    return tuple(value) if isinstance(value, (list, tuple)) else value
+
+
+def _attitude_crossings(geoprofiles):
+    """How many times the traces' planes meet the profiles."""
+
+    per_profile = geoprofiles.lines_with_attitudes_intersections or []
+
+    return sum(len(traces) for profile in per_profile for traces in profile.values())
+
+
+def _crossing_style():
+    """
+    Where a mapped line meets the section, in one colour for all of them.
+
+    The library's default, said out loud rather than left to be inherited: the
+    legend beside the panels has to name the colour the panel actually draws,
+    and the two now read it from the same place.
+
+    One colour for every line layer and every category in them is the
+    library's shape and not a choice made here -- `plot_line_intersections`
+    gathers the lot into a single `plot` call. Which is why the legend claims
+    the colour once and lists the categories under it as names: a swatch each
+    would be a key to a code that does not exist.
+    """
+
+    from geogst.plots.parameters import PointPlotParams
+
+    return PointPlotParams()
 
 
 def _dock_style():

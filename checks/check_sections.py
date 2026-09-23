@@ -487,6 +487,12 @@ def main():
           is None,
           "'whole trace' has to survive the round trip")
 
+    check("whether the legend is up is a habit, not a place",
+          tool.applicable(session, dict(elsewhere, legend=False)).get("legend")
+          is False
+          and "legend" not in tool.applicable(session, dict(state, legend="yes")),
+          "carried across sources; anything but a boolean dropped")
+
     # -- a window that comes up on what was left behind --------------------
 
     kept = dict(state, profiles=3, offset=750.0, reach=180.0)
@@ -737,6 +743,181 @@ def main():
           mixed_source.dropped.get("with no line geometry") == 2
           and mixed_source.dropped.get("not a line") == 3,
           str(mixed_source.dropped))
+
+    # -- what the section says it crosses -----------------------------------
+
+    print("\n-- the legend beside the panels --")
+
+    from shapely.geometry import box
+
+    with tempfile.TemporaryDirectory() as tmp:
+        units_path, lines_path = Path(tmp) / "unita.gpkg", Path(tmp) / "tracce.gpkg"
+
+        left, bottom, right, top = session.bounds
+        cx, cy = session.center()
+
+        # Two units on the line and one off it, and the same for the lines. The
+        # claim is that the column names what this section goes through, and a
+        # backdrop every profile crosses cannot tell that apart from a backdrop
+        # listed whole. Four kilometres north is far enough to be another
+        # section and near enough to stay on the smallest DEM this runs on.
+        band, away = 400.0, 4000.0
+
+        gpd.GeoDataFrame(
+            {"unita": ["crossed one", "crossed two", "elsewhere"]},
+            geometry=[
+                box(cx - 3000.0, cy - band, cx - 1000.0, cy + band),
+                box(cx - 500.0, cy - band, cx + 2000.0, cy + band),
+                box(cx - 3000.0, cy + away - band, cx + 2000.0, cy + away + band),
+            ],
+            crs=session.crs,
+        ).to_file(units_path, layer="unita", driver="GPKG")
+
+        gpd.GeoDataFrame(
+            {"tipo": ["met", "missed"]},
+            geometry=[
+                LineString([(cx, cy - 1500.0), (cx, cy + 1500.0)]),
+                LineString([(cx, cy + away - 1500.0), (cx, cy + away + 1500.0)]),
+            ],
+            crs=session.crs,
+        ).to_file(lines_path, layer="tracce", driver="GPKG")
+
+        backdrop = Session.open(
+            dem_path=str(session.dem.path) if session.dem is not None else None,
+            vectors=[
+                dict(path=str(units_path), role="polygons", layer="unita",
+                     category_field="unita"),
+                dict(path=str(lines_path), role="lines", layer="tracce",
+                     category_field="tipo"),
+            ],
+        )
+
+        shown = tool.ProfilesWindow(backdrop, num_profiles=1)
+        shown.resize(1000, 700)
+        shown.show()
+        app.processEvents()
+
+        shown.trace = [(cx - 3500.0, cy), (cx + 2500.0, cy)]
+        shown._redraw_trace()
+        shown.update_bundle()
+
+        entries = shown._section_legend_entries(shown.geoprofiles)
+        patches = {label for kind, label, _ in entries if kind == "patch"}
+        notes = [label for kind, label, _ in entries if kind == "note"]
+        palette = shown._polygon_colors()
+
+        check("the legend names the units this section crosses",
+              patches == {"crossed one", "crossed two"},
+              f"{len(palette)} in the palette, {len(patches)} on the panel")
+
+        # The reason this cannot be taken from the library: the profiler hands
+        # back an entry per category it was given, crossed or not, so the ids
+        # alone say every unit in the window is on the section.
+        from geogst.plots.profiles import polygon_intersections_categories
+
+        check("which is fewer than the ids the intersections carry",
+              len(polygon_intersections_categories(shown.geoprofiles.polygons_intersections))
+              > len(patches),
+              "categories with no piece in them are in there too")
+
+        check("each swatch is the colour the panel drew that unit in",
+              all(color == tool._as_color(palette[label])
+                  for kind, label, color in entries if kind == "patch"))
+
+        dots = [(label, color) for kind, label, color in entries if kind == "dot"]
+
+        check("the line crossings claim one colour between them",
+              len(dots) == 1 and dots[0][0].startswith("crossings ("),
+              dots[0][0] if dots else "no entry")
+
+        check("and the categories are named under it, the ones met only",
+              any(note.startswith("met") for note in notes)
+              and not any(note.startswith("missed") for note in notes),
+              ", ".join(notes))
+
+        check("with no traces loaded there is nothing to say about attitudes",
+              not any(kind == "tick" for kind, _, _ in entries))
+
+        # -- the column itself
+
+        legend = shown.section_legend
+        body = legend.widget()
+
+        def rows():
+            return [w for w in body.findChildren(QtWidgets.QWidget)
+                    if w.parent() is body]
+
+        legend.set_entries([("heading", "one", None),
+                            ("patch", "a", (0.0, 0.0, 1.0))])
+        app.processEvents()
+        legend.set_entries([("heading", "two", None)])
+
+        # Before `processEvents`, deliberately: `deleteLater` has not run yet,
+        # so this is the check that the old rows were unparented and not merely
+        # taken out of the layout. Left to the deletion alone, the column shows
+        # two legends at once for as many frames as a drag has.
+        check("a rebuilt column has none of the old rows left in it",
+              len(rows()) == 1, f"{len(rows())} rows for 1 entry")
+
+        standing = [id(w) for w in rows()]
+        legend.set_entries([("heading", "two", None)])
+
+        check("and asking for the same legend again rebuilds nothing",
+              [id(w) for w in rows()] == standing,
+              "the comparison is what keeps this off the frame budget")
+
+        # -- put away, and caught up on the way back
+
+        shown.legend_action.setChecked(False)
+        current = legend._entries
+
+        shown.trace = [(cx - 3500.0, cy + away), (cx + 2500.0, cy + away)]
+        shown._redraw_trace()
+        shown.update_bundle()
+
+        check("put away, it is not worked out either",
+              legend.isHidden() and legend._entries == current,
+              "the walk is cheap but it is per frame")
+
+        shown.legend_action.setChecked(True)
+        moved = {label for kind, label, _ in legend._entries if kind == "patch"}
+
+        check("and it catches up on the section it comes back to",
+              not legend.isHidden() and moved == {"elsewhere"},
+              ", ".join(sorted(moved)) or "nothing")
+
+        shown.close()
+        backdrop.close()
+
+    if source is not None:
+        # Put across a trace rather than left wherever the checks above ended,
+        # so that the branch under test is the one that has something to say.
+        # Across and not along: a section parallel to a fault can run its whole
+        # length beside it without ever meeting it.
+        record = next(r for r in source.traces if r.enabled and r.lines)
+        ends = record.lines[0].coords
+
+        (x0, y0), (x1, y1) = ends[0, :2], ends[-1, :2]
+        dx, dy = x1 - x0, y1 - y0
+        across = np.array([-dy, dx]) / np.hypot(dx, dy) * 1500.0
+        middle = np.array([(x0 + x1) / 2.0, (y0 + y1) / 2.0])
+
+        # Whole trace: the reach is centred on the anchor and the middle of a
+        # line need not be inside it.
+        source.set_half_span(None)
+
+        window.trace = [tuple(middle - across), tuple(middle + across)]
+        window._redraw_trace()
+        window.update_bundle()
+
+        crossings = tool._attitude_crossings(window.geoprofiles)
+        ticks = [label for kind, label, _ in
+                 window._section_legend_entries(window.geoprofiles) if kind == "tick"]
+
+        check("the attitudes are named where the section meets any",
+              (len(ticks) == 1 and f"({crossings})" in ticks[0])
+              if crossings else not ticks,
+              f"{crossings} crossings")
 
     # -- a backdrop nobody categorised --------------------------------------
 
