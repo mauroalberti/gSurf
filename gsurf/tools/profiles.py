@@ -402,11 +402,20 @@ class TracePanel(QtWidgets.QWidget):
 
     changed = QtCore.pyqtSignal()
 
-    def __init__(self, source, parent=None):
+    def __init__(self, source, dem=None, parent=None):
         super().__init__(parent)
 
         self.source = source
+        self.dem = dem
         self._filling = False
+
+        # The records as the layer gave them, kept so the fit can be undone.
+        # A flag beside them and not an identity test against `source.traces`:
+        # this is a copy, so the two are never the same object and the test read
+        # "fitted" from the first moment -- which made the first click undo a
+        # fit that had not happened.
+        self._surveyed = list(source.traces)
+        self._showing_fits = False
 
         self.table = QtWidgets.QTableWidget(len(source.traces), len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
@@ -417,6 +426,16 @@ class TracePanel(QtWidgets.QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
 
+        self.fit_button = QtWidgets.QPushButton("Fit from the traces")
+        self.fit_button.setToolTip(
+            "Read each attitude off the trace and the topography instead of "
+            "off the layer's columns, and keep only the stretches where the "
+            "trace turns enough to fix a plane. One trace can give several "
+            "records or none."
+        )
+        self.fit_button.setEnabled(dem is not None)
+        self.fit_button.clicked.connect(self.fit_from_traces)
+
         self.save_button = QtWidgets.QPushButton("Write curation...")
         self.save_button.setToolTip(
             "Save the edits as a gstruct fragment: one assertion per record "
@@ -424,10 +443,14 @@ class TracePanel(QtWidgets.QWidget):
         )
         self.save_button.clicked.connect(self.write_curation)
 
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addWidget(self.fit_button)
+        buttons.addWidget(self.save_button)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self.table, stretch=1)
-        layout.addWidget(self.save_button)
+        layout.addLayout(buttons)
 
         self.fill()
 
@@ -437,6 +460,13 @@ class TracePanel(QtWidgets.QWidget):
         """Every record as a row, with only the editable cells editable."""
 
         self._filling = True
+
+        # Resized and not only rewritten. The count was fixed for as long as the
+        # records were whatever the layer held; a fit turns fifty-six of them
+        # into eleven, and the rows left behind pointed at records that no
+        # longer existed -- `_on_item_changed` indexes `source.traces` by row,
+        # so editing one of them was an IndexError waiting to be typed.
+        self.table.setRowCount(len(self.source.traces))
 
         editable = (
             QtCore.Qt.ItemFlag.ItemIsEnabled
@@ -589,6 +619,85 @@ class TracePanel(QtWidgets.QWidget):
 
     # -- saying it somewhere that lasts -----------------------------------
 
+    # -- attitudes off the trace instead of off the columns ----------------
+
+    @property
+    def fitted(self):
+        """Whether the table is showing fits rather than what was surveyed."""
+
+        return self._showing_fits
+
+    def fit_from_traces(self):
+        """
+        The button: fit, or go back, and say what happened.
+
+        Split from `apply_fit` the way `write_curation` is split from
+        `curation_text` -- the dialog is modal, and a check driving the panel
+        off screen would sit on it forever.
+        """
+
+        from gsurf.traces import describe_fit
+
+        if self._showing_fits:
+            self.restore_surveyed()
+            return
+
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            report = self.apply_fit()
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        QtWidgets.QMessageBox.information(
+            self,
+            "Fitted from the traces" if self._showing_fits else "Nothing to fit",
+            describe_fit(report),
+        )
+
+    def apply_fit(self):
+        """
+        Replace the layer's attitudes with what each trace determines by itself.
+
+        Reversible, and the button says which way it is pointing, because this
+        is a claim to be compared rather than an improvement to be applied: a
+        fit is what the map plus the topography imply, and a column in the layer
+        is what somebody wrote down at an outcrop. Which of the two is right is
+        the question the section is being drawn to answer, so the tool has to be
+        able to go back.
+
+        What comes back is not one record per trace. A contact that holds a
+        different plane over two stretches gives two, and one that never turns
+        enough gives none and leaves the section -- which is why the report is
+        returned to be shown rather than left to be noticed in the table.
+
+        Nothing is applied when nothing was fitted: a table emptied of every
+        record would be a worse answer than the one it replaced.
+        """
+
+        from gsurf.traces import fit_records
+
+        fitted, report = fit_records(self._surveyed, self.dem)
+
+        if not fitted:
+            return report
+
+        self.source.set_traces(fitted)
+        self._showing_fits = True
+        self.fit_button.setText("Back to the layer")
+        self.fill()
+        self.changed.emit()
+
+        return report
+
+    def restore_surveyed(self):
+        """The records as the layer gave them, edits and all."""
+
+        self.source.set_traces(self._surveyed)
+        self._showing_fits = False
+        self.fit_button.setText("Fit from the traces")
+        self.fill()
+        self.changed.emit()
+
     def write_curation(self):
         """
         The edits as a gstruct fragment: one assertion per record changed.
@@ -632,6 +741,15 @@ class TracePanel(QtWidgets.QWidget):
         written = 0
 
         for record in self.source.traces:
+            # A fit is a derivative, and this file says in its own header that
+            # every line in it is a human assertion. A fitted span written out
+            # here would be the tool quoting itself back as testimony -- and
+            # every one of them carries a span, so the whole file would become
+            # that. They are skipped, and the way to keep a fit is to accept it
+            # and set the reach by hand.
+            if record.attrs.get("fitted"):
+                continue
+
             assertions = []
 
             if not record.enabled:
@@ -1071,7 +1189,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.traces_window = None
 
         if self.traces is not None:
-            self.panel = TracePanel(self.traces)
+            self.panel = TracePanel(self.traces, dem=self.session.dem)
             self.panel.changed.connect(self.update_bundle)
 
             self.traces_window = SatelliteWindow(

@@ -778,6 +778,21 @@ class TraceAttitudeSource:
         self.half_span = metres
         self._records = None
 
+    def set_traces(self, records):
+        """
+        Put a different set of records in front of the layer's own.
+
+        For `traces.fit_records`, which reads an attitude off each trace and the
+        topography instead of off the columns, and gives back several records
+        where one trace determines several planes. The layer is not touched and
+        nothing here is written back to it: `read()` would give the survey
+        again, which is the same bargain the curation file strikes.
+        """
+
+        self.traces = list(records)
+        self.num_lines = sum(len(record.lines) for record in self.traces)
+        self._records = None
+
     def set_span(self, record, s0, s1):
         """
         Fix one record's interval, or hand it back to the default with None.

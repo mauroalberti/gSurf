@@ -644,6 +644,56 @@ def main():
         check("and the source layer was never written to",
               source.path.stat().st_mtime == mtime, source.path.name)
 
+        # -- attitudes read off the traces instead of off the columns ------
+
+        surveyed = list(source.traces)
+        edited = panel.curation_text()[0]
+
+        # `apply_fit` and not `fit_from_traces`: the button puts a modal box up
+        # afterwards, and off screen there is nobody to dismiss it.
+        report = panel.apply_fit()
+
+        check("the fit replaces the records with what the traces determine",
+              panel.fitted and all(r.attrs.get("fitted") for r in source.traces),
+              f"{len(surveyed)} records -> {len(source.traces)}")
+        check("and the table is rebuilt around them",
+              panel.table.rowCount() == len(source.traces),
+              f"{panel.table.rowCount()} rows, source column "
+              f"'{panel.table.item(0, 2).text()}'")
+        check("every fitted record carries the stretch it was read over",
+              all(r.span is not None for r in source.traces),
+              f"{min((b - a) for a, b in (r.span for r in source.traces)):.0f} to "
+              f"{max((b - a) for a, b in (r.span for r in source.traces)):.0f} m")
+
+        # The section has to actually take them, which is the whole point of
+        # going through `TraceRecord` rather than inventing a second path.
+        window.update_bundle()
+        check("and the section is drawn from them",
+              bool(source.records),
+              f"{sum(len(v) for v in source.records.values())} planes in "
+              f"{len(source.records)} categories")
+
+        fitted_text, fitted_written = panel.curation_text()
+        check("a fit is not written out as a human assertion",
+              fitted_written == 0 and "span reach" not in fitted_text,
+              "the file says every line in it is one, so a derivative cannot be")
+
+        check("the report says what left the section, rather than leaving it to be noticed",
+              report["silent"] + report["fitted"] == report["traces"],
+              tool.trace_fits.describe_fit(report).split("\n")[0]
+              if hasattr(tool, "trace_fits") else
+              f"{report['fitted']} fitted, {report['silent']} silent "
+              f"of {report['traces']}")
+
+        panel.restore_surveyed()
+
+        check("and going back gives the surveyed records, edits and all",
+              not panel.fitted and source.traces == surveyed
+              and panel.curation_text()[0] == edited,
+              f"{len(source.traces)} records, the curation unchanged")
+        check("the layer was still never written to",
+              source.path.stat().st_mtime == mtime, source.path.name)
+
     # -- the backdrop, as surveyors actually leave it ----------------------
     #
     # A mapped unit does not always arrive as a polygon. The Conglomerato di
