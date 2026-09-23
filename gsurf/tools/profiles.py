@@ -686,6 +686,69 @@ class SatelliteWindow(QtWidgets.QWidget):
         self.visibility_changed.emit(True)
 
 
+class OddSpinBox(QtWidgets.QSpinBox):
+    """
+    A spin box that will not hold an even number.
+
+    The bundle is central: the trace you drag is the middle profile and the
+    rest are laid off it in pairs, which is what `reverse` relies on and what
+    makes the line on the map the section rather than its edge. A count with
+    no middle is not a bundle this tool can draw, and `Profilers` will not
+    pick a side on anyone's behalf -- it raises.
+
+    A step of two keeps the arrows on odd numbers, but a box can be typed
+    into, and the keyboard reached past the step to the one thing underneath
+    that cannot cope. What made it worth a class rather than a guard further
+    down is where the raise lands: `_on_count_changed` is a Qt slot, and an
+    exception out of a slot under PyQt6 is not an error message but qFatal --
+    the process aborts, with the section and everything unsaved in it.
+
+    So the refusal is the box's own, and it is a refusal rather than a
+    correction made behind the typing. An even number is `Intermediate`: it
+    may stand in the line edit, because 4 is on the way to 41, but it is not
+    handed on as a value -- nothing recomputes, and the count the map was
+    drawn from still holds. What settles it is `fixup`, when the edit ends,
+    and it goes up: four profiles asked for, five given, because five is the
+    nearest bundle with a middle and the alternative is to quietly draw one
+    fewer than was typed.
+
+    Both ends of `BUNDLE_RANGE` are odd, which is what makes going up safe --
+    clamping to a bound can then never land back on an even number.
+    """
+
+    def validate(self, text, pos):
+        verdict = QtGui.QValidator.State
+        state, text, pos = super().validate(text, pos)
+
+        # Read back through the box's own conversion rather than `int`, so
+        # that what is being tested for evenness is the number the box would
+        # arrive at from this text and not a second opinion about it.
+        if state == verdict.Acceptable and self.valueFromText(text) % 2 == 0:
+            return verdict.Intermediate, text, pos
+
+        return state, text, pos
+
+    def fixup(self, text):
+        fixed = super().fixup(text)
+        value = self.valueFromText(fixed)
+
+        if value % 2 == 0:
+            return self.textFromValue(min(value + 1, self.maximum()))
+
+        return fixed
+
+    def setValue(self, value):
+        # The other door into the value, and it does not pass the validator:
+        # Qt only clamps `setValue` to the range. A caller handing over an
+        # even number would set one and emit `valueChanged` carrying it, which
+        # is the same abort reached without anybody typing -- so the rounding
+        # is repeated here rather than the promise being made only about the
+        # keyboard.
+        value = int(value)
+
+        super().setValue(value + 1 if value % 2 == 0 else value)
+
+
 class ProfilesWindow(QtWidgets.QMainWindow):
     """The map with a section trace on it; the section and the records beside it."""
 
@@ -826,13 +889,23 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         # would be a hard thing to guess at.
         bar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
 
-        self.count_spin = QtWidgets.QSpinBox()
+        self.count_spin = OddSpinBox()
         self.count_spin.setRange(*BUNDLE_RANGE)
         self.count_spin.setSingleStep(2)
         self.count_spin.setValue(self.num_profiles)
+
+        # Read back rather than assumed. `num_profiles` arrives as an argument
+        # and nothing on that path has been through the box, so an even one
+        # would be rounded up in the box and left as it came here -- and this
+        # is the attribute the section is computed from. Taken before the
+        # signal is connected, so it is this line that has to do it: a
+        # `setValue` above would have nothing to tell.
+        self.num_profiles = self.count_spin.value()
+
         self.count_spin.setToolTip(
-            "How many parallel profiles the bundle holds. Recomputed on "
-            "release, not while dragging."
+            "How many parallel profiles the bundle holds, the trace being the "
+            "middle one -- so the count is odd, and an even one typed in is "
+            "rounded up. Recomputed on release, not while dragging."
         )
         self.count_spin.valueChanged.connect(self._on_count_changed)
 

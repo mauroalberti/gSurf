@@ -42,6 +42,25 @@ def mouse(map_view, name, x, y):
     MouseEvent(name, map_view.canvas, int(px), int(py), button=1)._process()
 
 
+def typed(box, digits):
+    """The digits into a spin box, over whatever it held, as a hand puts them."""
+
+    from PyQt6 import QtCore, QtGui, QtWidgets
+
+    box.lineEdit().selectAll()
+
+    for digit in digits:
+        QtWidgets.QApplication.sendEvent(
+            box.lineEdit(),
+            QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_0 + int(digit),
+                QtCore.Qt.KeyboardModifier.NoModifier,
+                digit,
+            ),
+        )
+
+
 def main():
     from PyQt6 import QtCore, QtWidgets
 
@@ -316,6 +335,78 @@ def main():
 
     check("the start end is drawn, so the direction is on the map",
           window.start_marker.get_xydata().tolist() == [list(window.trace[0])])
+
+    # -- what the count box will hold --------------------------------------
+    #
+    # A central bundle has a middle, so `Profilers` refuses an even count
+    # rather than choose a side for you, and the step of two keeps the arrows
+    # off one. The box can still be typed into. What makes that worth a check
+    # of its own is where the refusal lands: `_on_count_changed` is a Qt slot,
+    # and an exception out of a slot under PyQt6 is qFatal -- not a traceback
+    # over a status bar but SIGABRT, between one keystroke and the next, with
+    # the section and the curation in the window at the time. Nothing here
+    # could catch that if it happened, which is the point of checking: what is
+    # under test is that it does not get that far.
+
+    count_box = window.count_spin
+    count_box.setValue(3)
+    app.processEvents()
+
+    handed_on = []
+    count_box.valueChanged.connect(handed_on.append)
+
+    typed(count_box, "4")
+    app.processEvents()
+
+    check("an even count typed in is never handed on to the section",
+          not handed_on and count_box.value() == 3
+          and len(window.geoprofiles.profilers.lines) == 3,
+          f"the box reads {count_box.text()!r}, the map is still on "
+          f"{len(window.geoprofiles.profilers.lines)}")
+
+    # Allowed to stand while it is being typed, though, rather than refused
+    # keystroke by keystroke: every count in the twenties begins with an even
+    # digit and so does 41, and a box that would not hold one for a moment
+    # would put half of its own range out of reach of the keyboard.
+    check("but it may stand in the box on the way to an odd one",
+          count_box.text() == "4", f"{count_box.text()!r} held, not swallowed")
+
+    typed(count_box, "21")
+    app.processEvents()
+
+    check("and a count typed through an even digit arrives",
+          count_box.value() == 21 and window.num_profiles == 21
+          and len(window.geoprofiles.profilers.lines) == 21,
+          f"{len(window.geoprofiles.profilers.lines)} profiles")
+
+    # The end of the edit is what settles it, and it goes up. Dropping back to
+    # whatever the box held before would be a keystroke that looked as though
+    # it had never landed; one fewer profile than was asked for would be a box
+    # that agrees with the map about a number neither was given.
+    typed(count_box, "4")
+    count_box.interpretText()       # Enter, or the focus going elsewhere
+    app.processEvents()
+
+    check("and an even one left standing is rounded up, not discarded",
+          count_box.value() == 5 and window.num_profiles == 5
+          and len(window.geoprofiles.profilers.lines) == 5,
+          f"4 typed, {count_box.value()} drawn")
+
+    count_box.valueChanged.disconnect(handed_on.append)
+
+    # The keyboard is one door into the value and `setValue` is the other,
+    # and that one does not pass the validator -- Qt only clamps it to the
+    # range. It is the door `num_profiles` comes through as an argument, so
+    # the count is read back off the box afterwards rather than the box being
+    # set from it and the two left free to disagree about the number the
+    # section was computed from.
+    fresh = tool.OddSpinBox()
+    fresh.setRange(*tool.BUNDLE_RANGE)
+    fresh.setValue(4)
+
+    check("an even count set on the box rather than typed is rounded as well",
+          fresh.value() == 5 and window.count_spin.value() == window.num_profiles,
+          f"setValue(4) -> {fresh.value()}")
 
     # -- what is carried from one run to the next --------------------------
 
