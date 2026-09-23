@@ -1712,10 +1712,31 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
 def _dock_style():
     """
-    Fault attitudes at a size a dock can show.
+    Fault attitudes at a size a dock can show, in a colour the section shows through.
 
     The library's defaults were chosen for a figure the width of a page: a
     linewidth of 10 draws a dip tick as a band rather than a line.
+
+    Black at 0.9 had the tick as the most solid thing in the panel, which is
+    the wrong way round. A tick is a measurement laid *over* a section, and the
+    section -- the topography, and the units the profile is crossing in the
+    colours the project gives them -- is what it is being read against; an
+    opaque black one covers the very thing that makes it mean something. Yellow
+    at half opacity puts that back underneath, and the extra half point of
+    width is what keeps the tick from thinning away as the opacity comes off.
+
+    The marker went up with it, from 4 to 6, for the same reason and one more.
+    The library shares one colour and one alpha between the marker and the
+    segment on purpose, the two being one datum, so the dot lost half its
+    weight along with the tick -- and the dot is the part that says *where*,
+    the tick only saying at what angle. Size is the only way to give that back
+    here; a black edge, which is what `fold_axes` puts round its own yellow, is
+    not on offer for the same shared-style reason.
+
+    What remains is that yellow is the faintest hue there is against white, so
+    off the profile line a tick reads as a pale mark rather than a firm one;
+    and that a unit whose own colour is near yellow will take a tick crossing
+    it and give very little back.
 
     `segment_scale_factor` is a **divisor** -- `create_segment_for_plot` takes
     `profile_length / factor` -- so the number goes up to make the tick
@@ -1728,10 +1749,10 @@ def _dock_style():
     from geogst.plots.parameters import LineAttitudePlotParams
 
     return LineAttitudePlotParams(
-        color="black",
-        width=1.5,
-        alpha=0.9,
-        markersize=4,
+        color="yellow",
+        width=2.0,
+        alpha=0.5,
+        markersize=6,
         segment_scale_factor=20.0,
     )
 
