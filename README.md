@@ -8,17 +8,20 @@ rather than something you guess and check.
 python -m gsurf
 ```
 
-Two tools so far. **Plane on a DEM** lays an unbounded geological plane on the
+Three tools so far. **Plane on a DEM** lays an unbounded geological plane on the
 topography and shows where it crops out while you turn the dial. **Fold axes**
 drags a circular window across a map of bedding attitudes and shows, on a
 stereonet that follows it, the girdle the poles spread on and the axis they
-turn about.
+turn about. **Sections** drags a section line over the map and redraws the
+geology under it as it moves, which turns the section from a result into an
+instrument: you find where the fault is by watching where it goes.
 
 They are picked from one launcher, and the tool comes before the question: pick
 one and it asks for the sources *it* takes, with what it cannot run without
-marked as required — the plane needs a DEM, the fold axes need attitudes, and
-neither is asked for the other's. What you answer is put back the next time,
-and the session behind it is reopened only when the answer has changed.
+marked as required — the plane needs a DEM, the fold axes need attitudes, the
+section needs a DEM and will take traces, and none is asked for another's. What
+you answer is put back the next time, and the session behind it is reopened only
+when the answer has changed.
 
 ![gSurf, real-time plane/DEM intersection](ims/realtime_intersection.png)
 
@@ -44,6 +47,10 @@ rather than copying it:
 - `gsurf/sources.py` — what to open, asked once a tool has been picked. A tool
   declares its slots and which are required; layers are listed and fields read
   off the metadata, so the dialog filters without loading.
+- `gsurf/qgis_project.py`, `gsurf/recent.py` — the other two ways of filling a
+  slot: a QGIS project read for its layers and the colours they are drawn in
+  there, and the list of what has been opened before, kept between runs so a
+  morning does not start by naming the same DEM again.
 - `gsurf/mapview.py` — the map: hillshade if there is a DEM, vector backdrop,
   navigation, the blitting surface a tool draws its own artists on, and a
   legend whose entries are switches rather than captions — click one and what
@@ -54,33 +61,40 @@ rather than copying it:
   attitudes read strictly, the orientation tensor read as a fold, and an
   equal-area net that redraws while you move. The net is a plain widget and
   owns no window, which is what lets the fold-axis tool float it over the map.
+- `gsurf/traces.py`, `gsurf/rotations.py` — the two calculations that read a
+  field rather than a point: the attitude a mapped trace and the topography
+  under it determine by themselves, and how much a fold axis turns between one
+  window and the next, and about what axis. Neither imports Qt, so both can be
+  driven from a script and checked against answers known by construction.
 
 The pre-2026 application lived in a `gSurf/` package beside this one and was
 removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
 `pygmt` for the main window, PyQt5 and Python-2 implicit relative imports for
 its intersection GUI, a vendored `apsg` that was never in the tree for its
-stereoplot — and nothing outside it imported it. Two things in it are worth
-porting and are a `git show a972c58:gSurf/...` away: the topographic profiles
-of `gSurf.py`, with attitudes projected onto them, and the fault-and-slickenline
+stereoplot — and nothing outside it imported it. One thing in it is still worth
+porting and is a `git show a972c58:gSurf/...` away: the fault-and-slickenline
 stereoplot of `stereoplot/`, which reads a rake and a movement sense that
-`gsurf/stereonet.py` does not.
+`gsurf/stereonet.py` does not. The topographic profiles of `gSurf.py`, with
+attitudes projected onto them, were the other, and are the sections tool now —
+rebuilt around the same geogst profiler rather than ported.
 
 Alpha stage. The repository dates from 2012-04-08, was worked on through 2019,
 lay dormant for three years, was restarted 2022-11-28, and was rebuilt around
-the misah kernel in 2026. Development is on `master` here on GitLab; the
-GitHub repository is archived, and the old `profiles` branch survives only
-there.
+the misah kernel in 2026. Development is on `master` here on GitLab, with the
+GitHub repository kept as a mirror and pushed by hand.
 
 ### Checks
 
 ```bash
-python checks/run.py            # off-screen, about ten seconds
+python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-A hundred and fifty-one assertions over four scripts, each also runnable on its
-own. They drive real windows through synthesized mouse events, so Qt is put in
-its off-screen mode unless you ask otherwise.
+Four hundred and thirty-three assertions over nine scripts, each also runnable
+on its own. They drive real windows through synthesized mouse events, so Qt is
+put in its off-screen mode unless you ask otherwise. `check_sections.py` is 26
+of those 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling
+bundles off it.
 
 They are checks and not unit tests, in that most of them assert against
 something known from outside the code: a fold axis recovered from a synthetic
@@ -126,6 +140,11 @@ geogst is where the orientation tensor and Woodcock's parameters come from, and
 mplstereonet draws the net — `import mplstereonet` is also what registers the
 equal-area projection with matplotlib, so it is not an optional extra there.
 
+The sections tool needs geogst too, for the profiler that samples the topography
+and intersects it with the layers, but not mplstereonet. Fitting attitudes off
+the traces additionally calls `best_fit_planes` from misah, which is already
+required above.
+
 ### Usage — the launcher
 
 ```bash
@@ -151,15 +170,18 @@ known, it has to cover every source any tool might want: a longer dialog that
 says less about the one you picked, and tall enough to push its own buttons off
 a short screen. It scrolls now, and can be dragged to any size.
 
-A tool can still be started on its own, which is what a repeated run wants:
+Two of the three can still be started on their own, which is what a repeated run
+wants:
 
 ```bash
 python -m gsurf.tools.intersection
 python -m gsurf.tools.fold_axes
 ```
 
-Bare, each asks for what it needs in the same dialog. With arguments, each
-takes them as below and skips the asking.
+Bare, each asks for what it needs in the same dialog. With arguments, each takes
+them as below and skips the asking. The sections tool has no command line of its
+own and is opened from the launcher: it takes five slots, and naming them as
+flags would be longer than answering the dialog once.
 
 ### Usage — plane on a DEM
 
@@ -322,6 +344,101 @@ For the same reason the tensor is computed wherever it is defined — from two
 poles up — and not from `--min-points`. Stopping at today's minimum would make
 lowering it later impossible without recomputing, silently.
 
+### Usage — sections
+
+Picked from the launcher, which asks for a DEM and offers four more slots:
+traces carrying an attitude, polygons and lines as backdrop, and located
+attitudes. Only the DEM is required — a section of bare topography is a
+legitimate thing to want.
+
+Drag an end of the line on the map and the section redraws under it. The section
+is the oldest thing a structural geologist draws and the slowest to iterate on,
+because moving it by two hundred metres has always meant redoing it; here it
+moves with the mouse, and that is the whole argument for the tool.
+
+**One profile while it moves, the bundle when it stops.** A single profile
+recomputes in about 40 ms and a bundle of thirteen in a quarter of a second —
+the difference between a line you drag and a line that lurches after you. So the
+drag redraws one and the parallel bundle is recomputed on release. The count is
+odd, from 1 to 41, because a central bundle has a middle and the profiler raises
+without one; the spin box refuses an even number itself rather than letting it
+reach code that would abort the application from inside a Qt slot.
+
+**The trace drawn, never the trace sampled.** An intersection costs profile
+segments times trace vertices, and a section line stored densified to DEM step —
+1276 vertices over 6.4 km, which is how they come out of QGIS — costs 1275 times
+what the two-point trace costs and finds exactly the same crossings. What goes
+to the profiler is the two ends and nothing between them; the densification is
+for sampling the topography, and the sampler does its own.
+
+**Three windows, not one window with docks**: the map, the section and the trace
+records are top-level windows in their own right, so the section can be given a
+screen and the size a section wants rather than the strip a dock leaves it. They
+are parented to the map, which is what has Qt destroy them with the tool, and
+`Windows` on the map's menu bar brings back one that was closed. Beside the
+panels stands a legend naming the units the bundle actually goes through, in the
+colours it draws them in — the same key as the map's, which is the point of
+handing the project's palette to the profiler — then the line categories it
+meets, then the attitudes.
+
+**What is remembered divides into habits and places.** A section is arrived at
+rather than specified: you drag until it crosses the thing you are after, and
+closing the window used to throw that away and come up west-to-east through the
+middle again. So the trace, the framing, the bundle, the reach and whether the
+legend is up are written on the way out. But how many profiles at what spacing
+is a way of working and carries to whatever opens next, while a trace is metres
+in a projection and means somewhere else under another one — so places come back
+only over the source they were written on.
+
+**How far a measurement reaches is a judgement, and it is made here.** A plane
+fitted to a trace owns that trace; a compass reading taken at one outcrop owns a
+point, and how much of the fault it speaks for — fifty metres where it is a
+local break, the whole kilometre where the surface has been walked — is a
+judgement about that fault and not a property of the layer. The `reach` column
+in the trace panel is that control, and `crosses` beside it is why the panel
+sits next to the section rather than in a dialog: fifty-six planes on a
+nine-kilometre line produce three crossings, and which three changes as the line
+moves.
+
+**Nothing is written back to the layer.** A source file is a record of what was
+surveyed and a section is an argument about it, so the argument is saved as its
+own assertion — `Write curation...` writes a gstruct fragment, one entry per
+record changed, over a layer left exactly as it was found. Re-reading it
+tomorrow gives the survey back, not yesterday's opinion of it.
+
+**`Fit from the traces` reads the attitudes off the map instead of the
+columns.** A contact crossing relief is a plane already: where the line goes in
+plan and where the ground is along it are three dimensions, and `gsurf/traces.py`
+fits an attitude to a window of that curve, sweeping the window length per trace
+to find the length over which the trace holds one orientation. It is reversible,
+and the button says which way it is pointing, because this is a claim to be
+compared and not an improvement to be applied — a column is what somebody wrote
+down at an outcrop, a fit is what the map plus the DEM imply, and which is right
+is often the question the section is being drawn to answer.
+
+What comes back is not one record per trace. A contact that holds a different
+plane over two stretches gives two, and one that never turns enough gives none
+and leaves the section, so the fit reports rather than leaving it to be noticed:
+on 56 mapped faults at Monte Alpi it is 11 stretches on 10 of them, 3 per cent
+of the walked length readable, in 0.86 s. Against a synthetic plane at 170/40
+cut into a corrugated DEM the fit comes back within 0.1°; against the surveyed
+columns on that real layer the per-trace median is 4.3° where chance would be
+51 — but ten of those eleven records were themselves derived from trace and DEM
+by an earlier script, so that second number is a reproduction and not an
+independent test.
+
+**Two things this does not do yet.** The traces slot wants both angle fields
+before it will fill, so a bare contact line cannot be opened at all — a CARG
+`limiti_geologici` layer offers only `OBJECTID` where the dialog asks for dip.
+The fit is therefore available only on layers that already carry attitudes,
+which are the ones that need it least. And the floor that decides whether a
+window turns enough to determine a plane is a declared choice, not a measured
+one: the readable share slides smoothly at every window length, with no knee to
+put it at, and the traces themselves are self-affine — sagitta against baseline
+goes as the 0.9 power on these lines, where independent digitising jitter would
+give 0 — so there is no pen width to derive it from, and the code refuses to
+invent one.
+
 ### Things worth knowing
 
 **Dip direction is true azimuth**, as a compass reads it once declination is
@@ -408,6 +525,12 @@ The search stayed a plain scan for the same reason. A KD-tree does the 16289
 windows in 0.046 s against 0.89 — nineteen times faster, and 13% of a field —
 which does not buy a dependency. It would if the tensor stopped dominating,
 which is the opposite of what happened.
+
+Sections are geogst's profiler, and it is fast enough to drag one profile and
+not thirteen: about 40 ms for a single and a quarter of a second for a bundle of
+thirteen, which is what the split between the drag and the release is paying
+for. Fitting attitudes off the traces is not a per-frame cost at all — 56 traces
+swept at five window lengths take 0.86 s, once, on a button.
 
 ### Related
 
