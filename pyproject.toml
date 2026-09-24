@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gsurf"
+dynamic = ["version"]                 # la versione arriva dal tag git
+description = "Structural geology you steer by hand: a plane on a DEM, fold axes under a window, a section under a dragged trace, all recomputed on every frame"
+readme = "README.md"
+license = "MIT"                       # forma SPDX (setuptools >= 77)
+# L'anno d'inizio è quello del primo commit, 8 aprile 2012: il repo è molto più
+# vecchio del pacchetto che lo installa.
+license-files = ["LICENSE"]
+# Dichiarato per quello che si sa, e non di più: la sintassi di ogni modulo di
+# gsurf/ passa `ast.parse` con feature_version 3.9, la wheel di misah in uso è
+# cp39-abi3 e geogst dichiara lo stesso minimo. È una cosa diversa dai minimi di
+# geogst, che sono provati esercitando le API una per una su quelle versioni:
+# qui nessun 3.9 è mai stato fatto girare, e la riga non pretende il contrario.
+requires-python = ">=3.9"
+authors = [
+    { name = "Mauro Alberti", email = "alberti.m65@gmail.com" },
+]
+keywords = ["structural geology", "GIS", "DEM", "geospatial", "cross section"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Utilities",
+]
+
+# Le dipendenze seguono i livelli che il README già descrive, invece di
+# appiattirli: gli import di gsurf sono pigri per scelta -- senza geopandas il
+# piano si apre lo stesso, disegna il DEM e ricalcola l'intersezione mentre
+# trascini, e quello che manca è il fondale sotto. Appiattire tutto qui
+# renderebbe obbligatorio all'installazione ciò che il codice ha lavorato per
+# rendere facoltativo all'avvio.
+#
+# Qui sta quindi solo ciò che è importato a livello di modulo da qualcosa che
+# parte sempre, più pyproj: `session.py` lo chiama a ogni apertura, e una
+# sessione la vogliono tutti e tre gli strumenti.
+#
+# Nessun minimo di versione, tranne dove c'è una ragione dichiarata sotto.
+# geogst li pone perché li ha provati; questo progetto non li ha provati, e un
+# `>=` inventato è peggio della sua assenza: esclude senza sapere.
+dependencies = [
+    "matplotlib",
+    # misah è importato a livello di modulo da tools/intersection.py, quindi è
+    # base e non un extra. Su PyPI c'è, in alpha, e si muove davvero: qui è
+    # installata la 0.2.0a1 da una wheel locale mentre l'indice è già alla
+    # 0.2.0a2. Il `>=` nomina quella su cui si è girato senza inchiodarla.
+    "misah>=0.2.0a1",
+    "numpy",
+    "PyQt6",
+    "pyproj",
+    "rasterio",
+]
+
+[project.optional-dependencies]
+# I fondali vettoriali e l'export. pandas e pyogrio arrivano già con geopandas,
+# ma sono importati per nome da attitudes.py, session.py e vectors.py: una
+# dipendenza soddisfatta per caso da un'altra non è dichiarata.
+vectors = ["geopandas", "pandas", "pyogrio", "shapely"]
+# geogst è dove stanno il tensore di orientazione e i parametri di Woodcock, e
+# mplstereonet disegna la rete -- `import mplstereonet` è anche ciò che registra
+# la proiezione equiareale presso matplotlib, quindi dentro questo extra non è
+# a sua volta facoltativo.
+#
+# geogst senza vincolo, e la ragione non è pigrizia. Su PyPI c'è, fino alla
+# 2.3.1; qui gira invece dall'albero di lavoro in editable, sul ramo `dev`, che
+# è il modo in cui è stato scelto di lavorarci. Un requisito già soddisfatto pip
+# non lo ri-risolve, quindi questa riga l'editable non lo tocca: a sostituirlo
+# con un rilascio sarebbe un `-U`, che è una cosa che si chiede, non una che
+# capita. E un `>=` qui sarebbe un numero inventato due volte, perché quale
+# rilascio basti a gsurf non è mai stato provato.
+folds = ["gsurf[vectors]", "geogst", "mplstereonet"]
+# Le sezioni vogliono geogst per il profilatore, ma non la rete.
+sections = ["gsurf[vectors]", "geogst"]
+all = ["gsurf[folds,sections]"]
+
+[project.scripts]
+# Un comando solo, il lanciatore, perché è la porta: da lì i tre strumenti si
+# scelgono già, e tre comandi in più sarebbero tre modi di dire la stessa cosa.
+# I due che hanno un `main` proprio -- intersection e fold_axes; profiles no --
+# restano avviabili come `python -m gsurf.tools.<nome>`, che è quello che il
+# README documenta e che una prova ripetuta vuole.
+gsurf = "gsurf.__main__:main"
+
+[project.urls]
+"Source Code" = "https://gitlab.com/mauroalberti/gSurf"
+"Bug Tracker" = "https://gitlab.com/mauroalberti/gSurf/-/issues"
+"Documentation" = "https://gitlab.com/mauroalberti/gSurf/-/blob/master/README.md"
+
+[tool.setuptools.packages.find]
+# `gsurf` e `gsurf.tools`, e nient'altro: `checks/` è un pacchetto vero, con il
+# suo `__init__.py`, e senza questo filtro finirebbe installato accanto agli
+# altri con un nome di primo livello che non è nessuno di questi due.
+include = ["gsurf*"]
+namespaces = false
+
+# Niente package-data: `ims/` sta nel README e non lo apre nessuno a runtime.
+
+[tool.setuptools_scm]

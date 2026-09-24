@@ -5,7 +5,7 @@ not behind a "Calculate" button, so a parameter is something you sweep through
 rather than something you guess and check.
 
 ```bash
-python -m gsurf
+gsurf
 ```
 
 Three tools so far. **Plane on a DEM** lays an unbounded geological plane on the
@@ -112,49 +112,61 @@ same clicks, the same window offsets, the same point counts, digit for digit.
 `checks/synthetic.py` is not a check but the bench the frame costs quoted below
 were measured on, and builds the synthetic DEM the others use.
 
-### Requirements
-
-Python 3.9+, and:
+### Installing
 
 ```bash
-pip install misah numpy rasterio PyQt6 matplotlib pyproj
+pip install -e .
 ```
 
-`misah` is on PyPI, at an alpha version — expect it to move. Developed and run
-on Python 3.13 against a local misah 0.2.0a0, numpy 2.5.2, rasterio 1.5.1,
-PyQt6 6.11.0, matplotlib 3.10.9 and pyproj 3.7.2; the syntax itself stays
-within 3.9.
+Python 3.9+. That is the launcher and **Plane on a DEM**: misah, numpy,
+rasterio, PyQt6, matplotlib and pyproj. It also puts a `gsurf` command on the
+path, which is the difference between a program and a directory you have to be
+standing in.
 
-Vector backdrops and shapefile export additionally need:
+`misah` is on PyPI, at an alpha version — expect it to move, and it has: 0.2.0a2
+is out while this was run against 0.2.0a1. Developed and run on Python 3.13
+against numpy 2.5.2, rasterio 1.5.1, PyQt6 6.11.0, matplotlib 3.10.9 and pyproj
+3.7.2. The syntax itself stays within 3.9, which is checked and is all the floor
+claims: no 3.9 has been run.
+
+Everything else is an extra, because the imports are where they are used rather
+than at the top of the file. Without geopandas the plane still starts, draws the
+DEM and recomputes the intersection as you drag; what is missing is the layers
+underneath, and `Export trace` raising on the way out. Declaring the lot here
+would make compulsory at install time what the code went to some trouble to keep
+optional at start-up.
 
 ```bash
-pip install geopandas shapely
-```
-
-They are imported only where they are actually used, so without them the tool
-still starts, draws the DEM and recomputes the intersection as you drag; you
-get no layers underneath, and `Export trace` raises on the way out.
-
-The fold axes need those two as well, and additionally:
-
-```bash
-pip install geogst mplstereonet
+pip install -e ".[vectors]"    # backdrops and export: geopandas, shapely
+pip install -e ".[sections]"   # and geogst, for the profiler under the trace
+pip install -e ".[folds]"      # and mplstereonet, for the net
+pip install -e ".[all]"        # all of it
 ```
 
 geogst is where the orientation tensor and Woodcock's parameters come from, and
 mplstereonet draws the net — `import mplstereonet` is also what registers the
-equal-area projection with matplotlib, so it is not an optional extra there.
+equal-area projection with matplotlib, so inside `folds` it is not itself
+optional. The sections tool wants geogst for the profiler that samples the
+topography and intersects it with the layers, but not the net. Fitting attitudes
+off the traces calls `best_fit_planes` from misah, which the base install
+already has.
 
-The sections tool needs geogst too, for the profiler that samples the topography
-and intersects it with the layers, but not mplstereonet. Fitting attitudes off
-the traces additionally calls `best_fit_planes` from misah, which is already
-required above.
+Neither geogst nor misah is pinned, and geogst is the one to know about: it is
+on PyPI at 2.3.1, while what gSurf is developed against is its working tree, in
+editable mode, on `dev`. pip does not re-resolve a requirement that is already
+satisfied, so nothing above disturbs that; it is `pip install -U` that would
+replace it with a release, and that is a thing you ask for rather than one that
+happens to you. Where both are already in place, `pip install -e . --no-deps`
+installs gSurf and touches nothing else.
 
 ### Usage — the launcher
 
 ```bash
-python -m gsurf
+gsurf
 ```
+
+or `python -m gsurf` from inside the checkout, which is what there was before
+there was anything to install, and which still works.
 
 It opens on the tools and asks nothing yet. Pick one and it asks for what that
 tool takes — the plane for a DEM and three optional backdrop slots, the fold
@@ -644,3 +656,9 @@ from the working tree.
   statistics and plots
 - [qgSurf](https://gitlab.com/mauroalberti/qgSurf) — the QGIS plug-in, whose
   plane/DEM intersection this replaces with an interactive one
+
+### License
+
+MIT, and the copyright runs from 2012 because that is when the first commit
+here is dated — the repository is a good deal older than the package that
+installs it. See [LICENSE](LICENSE).
