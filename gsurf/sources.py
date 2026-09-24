@@ -52,6 +52,11 @@ FILLED_COLOUR = "#1a7f37"
 MISSING_COLOUR = "#a03000"
 
 
+# Not None, because None is itself an answer here: it is what a box left
+# deliberately empty writes down, and the two have to stay apart.
+_UNASKED = object()
+
+
 def _first_match(candidates, fields):
     """The first candidate name present among the fields, case-insensitively."""
 
@@ -680,6 +685,14 @@ class AnglePicker(LayerPicker):
 
     DIP_FIELDS = ("inclinazione", "dip", "dipangle", "dip_angle", "angolo", "incl")
 
+    # What an unanswered angle box says, and whether it may be left that way.
+    # A point layer with no angles is a station with no measurement, which is
+    # nothing at all; a line layer with no angles is a mapped contact, which is
+    # a great deal -- the plane is in the geometry and the topography, waiting
+    # to be fitted off them. So the two subclasses answer this differently.
+    NO_FIELD = "(choose)"
+    ANGLES_REQUIRED = True
+
     def _add_layer_rows(self, grid, row):
         self.dip_dir_combo = QtWidgets.QComboBox()
         self.dip_combo = QtWidgets.QComboBox()
@@ -715,12 +728,23 @@ class AnglePicker(LayerPicker):
         ):
             with QtCore.QSignalBlocker(combo):
                 combo.clear()
-                combo.addItem("(choose)")
+                combo.addItem(self.NO_FIELD)
                 combo.addItems(fields)
 
-                asked = wanted.get(key)
-                chosen = asked if asked in fields else _first_match(guesses, fields)
-                combo.setCurrentText(chosen or "(choose)")
+                # A key that is present and null is an answer -- somebody
+                # looked at this box and left it alone, which on a trace layer
+                # is the whole point. A key that is absent was never asked, and
+                # only then is there anything to guess.
+                asked = wanted.get(key, _UNASKED)
+
+                if asked is _UNASKED:
+                    chosen = _first_match(guesses, fields)
+                elif asked is None:
+                    chosen = None
+                else:
+                    chosen = asked if asked in fields else _first_match(guesses, fields)
+
+                combo.setCurrentText(chosen or self.NO_FIELD)
 
             combo.setEnabled(bool(fields))
 
@@ -738,15 +762,31 @@ class AnglePicker(LayerPicker):
 
     @property
     def is_filled(self):
-        """A layer is not enough: both angles have to have been pointed at."""
+        """
+        A layer is not enough where the angles are what is being read.
+
+        Half an answer is never an answer: one angle named and the other not is
+        an unfinished choice whatever the layer is. Both left alone is a choice
+        in its own right, but only where the attitudes can come from somewhere
+        else -- which is what `ANGLES_REQUIRED` says.
+        """
 
         if self._path is None:
             return False
 
-        return all(
-            combo.currentText() not in ("", "(choose)")
+        named = [
+            combo.currentText() not in ("", self.NO_FIELD)
             for combo in (self.dip_dir_combo, self.dip_combo)
-        )
+        ]
+
+        return all(named) or (not self.ANGLES_REQUIRED and not any(named))
+
+    def _named(self, combo):
+        """The field a box points at, or None where it points at none."""
+
+        text = combo.currentText()
+
+        return None if text in ("", self.NO_FIELD) else text
 
     def restore(self, spec):
         """Puts back a choice made earlier, convention included."""
@@ -774,12 +814,15 @@ class AnglePicker(LayerPicker):
         if not self.is_filled:
             return None
 
+        # Both keys always written, null included: a null is what tells
+        # `restore` that this box was looked at and left alone, rather than
+        # never asked and free to be guessed at again.
         spec = dict(
             path=str(self._path),
             role=self.role,
             layer=self.layer,
-            dip_dir_field=self.dip_dir_combo.currentText(),
-            dip_field=self.dip_combo.currentText(),
+            dip_dir_field=self._named(self.dip_dir_combo),
+            dip_field=self._named(self.dip_combo),
             is_rhr_strike=CONVENTIONS[self.convention_combo.currentIndex()][1],
         )
 
@@ -800,21 +843,33 @@ class AttitudePicker(AnglePicker):
 
 class TracePicker(AnglePicker):
     """
-    The line layer a profile is cut against: outcrop traces carrying a plane.
+    The line layer a profile is cut against: outcrop traces, plane or no plane.
 
     One field more than the attitudes want, and it is the one that says which
     lines belong together. A fault mapped across a sheet arrives as a dozen
     fragments, and what a section labels is the fault, not the fragment; with
     no field chosen the whole layer is one system, which is the right answer
     for a file holding one.
+
+    **And one field fewer, which is the two angles.** A mapped contact already
+    carries a plane -- where the line runs in plan and where the ground is
+    along it are three dimensions, and `traces.py` reads an attitude off them.
+    So the angle boxes may be left empty here, and a CARG `limiti_geologici`
+    sheet, which offers `OBJECTID` where the dialog asks for dip, opens. The
+    fit is the only way such a layer ever says anything in a section, and
+    demanding the columns first shut it out of the tool that could give it
+    them.
     """
 
     # The same names a backdrop layer is categorised by: it is the same
     # question asked of the same attribute tables.
     CATEGORY_FIELDS = VectorPicker.PREFERRED_FIELDS + ("source", "sorgente", "fault", "faglia")
 
+    NO_FIELD = "(none: fit off the trace)"
+    ANGLES_REQUIRED = False
+
     def __init__(self, parent=None):
-        super().__init__("lines", title="Traces with attitudes", parent=parent)
+        super().__init__("lines", title="Traces", parent=parent)
 
     def _add_layer_rows(self, grid, row):
         self.category_combo = QtWidgets.QComboBox()

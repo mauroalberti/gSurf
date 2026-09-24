@@ -90,16 +90,19 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Four hundred and thirty-three assertions over nine scripts, each also runnable
+Four hundred and fifty-five assertions over ten scripts, each also runnable
 on its own. They drive real windows through synthesized mouse events, so Qt is
 put in its off-screen mode unless you ask otherwise. `check_sections.py` is 26
-of those 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling
+of those 47 seconds on its own, most of it opening a 234 Mpx DEM and sampling
 bundles off it.
 
 They are checks and not unit tests, in that most of them assert against
 something known from outside the code: a fold axis recovered from a synthetic
 fold that has one by construction, a right-hand-rule strike agreeing with a dip
-direction, a regated field equalling a recomputed one. `check_interaction.py`
+direction, a regated field equalling a recomputed one. `check_bare_traces.py`
+builds a DEM that *is* a plane of stated attitude and lays a V on it in plan,
+so the attitude that comes back off the trace is the one the ground was made
+with: 130.7/54.7 against 130/55. `check_interaction.py`
 in particular was written to run against either side of a refactor, which is
 how the map was lifted out of the intersection tool without changing it — the
 same clicks, the same window offsets, the same point counts, digit for digit.
@@ -347,9 +350,17 @@ lowering it later impossible without recomputing, silently.
 ### Usage — sections
 
 Picked from the launcher, which asks for a DEM and offers four more slots:
-traces carrying an attitude, polygons and lines as backdrop, and located
-attitudes. Only the DEM is required — a section of bare topography is a
-legitimate thing to want.
+traces, polygons and lines as backdrop, and located attitudes. Only the DEM is
+required — a section of bare topography is a legitimate thing to want.
+
+The traces slot takes a layer whose attitudes are in its columns and equally
+one with no attitudes at all, its two angle boxes left on `(none: fit off the
+trace)`. A mapped contact carries a plane already, and `Fit from the traces`
+below is what reads it out; a CARG `limiti_geologici` sheet, which offers
+`OBJECTID` where the dialog asks for dip, opens on that footing. Until
+something is read the layer draws nothing in the section — the tick a section
+carries is an apparent dip, and there is none yet — and the panel says `not
+read` in every attitude cell rather than leaving them blank.
 
 Drag an end of the line on the map and the section redraws under it. The section
 is the oldest thing a structural geologist draws and the slowest to iterate on,
@@ -427,17 +438,41 @@ columns on that real layer the per-trace median is 4.3° where chance would be
 by an earlier script, so that second number is a reproduction and not an
 independent test.
 
-**Two things this does not do yet.** The traces slot wants both angle fields
-before it will fill, so a bare contact line cannot be opened at all — a CARG
-`limiti_geologici` layer offers only `OBJECTID` where the dialog asks for dip.
-The fit is therefore available only on layers that already carry attitudes,
-which are the ones that need it least. And the floor that decides whether a
-window turns enough to determine a plane is a declared choice, not a measured
-one: the readable share slides smoothly at every window length, with no knee to
-put it at, and the traces themselves are self-affine — sagitta against baseline
-goes as the 0.9 power on these lines, where independent digitising jitter would
-give 0 — so there is no pen width to derive it from, and the code refuses to
-invent one.
+**A whole mapped sheet is where the difference shows.** The CARG
+`limiti_geologici` of the southern Apennines is 24717 contacts with no attitude
+on any of them, 22531 of them inside the DEM; fitted, they give **12254
+stretches on 7116 traces**, and **31 per cent of the walked length is readable**
+against the 3 per cent of the curated faults. That ratio is not a better day at
+the same job. A fault mapped at this scale is steep, and the trace of a
+subvertical plane *is* its strike, so it fails the first stage for a reason
+rather than by bad luck; a stratigraphic contact crosses relief and draws the V
+that carries a dip. The layer nobody could open was the one with most to say.
+
+**A fit that is stopped is not applied.** On a curated fault layer the fit is a
+fifth of a second and there is nothing to stop; on a whole mapped sheet it runs
+for minutes, so above two hundred traces it gets a progress dialog with a Stop
+on it. Stopping throws the partial answer away rather than keeping it, and says
+so. What had been read by then is the first N traces in file order, which is a
+corner of a sheet and not a sample of one — and unlike a refusal it would not
+announce itself.
+
+**But a whole sheet fitted is more than the section can drag.** The fit itself
+is 130 s for those 22531 contacts and the table takes the 12254 records it
+gives back in half a second; rebuilding the bundle over them is **17 s**, and
+that is the cost of every release of the mouse afterwards, against the quarter
+of a second the tool is built around. So fitting a sheet entire is a thing to
+do once and look at, and the workflow the section wants is a layer cut down
+first — by `Tipo`, or to the ground a section actually crosses. That cut does
+not exist in the dialog yet.
+
+**What this still does not do.** The floor that decides whether a window turns
+enough to determine a plane is a declared choice, not a measured one: the
+readable share slides smoothly at every window length, with no knee to put it
+at, and the traces themselves are self-affine — sagitta against baseline goes
+as the 0.9 power on these lines, where independent digitising jitter would give
+0 — so there is no pen width to derive it from, and the code refuses to invent
+one. It matters more now than it did: the share of a bare sheet that comes back
+readable is a number that threshold sets.
 
 ### Things worth knowing
 
@@ -531,6 +566,20 @@ not thirteen: about 40 ms for a single and a quarter of a second for a bundle of
 thirteen, which is what the split between the drag and the release is paying
 for. Fitting attitudes off the traces is not a per-frame cost at all — 56 traces
 swept at five window lengths take 0.86 s, once, on a button.
+
+A bare sheet is the same 5.6 ms a trace and simply has more of them. Reading
+the 24717 contacts of `limiti_geologici` into records costs 1.6 s, and the
+table takes all of them in 0.4 s; the fit over the 22531 inside the DEM is
+130 s, and what follows it is 17 s of rebuilding the bundle over the 12254
+records that came back. That last number is the one that decides how the tool
+is used, not the first: it is paid again on every release of the mouse.
+
+Reading those contacts used to cost 9.3 s rather than 1.6, of which 8.3 was
+`Ln.length_2d` in geogst building two `Point` objects and calling
+`np.linalg.norm` once per segment — 526311 of them. It is computed on the
+coordinate array now, 19× faster and agreeing with the old loop to 2×10⁻¹¹ m
+over 13080 km of line. Not a gSurf change: it is in geogst, which gSurf runs
+from the working tree.
 
 ### Related
 

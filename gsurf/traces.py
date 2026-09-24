@@ -1203,11 +1203,16 @@ def fit_records(records, dem, lengths=DEFAULT_SWEEP, step=25.0, gate=None,
 
     fitted, report = [], dict(
         traces=len(records), fitted=0, silent=0, runs=0,
-        swept=0, walked=0.0, held=0.0, lengths={},
+        swept=0, walked=0.0, held=0.0, lengths={}, stopped=False,
     )
 
     for index, record in enumerate(records):
+        # Said in the report rather than left to be inferred from the counts.
+        # A run stopped part way through has read the first N traces in file
+        # order, which is a corner of a sheet and not a sample of it, and a
+        # caller that applied it would be building a section out of that.
         if progress is not None and progress(index, len(records)) is False:
+            report["stopped"] = True
             break
 
         parts = trace_points(record.lines, dem, step=min(10.0, step))
@@ -1251,6 +1256,14 @@ def describe_fit(report):
 
     if not report["traces"]:
         return "no traces to fit"
+
+    if report.get("stopped"):
+        return (
+            f"Stopped after {report['fitted'] + report['silent']} of "
+            f"{report['traces']} traces, and nothing was applied. What had been "
+            f"read by then is the head of the file rather than a sample of the "
+            f"sheet, which is not something to put a section on."
+        )
 
     share = (
         100.0 * report["held"] / report["walked"] if report["walked"] else 0.0

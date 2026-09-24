@@ -30,6 +30,7 @@ CHECKS = (
     ("check_session.py", "the session, and a map with no DEM under it"),
     ("check_folds.py", "fold axes against an axis that is known"),
     ("check_traces.py", "attitudes along a trace, against a plane that is known"),
+    ("check_bare_traces.py", "a line layer with no attitude columns, and the fit that gives it some"),
     ("check_rotations.py", "how an axis field turns, against a rotation that is known"),
     ("check_qgis_project.py", "a QGIS project, read for its layers and their colours"),
     ("check_launcher.py", "the launcher: the question each tool asks, and the handover"),

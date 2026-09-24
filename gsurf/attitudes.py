@@ -499,6 +499,14 @@ class TraceAttitudeSource:
         self.dip_dir_field = dip_dir_field
         self.dip_field = dip_field
         self.is_rhr_strike = bool(is_rhr_strike)
+
+        # Both fields, or neither. Neither is a layer of mapped contacts whose
+        # attitudes were never written down -- the plane is in the line and the
+        # ground under it, and `traces.fit_records` is what reads it out. One
+        # of the two is an unfinished answer, and picking which half was meant
+        # is worse than refusing.
+        self.has_attitudes = bool(dip_dir_field) and bool(dip_field)
+
         self.anchor_field = anchor_field
         self.span_fields = span_fields
         self.enabled_field = enabled_field
@@ -524,10 +532,15 @@ class TraceAttitudeSource:
             self.problem = "no CRS declared by the layer"
             return
 
-        for field in (dip_dir_field, dip_field):
-            if field not in frame.columns:
-                self.problem = f"no field '{field}'"
-                return
+        if bool(dip_dir_field) != bool(dip_field):
+            self.problem = "one angle field named and the other not"
+            return
+
+        if self.has_attitudes:
+            for name in (dip_dir_field, dip_field):
+                if name not in frame.columns:
+                    self.problem = f"no field '{name}'"
+                    return
 
         frame = frame.to_crs(crs)
 
@@ -548,20 +561,28 @@ class TraceAttitudeSource:
             self.problem = "no line geometry"
             return
 
-        azimuth = numeric(frame[dip_dir_field])
-        dip = numeric(frame[dip_field])
+        if self.has_attitudes:
+            azimuth = numeric(frame[dip_dir_field])
+            dip = numeric(frame[dip_field])
 
-        keep, self.dropped = admissible(azimuth, dip)
+            keep, self.dropped = admissible(azimuth, dip)
 
-        if no_line_geometry:
-            self.dropped["with no line geometry"] = no_line_geometry
+            if no_line_geometry:
+                self.dropped["with no line geometry"] = no_line_geometry
 
-        if not keep.any():
-            self.problem = "no readable attitude"
-            return
+            if not keep.any():
+                self.problem = "no readable attitude"
+                return
 
-        frame = frame[keep]
-        azimuth, dip = normalised_azimuth(azimuth[keep], dip[keep]), dip[keep]
+            frame = frame[keep]
+            azimuth, dip = normalised_azimuth(azimuth[keep], dip[keep]), dip[keep]
+        else:
+            # Nothing to test for admissibility, and so nothing dropped for it:
+            # a line with no angles on it cannot be unreadable, only unread.
+            azimuth = dip = None
+
+            if no_line_geometry:
+                self.dropped["with no line geometry"] = no_line_geometry
 
         if bounds is not None:
             # Kept whole or dropped whole. A trace is clipped by the profile it
@@ -574,14 +595,19 @@ class TraceAttitudeSource:
 
             self.outside = int((~inside).sum())
 
-            frame, azimuth, dip = frame[inside], azimuth[inside], dip[inside]
+            frame = frame[inside]
+
+            if self.has_attitudes:
+                azimuth, dip = azimuth[inside], dip[inside]
 
             if frame.empty:
                 self.problem = "no trace in the area"
                 return
 
         self.frame = frame
-        self.traces = self._group(frame, azimuth, dip)
+        self.traces = (
+            self._group(frame, azimuth, dip) if self.has_attitudes else self._bare(frame)
+        )
         self.num_lines = sum(len(record.lines) for record in self.traces)
 
     # -- reading -----------------------------------------------------------
@@ -619,6 +645,7 @@ class TraceAttitudeSource:
         starts = self._optional(frame, self.span_fields[0])
         ends = self._optional(frame, self.span_fields[1])
         enabled = self._flags(frame, self.enabled_field)
+        columns = self._attr_columns(frame)
 
         pooled, first = defaultdict(list), {}
         not_lines = 0
@@ -665,14 +692,75 @@ class TraceAttitudeSource:
                     anchor=anchor,
                     span=span,
                     enabled=True if enabled is None else bool(enabled[ndx]),
-                    attrs=self._attrs(frame, ndx),
+                    attrs=self._attrs_at(columns, ndx),
                 )
             )
 
         return records
 
-    def _attrs(self, frame, ndx):
-        """The columns that are neither geometry nor already a field of the record."""
+    def _bare(self, frame):
+        """
+        One record per feature, none of them carrying a plane yet.
+
+        Nothing is pooled here, and that is the difference from `_group` rather
+        than an omission in it. Two fragments are pooled there because they
+        carry the identical attitude, and carrying it is the evidence that they
+        are one plane digitised in pieces. With no attitude there is no such
+        evidence -- only a shared name, and a category on a CARG sheet is
+        `contatto stratigrafico e/o litologico` sixteen thousand times over.
+        Pooling on that would hand the fit one curve made of every contact in
+        the sheet.
+
+        No anchor and no span either. An anchor is where a measurement was
+        taken and there is no measurement; a span is how far one reaches.
+        `enabled` is read, because holding a contact out of the section is a
+        decision that still means something with no plane on it.
+        """
+
+        enabled = self._flags(frame, self.enabled_field)
+        columns = self._attr_columns(frame)
+
+        records, not_lines = [], 0
+
+        for ndx, (category, geometry) in enumerate(
+            zip(self._categories(frame), frame.geometry)
+        ):
+            lines, skipped = self._lines(geometry)
+
+            not_lines += skipped
+
+            # Same reason as in `_group`: the parts are counted, and what must
+            # not happen is a row in the panel for a trace that is not there.
+            if not lines:
+                continue
+
+            records.append(
+                TraceRecord(
+                    category=category,
+                    plane=None,
+                    lines=lines,
+                    length=float(sum(line.length_2d() for line in lines)),
+                    enabled=True if enabled is None else bool(enabled[ndx]),
+                    attrs=self._attrs_at(columns, ndx),
+                )
+            )
+
+        if not_lines:
+            self.dropped["not a line"] = not_lines
+
+        return records
+
+    def _attr_columns(self, frame):
+        """
+        The columns that are neither geometry nor already a field of a record,
+        lifted out of the loop.
+
+        Read row by row this is `frame.iloc[ndx]`, which builds a Series per
+        call: unnoticeable over the fifty records a curated fault layer makes,
+        and eight and a half seconds over the twenty-four thousand a bare CARG
+        sheet makes. The lists are in the frame's own order, which is what the
+        indices here count in.
+        """
 
         used = {
             self.category_field,
@@ -684,12 +772,20 @@ class TraceAttitudeSource:
             frame.geometry.name,
         }
 
-        row = frame.iloc[ndx]
+        return {
+            str(name): frame[name].tolist()
+            for name in frame.columns
+            if name not in used
+        }
+
+    @staticmethod
+    def _attrs_at(columns, ndx):
+        """One record's share of them, nulls left out."""
 
         return {
-            str(name): row[name]
-            for name in frame.columns
-            if name not in used and row[name] is not None and row[name] == row[name]
+            name: values[ndx]
+            for name, values in columns.items()
+            if values[ndx] is not None and values[ndx] == values[ndx]
         }
 
     @staticmethod
@@ -750,13 +846,19 @@ class TraceAttitudeSource:
         while the section it feeds is on screen, and a dictionary that outlived
         a change to one would be a section disagreeing with its own legend.
         Held until something moves it.
+
+        A record with no plane contributes nothing, because the tick a section
+        carries is an apparent dip and there is none to compute. A bare trace
+        layer is therefore inert here until it has been fitted, which is the
+        honest answer: drawing it anyway would put a contact in the section as
+        though it had been read, when all that is known is where it crops out.
         """
 
         if self._records is None:
             grouped = defaultdict(list)
 
             for record in self.traces:
-                if not record.enabled:
+                if not record.enabled or record.plane is None:
                     continue
 
                 lines = record.lines
@@ -837,12 +939,19 @@ class TraceAttitudeSource:
         return len(self.traces)
 
     def attitudes(self):
-        """Every record as (category, dip direction, dip), for a readout."""
+        """Every record that has one, as (category, dip direction, dip)."""
 
         return [
             (record.category, record.plane.dipazim, record.plane.dipang)
             for record in self.traces
+            if record.plane is not None
         ]
+
+    @property
+    def unread(self):
+        """How many records are still waiting for a plane."""
+
+        return sum(1 for record in self.traces if record.plane is None)
 
     def summary(self):
         if self.problem:
@@ -850,10 +959,32 @@ class TraceAttitudeSource:
 
         categories = {record.category for record in self.traces}
 
-        text = (
-            f"{self.layer or self.path.stem}: {len(self)} planes in "
-            f"{len(categories)} categories, {self.num_lines} traces"
-        )
+        # Called planes where they are planes and traces where they are not:
+        # a bare layer holds no plane at all yet, and counting its contacts as
+        # planes would announce a section's worth of data that is not there.
+        unread = self.unread
+
+        if unread == len(self):
+            # Nothing has been read off this layer, so there is nothing to
+            # count but the contacts themselves -- and the parts only where a
+            # multipart geometry makes them differ from the records.
+            text = f"{self.layer or self.path.stem}: {len(self)} traces with no attitude read"
+
+            if self.num_lines != len(self):
+                text += f" in {self.num_lines} parts"
+
+            text += f", {len(categories)} categories -- fit them off the trace"
+        else:
+            # Planes, not records: with some of them read by hand and the rest
+            # not, `len(self)` is the two together and would overstate what the
+            # section has to draw by exactly the number still waiting.
+            text = (
+                f"{self.layer or self.path.stem}: {len(self) - unread} planes in "
+                f"{len(categories)} categories, {self.num_lines} traces"
+            )
+
+            if unread:
+                text += f"; {unread} with no attitude read yet"
 
         anchored = sum(1 for record in self.traces if record.anchor is not None)
         off = sum(1 for record in self.traces if not record.enabled)

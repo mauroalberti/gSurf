@@ -93,6 +93,17 @@ REACH_RANGE = (0.0, 50000.0)
 PANEL_MIN_PX = 130
 PANEL_WIDTH_PX = 430
 
+# What the attitude cell of a trace that has none says. A word rather than a
+# blank, because the cell is still editable and a blank would read as a value
+# that failed to load.
+UNREAD = "not read"
+
+# Above this many traces the fit gets a progress dialog with a Stop on it.
+# A bare CARG sheet is 24717 contacts at 5.6 ms each -- over two minutes, and
+# a modal wait cursor for that long is indistinguishable from a hung tool.
+# Below it the fit is a fifth of a second and a dialog would only flicker.
+FIT_PROGRESS_ABOVE = 200
+
 # What the legend beside the panels takes, and how many names it spells out in
 # a group before it starts counting instead. Narrow: it holds unit names, and a
 # name that does not fit is cut rather than given room the section wants.
@@ -484,9 +495,7 @@ class TracePanel(QtWidgets.QWidget):
             )
             self.table.setItem(row, 0, name)
 
-            attitude = QtWidgets.QTableWidgetItem(
-                f"{record.plane.dipazim:.0f}/{record.plane.dipang:.0f}"
-            )
+            attitude = QtWidgets.QTableWidgetItem(self._attitude_text(record))
             attitude.setFlags(editable)
             self.table.setItem(row, 1, attitude)
 
@@ -511,6 +520,22 @@ class TracePanel(QtWidgets.QWidget):
             self.table.setItem(row, 5, crosses)
 
         self._filling = False
+
+    @staticmethod
+    def _attitude_text(record):
+        """
+        The record's plane, or a word saying there is not one.
+
+        The cell stays editable when it is empty, which is the point of saying
+        `not read` rather than leaving it blank: a bare contact whose dip the
+        geologist happens to know can be given one here, and the alternative to
+        typing it is the fit, not nothing.
+        """
+
+        if record.plane is None:
+            return UNREAD
+
+        return f"{record.plane.dipazim:.0f}/{record.plane.dipang:.0f}"
 
     def _reach_text(self, record):
         if record.anchor is None:
@@ -584,9 +609,7 @@ class TracePanel(QtWidgets.QWidget):
         self._filling = True
 
         for row, record in enumerate(self.source.traces):
-            self.table.item(row, 1).setText(
-                f"{record.plane.dipazim:.0f}/{record.plane.dipang:.0f}"
-            )
+            self.table.item(row, 1).setText(self._attitude_text(record))
             self.table.item(row, 4).setText(self._reach_text(record))
 
         self._filling = False
@@ -607,6 +630,13 @@ class TracePanel(QtWidgets.QWidget):
         self._filling = True
 
         for row, record in enumerate(self.source.traces):
+            # A record with no plane is not in the section to be crossed, so
+            # the cell stays empty rather than saying zero: zero would read as
+            # "the line missed it", and it was never offered.
+            if record.plane is None:
+                self.table.item(row, 5).setText("")
+                continue
+
             key = (
                 record.category,
                 round(record.plane.dipazim),
@@ -642,11 +672,7 @@ class TracePanel(QtWidgets.QWidget):
             self.restore_surveyed()
             return
 
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        try:
-            report = self.apply_fit()
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
+        report = self._run_fit()
 
         QtWidgets.QMessageBox.information(
             self,
@@ -654,7 +680,60 @@ class TracePanel(QtWidgets.QWidget):
             describe_fit(report),
         )
 
-    def apply_fit(self):
+    def _run_fit(self):
+        """
+        The fit, with somewhere to watch it and a way out where it is long.
+
+        A curated fault layer is fifty-six traces and a fifth of a second, and
+        a dialog for that would be a flicker. A bare CARG sheet is twenty-four
+        thousand contacts at 5.6 ms each: over two minutes, during which a wait
+        cursor and a frozen window are indistinguishable from a hung tool. So
+        the dialog appears on the size of the job and not on principle.
+        """
+
+        total = len(self._surveyed)
+
+        if total <= FIT_PROGRESS_ABOVE:
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+            try:
+                return self.apply_fit()
+            finally:
+                QtWidgets.QApplication.restoreOverrideCursor()
+
+        dialog = QtWidgets.QProgressDialog(
+            "Reading an attitude off each trace...", "Stop", 0, total, self
+        )
+        dialog.setWindowTitle("Fit from the traces")
+
+        # Application-modal, not window-modal. The map and the section are
+        # top-level windows of their own here, so window modality would leave
+        # them draggable during the fit -- against a records list that is about
+        # to be replaced wholesale, and on a thread that is not going to answer
+        # between two calls to `processEvents`.
+        dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+
+        # Roughly two hundred updates whatever the size of the job. Repainting
+        # and pumping the event loop once per trace would be twenty-two
+        # thousand of each on a whole sheet, to move a bar by a twentieth of a
+        # pixel. A Stop clicked between two updates is seen at the next one,
+        # which at this stride is a seventh of a second away.
+        stride = max(1, total // 200)
+
+        def tick(done, count):
+            if done % stride == 0:
+                dialog.setValue(done)
+                QtWidgets.QApplication.processEvents()
+
+            return not dialog.wasCanceled()
+
+        try:
+            return self.apply_fit(progress=tick)
+        finally:
+            dialog.close()
+
+    def apply_fit(self, progress=None):
         """
         Replace the layer's attitudes with what each trace determines by itself.
 
@@ -671,14 +750,16 @@ class TracePanel(QtWidgets.QWidget):
         returned to be shown rather than left to be noticed in the table.
 
         Nothing is applied when nothing was fitted: a table emptied of every
-        record would be a worse answer than the one it replaced.
+        record would be a worse answer than the one it replaced. Nor when the
+        run was stopped, for the reason `fit_records` states -- a partial fit
+        is the head of the file and not a sample of the sheet.
         """
 
         from gsurf.traces import fit_records
 
-        fitted, report = fit_records(self._surveyed, self.dem)
+        fitted, report = fit_records(self._surveyed, self.dem, progress=progress)
 
-        if not fitted:
+        if report["stopped"] or not fitted:
             return report
 
         self.source.set_traces(fitted)
@@ -767,10 +848,18 @@ class TracePanel(QtWidgets.QWidget):
             if ends is not None:
                 (x0, y0), (x1, y1) = ends
                 s0, s1 = record.extent(self.source.half_span)
+
+                # A reach can be asserted about a contact whose attitude is
+                # still unread -- how far the thing extends and what it dips
+                # are two claims, and the file carries whichever has been made.
+                plane = (
+                    f" plane={record.plane.dipazim:.0f}/{record.plane.dipang:.0f}"
+                    if record.plane is not None else ""
+                )
+
                 assertions.append(
                     f"  span reach @{x0:.2f},{y0:.2f} @{x1:.2f},{y1:.2f} "
-                    f"{(s1 - s0) / 2.0:.0f} src=gsurf plane={record.plane.dipazim:.0f}/"
-                    f"{record.plane.dipang:.0f}"
+                    f"{(s1 - s0) / 2.0:.0f} src=gsurf{plane}"
                 )
 
             if not assertions:
