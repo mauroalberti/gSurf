@@ -1201,9 +1201,14 @@ def fit_records(records, dem, lengths=DEFAULT_SWEEP, step=25.0, gate=None,
 
     gate = gate or TraceGate()
 
+    # The gate travels in the report because the thresholds are a choice, and
+    # a set of attitudes whose verdicts cannot be checked against the rule that
+    # admitted them is a picture rather than a measurement. `min_lever` in
+    # particular is usually measured off the layer by `from_traces`, so it is
+    # not recoverable from the defaults.
     fitted, report = [], dict(
         traces=len(records), fitted=0, silent=0, runs=0,
-        swept=0, walked=0.0, held=0.0, lengths={}, stopped=False,
+        swept=0, walked=0.0, held=0.0, lengths={}, stopped=False, gate=gate,
     )
 
     for index, record in enumerate(records):
@@ -1238,7 +1243,11 @@ def fit_records(records, dem, lengths=DEFAULT_SWEEP, step=25.0, gate=None,
         got = records_from_spans(
             spans, record.lines, record.category, keep=keep,
             is_rhr_strike=getattr(record.plane, "is_rhr_strike", False),
-            attrs=dict(record.attrs, src=f"fit {length:.0f} m"),
+            # `window` as a number beside `src` as prose: the window is part
+            # of what the plane claims -- one read over 150 m and one over
+            # 900 m are different statements about the same contact -- and a
+            # column that has to be parsed back out of a sentence is not one.
+            attrs=dict(record.attrs, src=f"fit {length:.0f} m", window=length),
         )
 
         if got:

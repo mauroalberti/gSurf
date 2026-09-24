@@ -428,6 +428,11 @@ class TracePanel(QtWidgets.QWidget):
         self._surveyed = list(source.traces)
         self._showing_fits = False
 
+        # The gate the records on show were admitted by, kept for the export.
+        # None while the table holds the layer's own attitudes, which no gate
+        # ever judged.
+        self._fit_gate = None
+
         self.table = QtWidgets.QTableWidget(len(source.traces), len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.verticalHeader().setVisible(False)
@@ -454,9 +459,18 @@ class TracePanel(QtWidgets.QWidget):
         )
         self.save_button.clicked.connect(self.write_curation)
 
+        self.export_button = QtWidgets.QPushButton("Export attitudes...")
+        self.export_button.setToolTip(
+            "Save the attitudes on show as a point layer: one point where "
+            "each was read, carrying the stretch it holds over, the window "
+            "it was read with and the gate that admitted it."
+        )
+        self.export_button.clicked.connect(self.export_attitudes)
+
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.fit_button)
         buttons.addWidget(self.save_button)
+        buttons.addWidget(self.export_button)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -764,6 +778,7 @@ class TracePanel(QtWidgets.QWidget):
 
         self.source.set_traces(fitted)
         self._showing_fits = True
+        self._fit_gate = report.get("gate")
         self.fit_button.setText("Back to the layer")
         self.fill()
         self.changed.emit()
@@ -775,6 +790,7 @@ class TracePanel(QtWidgets.QWidget):
 
         self.source.set_traces(self._surveyed)
         self._showing_fits = False
+        self._fit_gate = None
         self.fit_button.setText("Fit from the traces")
         self.fill()
         self.changed.emit()
@@ -872,10 +888,148 @@ class TracePanel(QtWidgets.QWidget):
 
         return "\n".join(lines), written
 
+    def export_attitudes(self):
+        """
+        The attitudes on show as a point layer, fitted or read off the layer.
+
+        Split from `attitudes_frame` the way `write_curation` is from
+        `curation_text` -- the dialog is modal, and a check driving the panel
+        off screen would sit on it forever.
+
+        The emptiness test comes before the file dialog and the frame after it,
+        which is the only order that behaves: asking for a filename and then
+        saying there was nothing to put in it wastes the answer, while building
+        twelve thousand points before asking is several seconds of a window
+        that looks hung for no reason yet.
+        """
+
+        if not any(record.plane is not None for record in self.source.traces):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Nothing to export",
+                "No record on show carries a plane. Fit from the traces "
+                "first, or pick a layer that has its attitudes in columns.",
+            )
+            return
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export attitudes", "attitudes_gsurf.gpkg",
+            "GeoPackage (*.gpkg);;Shapefile (*.shp)",
+        )
+
+        if not path:
+            return
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtCore.Qt.CursorShape.WaitCursor
+        )
+        try:
+            frame = attitudes_frame(
+                self.source.traces,
+                getattr(self.source, "crs", None),
+                gate=self._fit_gate,
+                dem=self.dem,
+            )
+            frame.to_file(path)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        # The count, because it is not the number of rows in the table and the
+        # difference is the point: a record whose anchor falls off its own
+        # trace is dropped here, and so is one that never had a plane.
+        QtWidgets.QMessageBox.information(
+            self,
+            "Attitudes exported",
+            f"{len(frame)} attitude(s) of {len(self.source.traces)} record(s) "
+            f"written.\n\n{path}",
+        )
+
     def source_epsg(self):
         crs = getattr(self.source, "crs", None)
 
         return crs.to_epsg() if crs is not None else 0
+
+
+def attitudes_frame(records, crs, gate=None, dem=None):
+    """
+    The attitudes as a GeoDataFrame, one point per record that has a plane.
+
+    This is the way a fit gets out of the tool. `curation_text` will not carry
+    one and should not: that file says in its own header that every line in it
+    is a human assertion, and a fit is a derivative. But a derivative is still
+    a measurement, and twelve thousand of them that exist only on screen are
+    not a result. So they leave as what they are -- computed points, each
+    saying where it came from -- rather than as testimony.
+
+    One point per record, and the point is `anchor_point`: the middle of the
+    stretch the window held on, for a fit. The span travels beside it in metres
+    along the trace *and* as `span_m`, because a point alone overstates a
+    reading that holds over 50 m and understates one that holds over 900.
+
+    `window_m` is part of the claim and not provenance trivia: the same contact
+    read over 150 m and over 900 m is two different statements, and which was
+    used is a property of that trace rather than a setting.
+
+    The gate is repeated on every row when there was one, for the reason
+    `field_frame` gives -- verdicts that cannot be checked against the rule
+    that admitted them are a picture. `min_lever` especially: `from_traces`
+    measures it off the layer, so it is not recoverable from the defaults.
+    Columns are within the ten characters a shapefile allows.
+
+    Elevation comes from the DEM and not from the line's own third value: a
+    trace digitised in 3D carries whatever the digitiser's surface had, while
+    the DEM is the surface the plane was actually fitted against. Left empty
+    where there is no DEM or the point falls off it, rather than filled with a
+    zero that would plot.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    rows, points = [], []
+
+    for record in records:
+        if record.plane is None:
+            continue
+
+        point = record.anchor_point()
+
+        if point is None:
+            continue
+
+        x, y = point[0], point[1]
+        s0, s1 = record.span if record.span is not None else (None, None)
+        elevation = dem.elevation_at(x, y) if dem is not None else None
+
+        row = {
+            "category": record.category,
+            "dipdir": round(float(record.plane.dipazim), 2),
+            "dip": round(float(record.plane.dipang), 2),
+            "elev_m": elevation,
+            "fitted": bool(record.attrs.get("fitted", False)),
+            "src": record.attrs.get("src"),
+            "verdict": record.attrs.get("span_verdict"),
+            "window_m": record.attrs.get("window"),
+            "anchor_s": record.anchor,
+            "span_s0": s0,
+            "span_s1": s1,
+            "span_m": None if s0 is None else round(s1 - s0, 2),
+            "trace_m": round(float(record.length), 2),
+            "in_sect": bool(record.enabled),
+        }
+
+        if gate is not None:
+            row.update(
+                max_coll=gate.max_collinearity,
+                min_lever=gate.min_lever,
+                min_prec=gate.min_precision,
+                min_pts=gate.min_points,
+            )
+
+        rows.append(row)
+        points.append(Point(x, y))
+
+    return gpd.GeoDataFrame(rows, geometry=points, crs=crs)
 
 
 def remembered():

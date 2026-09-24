@@ -331,6 +331,42 @@ def clip_to_span(lines, s0, s1):
     return kept
 
 
+def point_at(lines, s):
+    """
+    The point on a record's trace at a progressive, or None where it runs off.
+
+    The same walk and the same interpolation as `clip_to_span`, and for the
+    same reason: a progressive means nothing except against the measure it was
+    computed with. Read back against the nearest vertex instead, an anchor
+    would land up to half a segment away -- 20 m on a trace digitised every
+    40 -- which is the size of the thing being located.
+
+    Whatever the coordinates carry comes back, two values or three. The line's
+    own third value is not an elevation anybody measured, though: where the
+    height matters it is the DEM that has it, and the fit read it from there.
+    """
+
+    if s < 0.0:
+        return None
+
+    walked = 0.0
+
+    for line in lines:
+        coords = line.coords
+
+        if coords is None or len(coords) < 2:
+            continue
+
+        steps = np.hypot(*np.diff(coords[:, :2], axis=0).T)
+        progressive = walked + np.concatenate(([0.0], np.cumsum(steps)))
+        walked = progressive[-1]
+
+        if s <= progressive[-1]:
+            return tuple(float(v) for v in _at(coords, progressive, s)[0])
+
+    return None
+
+
 def _finite(value):
     """A number, or nothing where the cell was empty."""
 
@@ -420,6 +456,34 @@ class TraceRecord:
         first, last = clipped[0].coords, clipped[-1].coords
 
         return tuple(first[0][:2]), tuple(last[-1][:2])
+
+    def anchor_point(self):
+        """
+        The one point the attitude can be filed under, or None off the trace.
+
+        A measurement has to land somewhere to be mapped, and the three cases
+        answer to different things. An anchor is a fact off the table and wins
+        outright. A fitted record has no anchor from anywhere else, and the
+        middle of the stretch its window held on is where the plane was read.
+        A record with neither speaks for the whole trace, so the middle of that
+        is the least wrong place to put it -- and the span written out beside
+        it says so, rather than the point pretending to a precision it has not
+        got.
+
+        Deliberately not the midpoint of `extent`, which answers a different
+        question: given a table anchor and no half-span, `extent` widens to the
+        whole trace, and the middle of the trace is not where the reading was
+        taken.
+        """
+
+        if self.anchor is not None:
+            s = self.anchor
+        elif self.span is not None:
+            s = (self.span[0] + self.span[1]) / 2.0
+        else:
+            s = self.length / 2.0
+
+        return point_at(self.lines, s)
 
     def is_whole(self, half_span):
         """

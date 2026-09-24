@@ -90,7 +90,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Four hundred and fifty-five assertions over ten scripts, each also runnable
+Four hundred and eighty-three assertions over eleven scripts, each also runnable
 on its own. They drive real windows through synthesized mouse events, so Qt is
 put in its off-screen mode unless you ask otherwise. `check_sections.py` is 26
 of those 47 seconds on its own, most of it opening a 234 Mpx DEM and sampling
@@ -102,7 +102,9 @@ fold that has one by construction, a right-hand-rule strike agreeing with a dip
 direction, a regated field equalling a recomputed one. `check_bare_traces.py`
 builds a DEM that *is* a plane of stated attitude and lays a V on it in plan,
 so the attitude that comes back off the trace is the one the ground was made
-with: 130.7/54.7 against 130/55. `check_interaction.py`
+with: 130.7/54.7 against 130/55, and `check_attitude_export.py` writes that same
+answer to a file and reads it back to find it still on the trace it came off,
+to 10⁻¹⁰ m. `check_interaction.py`
 in particular was written to run against either side of a refactor, which is
 how the map was lifted out of the intersection tool without changing it — the
 same clicks, the same window offsets, the same point counts, digit for digit.
@@ -464,6 +466,30 @@ of a second the tool is built around. So fitting a sheet entire is a thing to
 do once and look at, and the workflow the section wants is a layer cut down
 first — by `Tipo`, or to the ground a section actually crosses. That cut does
 not exist in the dialog yet.
+
+**`Export attitudes...` is how a computed attitude leaves the tool.** A fit that
+exists only on a screen is not a result, and the curation file will not carry
+one — it declares in its own header that every line in it is a human assertion,
+and a fit is a derivative. So the fits leave as what they are: a point layer,
+one point per record, written where the attitude was actually read. For a fit
+that is the middle of the stretch its window held on, interpolated inside the
+segment it falls in rather than snapped to a vertex; on a trace digitised every
+40 m, snapping would put the point up to 20 m from the reading, which is the
+size of the thing being located.
+
+Each point carries the stretch it holds over, the window length it was read
+with — a contact read over 150 m and over 900 m are two different claims about
+it — the elevation from the DEM rather than from the line's own third value,
+and the gate that admitted it, `min_lever` included, which `from_traces`
+measures off the layer and so cannot be recovered from a default. Verdicts that
+cannot be checked against the rule that produced them are a picture rather than
+a measurement.
+
+This is where the per-stretch fit stops being an internal detail. At Monte Alpi
+fault F0241 comes out as two points 163 m apart, 329.6/69.6 at 1182 m and
+332.6/61.1 at 1242 m, holding over 75 and 150 m — one mapped fault, two
+attitudes, each somewhere. Columns are within the ten characters a shapefile
+allows, and GeoPackage and shapefile both round-trip.
 
 **What this still does not do.** The floor that decides whether a window turns
 enough to determine a plane is a declared choice, not a measured one: the
