@@ -34,6 +34,11 @@ TOOLS = (
         module="gsurf.tools.profiles",
         summary="Drag a section trace over the map and watch the geology under it.",
     ),
+    dict(
+        name="Trace editor",
+        module="gsurf.tools.editor",
+        summary="Open a .gstruct on the map: what holds along each trace, and its own lines to edit.",
+    ),
 )
 
 

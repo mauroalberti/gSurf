@@ -261,6 +261,386 @@ def frame_of(path):
     return CRS.from_user_input(dataset.crs), (min(xs), min(ys), max(xs), max(ys))
 
 
+# -- the file as text, and the blocks it is made of ------------------------
+
+# What `attitude_at` answers with, as the word before the colon. The five are
+# gstruct's own and not a tool's: they fall out of the precedence rule, which is
+# where the format decides what holds at a place. Named here, at the boundary,
+# rather than in whatever happens to draw them.
+PROVENANCE = ("rifiutata", "misurata", "fit", "misurata-lontana", "assente")
+
+# How far a measurement still answers for, in metres. The same number and the
+# same judgement as `attitudes.DEFAULT_HALF_SPAN` -- how much of a fault one
+# compass reading speaks for -- approached from the two ends: there it builds
+# the interval around an anchor, here it is how far from the anchor the answer
+# is still that reading's. Written out rather than imported because `attitudes`
+# imports this module, and it is a default either way: the caller sets it.
+DEFAULT_MAX_GAP = 250.0
+
+
+def _content(line):
+    """Whether a line says anything: not blank, and not a comment of its own."""
+
+    stripped = line.strip()
+
+    return bool(stripped) and not stripped.startswith("#")
+
+
+def _opens(line):
+    """
+    The keyword of a line that starts a top-level record, or None.
+
+    Indentation is how the format says a line continues the record above it, so
+    a line starting in column one is the only kind that can begin a new one.
+    The cut at `#` and the split on a single space are the parser's own, kept
+    the same deliberately: a scanner that disagreed with `loads` about where a
+    record starts would slice the file somewhere `loads` does not.
+    """
+
+    if not line[:1].strip():
+        return None
+
+    word = line.split("#", 1)[0].strip().partition(" ")[0]
+
+    return word if word in ("structure", "observation") else None
+
+
+@dataclass
+class Block:
+    """The lines one structure occupies: `start` inclusive, `end` exclusive."""
+
+    start: int
+    end: int
+
+
+def _blocks(lines):
+    """
+    Where each structure's own lines are, in file order.
+
+    A block runs from its `structure` line to its last line that says anything.
+    The blanks and comments between it and the next record belong to neither and
+    stay where they are: the comment block above `structure F0058` in
+    `curation.gstruct` explains F0058, and handing it to the structure *before*
+    it would move somebody's reasoning onto a different fault the first time
+    either was edited.
+    """
+
+    out = []
+    opens = [i for i, line in enumerate(lines) if _opens(line) is not None]
+
+    for n, start in enumerate(opens):
+        if _opens(lines[start]) != "structure":
+            continue
+
+        stop = opens[n + 1] if n + 1 < len(opens) else len(lines)
+
+        while stop > start + 1 and not _content(lines[stop - 1]):
+            stop -= 1
+
+        out.append(Block(start, stop))
+
+    return out
+
+
+class Document:
+    """
+    A `.gstruct` held as the text it is, with the model parsed beside it.
+
+    The editor writes to the file it opened, which is a thing nothing else in
+    this project does, and the reason it can is that it never rewrites the file
+    -- it replaces the lines of the one structure that was edited and leaves
+    every other byte alone.
+
+    **That is not fastidiousness, it is what `dumps` costs.** Run
+    `curation.gstruct` through load and dump and the ten lines of comment in it
+    are gone: the block saying *why* those five thrusts are `exposed` --
+    that they were walked, that the facets grown from the DTM agree within three
+    to nine degrees -- is gone, because comments are not in the model and a
+    writer can only write what it has. A tool whose Save deletes the geologist's
+    reasoning is not an editor. Splicing one block also means a plane typed as
+    `140.5/31` stays `140.5/31`, where a round trip would round it to `140/31`:
+    `Plane.__str__` writes whole degrees, and text that is never re-serialised
+    cannot lose anything at all.
+
+    The model is parsed beside the text and not from it, because the text is
+    what the file says and the model is what it means. Editing goes through
+    `loads` -- the block is re-read under the file's own header -- so a block
+    that would not parse is refused with the parser's own words instead of
+    being written and discovered tomorrow.
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+        source = self.path.read_text(encoding="utf-8")
+
+        self.lines = source.splitlines()
+        self.dataset = module().loads(source)
+        self.blocks = _blocks(self.lines)
+        self.dirty = False
+
+        if len(self.blocks) != len(self.dataset.structures):
+            # Not reachable through any file the parser accepts, and checked
+            # anyway: everything here indexes the model and the text by the same
+            # number, so the two disagreeing about how many structures there are
+            # is the one failure that would edit the wrong fault silently.
+            raise ValueError(
+                f"{len(self.blocks)} structure block(s) in the text and "
+                f"{len(self.dataset.structures)} in the model: refusing to "
+                f"index one by the other"
+            )
+
+    # -- one block --------------------------------------------------------
+
+    def text_of(self, index):
+        """The lines of one structure, exactly as they are in the file."""
+
+        block = self.blocks[index]
+
+        return "\n".join(self.lines[block.start:block.end])
+
+    def replace(self, index, text):
+        """
+        One structure's block as this text, once it parses. Raises ValueError.
+
+        Nothing is touched until everything has agreed: the text is parsed, the
+        result is counted, the splice is made on a copy and the copy is scanned
+        again. A block refused here leaves the document exactly as it was, which
+        is what lets the panel show the error and keep the text on screen for
+        the mistake to be fixed in.
+        """
+
+        gstruct = module()
+
+        first = next((line for line in text.splitlines() if _content(line)), None)
+
+        if first is None:
+            # There is no delete here, and that is the format's answer rather
+            # than a missing button: a contact that does not hold is said not to
+            # hold -- `span use * * rejected`, with the reason on it -- which
+            # leaves the geometry and the grounds in the file. Removing the lines
+            # would leave neither, and tomorrow nobody could tell a fault that
+            # was rejected from one that was never mapped.
+            raise ValueError(
+                "a block cannot be emptied: a structure that does not hold is "
+                "said so with `span use * * rejected reason=...`, which keeps "
+                "both the geometry and the grounds"
+            )
+
+        if not first[:1].strip():
+            raise ValueError(
+                "a block starts in column one: indented, its first line reads as "
+                "a continuation of the record above it"
+            )
+
+        if _opens(first) != "structure":
+            raise ValueError(
+                f"a block starts with a `structure` line, and this one starts "
+                f"with {first.strip().partition(' ')[0]!r}"
+            )
+
+        try:
+            parsed = gstruct.loads(self._header() + text)
+        except Exception as err:
+            raise ValueError(f"{type(err).__name__}: {err}") from err
+
+        if len(parsed.structures) != 1:
+            raise ValueError(
+                f"one block declares one structure, and this declares "
+                f"{len(parsed.structures)}"
+            )
+
+        if parsed.observations:
+            raise ValueError(
+                "an `observation` belongs to the file rather than to a "
+                "structure -- it attaches to no path, which is what it is for -- "
+                "so it cannot be written inside a block"
+            )
+
+        block = self.blocks[index]
+        candidate = list(self.lines)
+        candidate[block.start:block.end] = text.splitlines()
+        blocks = _blocks(candidate)
+
+        if len(blocks) != len(self.blocks):
+            raise ValueError(
+                f"the edited text reads as {len(blocks) - len(self.blocks) + 1} "
+                f"block(s) where the file expects one"
+            )
+
+        self.lines = candidate
+        self.blocks = blocks
+        self.dataset.structures[index] = parsed.structures[0]
+        self.dirty = True
+
+        return parsed.structures[0]
+
+    def _header(self):
+        """
+        The lines a block has to be read under for it to mean what it means.
+
+        The file's declared version and not the library's: a 0.1 file is read as
+        one, and a block of it that would be refused under a later version is
+        refused here too rather than quietly upgraded. The CRS travels because a
+        block carries coordinates and nothing else in it says which projection
+        they are in.
+        """
+
+        head = [f"gstruct {self.dataset.meta.get('version', module().VERSION)}"]
+
+        if self.dataset.crs:
+            head.append(f"crs {self.dataset.crs}")
+
+        return "\n".join(head) + "\n\n"
+
+    # -- the whole of it --------------------------------------------------
+
+    def text(self):
+        """The file as it would be written out."""
+
+        return "\n".join(self.lines) + "\n"
+
+    def save(self, path=None):
+        """Writes it, and takes the path written to as its own from then on."""
+
+        target = self.path if path is None else Path(path)
+
+        target.write_text(self.text(), encoding="utf-8")
+
+        self.path = target
+        self.dirty = False
+
+        return target
+
+
+def nearest_structure(dataset, x, y, within=None):
+    """
+    The structure passing closest to a point, as `(index, s, distance)`.
+
+    What a click on the map means. The box is tested before the geometry and the
+    limit shrinks as better candidates turn up, so most traces are four
+    comparisons rather than a loop over their segments -- on 393 faults the whole
+    thing is under a millisecond, and the arrangement is what would keep a click
+    usable on a sheet with twenty-four thousand contacts on it.
+
+    The progressive comes back with the index because the click is worth more
+    than the selection: where along the trace it landed is what a picked anchor
+    is written from, and it has already been computed here.
+    """
+
+    gstruct = module()
+
+    limit = float("inf") if within is None else float(within)
+    best = None
+
+    for index, structure in enumerate(dataset.structures):
+        path = structure.path
+
+        if len(path) < 2:
+            continue
+
+        xs = [px for px, _ in path]
+        ys = [py for _, py in path]
+
+        if (
+            x < min(xs) - limit or x > max(xs) + limit
+            or y < min(ys) - limit or y > max(ys) + limit
+        ):
+            continue
+
+        s, distance, _ = gstruct.project(path, (float(x), float(y)))
+
+        if distance <= limit:
+            best, limit = (index, s, distance), distance
+
+    return best
+
+
+def place_on(path, x, y):
+    """
+    A point against one path, as `(progressive, distance from it)`.
+
+    `nearest_structure` for the case where which structure is not in question --
+    an anchor being picked for a block that is already open, where the nearest
+    trace is not the one the anchor is about to be written into.
+    """
+
+    s, distance, _ = module().project(path, (float(x), float(y)))
+
+    return s, distance
+
+
+def point_on(path, s):
+    """
+    The ground at a progressive, snapped to the path.
+
+    What an anchor picked off the map is written from. Snapped rather than taken
+    where the mouse was, because that is what the anchor means: `resolve`
+    projects it onto the path to get `s` back, so a point written a hundred
+    metres off the line would read back as the same progressive while saying
+    something false about where anybody stood.
+    """
+
+    return module().point_at(path, float(s))
+
+
+def stretch(path, s0, s1):
+    """
+    The ground between two progressives, as the points that draw it.
+
+    The path's own vertices between the ends, not a resampling of them: a
+    stretch drawn through sampled points would round off exactly the bends that
+    made somebody reject it.
+    """
+
+    gstruct = module()
+
+    out = [gstruct.point_at(path, float(s0))]
+    walked = 0.0
+
+    for length, vertex in zip(gstruct.seg_lengths(path), path[1:]):
+        walked += length
+
+        if s0 < walked < s1:
+            out.append(vertex)
+
+    out.append(gstruct.point_at(path, float(s1)))
+
+    return out
+
+
+def provenance_of(structure, samples=400, max_gap=DEFAULT_MAX_GAP):
+    """
+    What holds along a whole trace, sampled: `(s, plane, said, kind)` each.
+
+    `attitude_at` answers at one place, and this asks it everywhere -- which is
+    the one thing reading the file cannot tell you. Precedence is a computation
+    over several lines at once: a refusal beats a measurement, a measurement
+    within `max_gap` beats a fit, a fit beats a measurement further off. Which
+    of those lines is winning at a given metre, and where along the trace the
+    winner changes, is not something you can see by looking at them.
+
+    `kind` is `said` up to the colon, which is one of `PROVENANCE`. The rest of
+    `said` is the detail -- which station, how far, on what grounds it was
+    refused -- and it belongs to the one place rather than to the stretch.
+    """
+
+    length = structure.length
+
+    if length <= 0.0 or samples < 2:
+        return []
+
+    out = []
+
+    for n in range(samples):
+        s = length * n / (samples - 1)
+        plane, said = structure.attitude_at(s, max_gap)
+
+        out.append((s, plane, said, said.split(":")[0]))
+
+    return out
+
+
 # -- a dataset as records -------------------------------------------------
 
 

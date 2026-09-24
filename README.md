@@ -8,20 +8,24 @@ rather than something you guess and check.
 gsurf
 ```
 
-Three tools so far. **Plane on a DEM** lays an unbounded geological plane on the
+Four tools so far. **Plane on a DEM** lays an unbounded geological plane on the
 topography and shows where it crops out while you turn the dial. **Fold axes**
 drags a circular window across a map of bedding attitudes and shows, on a
 stereonet that follows it, the girdle the poles spread on and the axis they
 turn about. **Sections** drags a section line over the map and redraws the
 geology under it as it moves, which turns the section from a result into an
-instrument: you find where the fault is by watching where it goes.
+instrument: you find where the fault is by watching where it goes. **Trace
+editor** opens a `.gstruct` on the map and draws, along each trace, what is
+actually in force at every metre of it and where that comes from — then lets you
+write the next line of the file against the picture.
 
 They are picked from one launcher, and the tool comes before the question: pick
 one and it asks for the sources *it* takes, with what it cannot run without
 marked as required — the plane needs a DEM, the fold axes need attitudes, the
-section needs a DEM and will take traces, and none is asked for another's. What
-you answer is put back the next time, and the session behind it is reopened only
-when the answer has changed.
+section needs a DEM and will take traces, the editor needs the file and will
+take a DEM to put under it, and none is asked for another's. What you answer is
+put back the next time, and the session behind it is reopened only when the
+answer has changed.
 
 ![gSurf, real-time plane/DEM intersection](ims/realtime_intersection.png)
 
@@ -66,6 +70,14 @@ rather than copying it:
   under it determine by themselves, and how much a fold axis turns between one
   window and the next, and about what axis. Neither imports Qt, so both can be
   driven from a script and checked against answers known by construction.
+- `gsurf/curation.py` — the boundary with
+  [gstruct](https://gitlab.com/mauroalberti/gstruct), the text format the
+  assertions are written in. The only module that imports it, so that
+  everything the two projects have to agree about — which way a normal points,
+  what the axes are called, where one structure's lines start and stop — is
+  agreed in one file. A dataset arrives as records, a curation lays over records
+  already open, records go back out as a curation of the differences, and a file
+  is held as the text it is for the editor to splice.
 
 The pre-2026 application lived in a `gSurf/` package beside this one and was
 removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
@@ -90,11 +102,11 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Four hundred and ninety-nine assertions over eleven scripts, each also runnable
-on its own. They drive real windows through synthesized mouse events, so Qt is
-put in its off-screen mode unless you ask otherwise. `check_sections.py` is 26
-of those 47 seconds on its own, most of it opening a 234 Mpx DEM and sampling
-bundles off it.
+Six hundred and twelve assertions over fourteen scripts, each also runnable on
+its own. They drive real windows through synthesized mouse events, so Qt is put in
+its off-screen mode unless you ask otherwise. `check_sections.py` is 26 of those
+55 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
+it.
 
 They are checks and not unit tests, in that most of them assert against
 something known from outside the code: a fold axis recovered from a synthetic
@@ -583,6 +595,73 @@ as the 0.9 power on these lines, where independent digitising jitter would give
 0 — so there is no pen width to derive it from, and the code refuses to invent
 one. It matters more now than it did: the share of a bare sheet that comes back
 readable is a number that threshold sets.
+
+### Usage — trace editor
+
+Takes a `.gstruct` and nothing else it cannot get from it; a DEM and a vector
+backdrop are optional and are there to put the traces on ground you recognise.
+A layer is refused outright, with the reason: it has no text to edit and no way
+to hold a span or a fit, and `export_gsurf.py` is what turns one into a file
+this opens.
+
+**What it shows that reading the file does not.** Precedence in this format is a
+computation over several lines at once — a refusal beats a measurement, a
+measurement within reach beats a fit, a fit beats a measurement further off — so
+which line is winning at a given metre, and where along the fault the winner
+changes, is not something you can see by looking at them. The band across the
+top of the panel is `attitude_at` swept end to end, coloured by where the answer
+came from. On F0055 of `merid_faults` it comes out as a fit holding for 3177 m
+and a compass reading taking over for the last 354, and the dip underneath steps
+from 31 to 35 where they meet.
+
+Under the band are the lines that were competing: the measurements as ticks
+where they were taken, the fits as the intervals they were computed over, each
+axis as the stretches it covers. The gap between the two is where the reading
+is — a fit drawn in the lanes with *assente* over it in the band is a fit its own
+verdict threw out, a straight trace not constraining a dip, which is a confusing
+state to be in with nothing but the text in front of you. Where two lines cover
+one stretch the later one is drawn narrower and in front, and the shadowed one
+goes pale: that is the format's own rule, that the last span covering a
+progressive wins, drawn as what it is.
+
+**Editing is textual**, because that is the shape the format already has. A
+correction here is a line added, never a line changed, so a panel of widgets
+would have had to invent an order of operations that exists. The box holds the
+block exactly as it stands in the file, geometry included — median six vertices
+over the 393 faults, longest 35, so there is nothing worth hiding. `Apply` reads
+it back through the parser: a block that would not parse is refused with the
+parser's own words and the text stays on screen to be fixed in.
+
+Anchors are picked rather than typed. `+ span`, `+ attitude` and `+ fit` write a
+template line above the path with `*` where the anchors go, and a shift-click on
+the map fills the first one and selects the next. What gets written is the point
+*snapped onto the trace*, not where the mouse was: `resolve` projects an anchor
+back to get its progressive, so a point fifty metres off the line would read the
+same and say something false about where anybody stood.
+
+**Saving replaces the lines of the structures that were edited and leaves every
+other byte alone.** Not fastidiousness — measured. Run `curation.gstruct` through
+a load and a dump and the ten lines of comment in it are gone, because comments
+are not in the model and a writer can only write what it has; those ten lines
+are the argument for why five thrusts are `exposed`, that they were walked and
+that the facets grown from the DTM agree within three to nine degrees. A Save
+that deletes the geologist's reasoning is not a Save. Splicing one block also
+means a plane typed as `140.5/31` stays `140.5/31`, where a round trip would
+round it to whole degrees.
+
+There is no delete, and that is the format's answer rather than a missing
+button: a contact that does not hold is said not to hold — `span use * *
+rejected`, with the reason on it — which leaves both the geometry and the
+grounds in the file. Removing the lines would leave neither, and nobody could
+afterwards tell a fault that was rejected from one that was never mapped.
+
+**What it does not do yet.** A loose `observation` attaches to no path, so there
+is no trace to select it on and no ruler to draw it along; they are counted on
+opening and carried through a save untouched, but they cannot be edited here.
+The model stays in the file's own projection while the map is in the session's,
+and the two crossings — a path drawn, an anchor picked — are the only places
+that is handled; a file declaring no CRS at all is read as the session's and
+says so in the status bar, rather than being refused.
 
 ### Things worth knowing
 
