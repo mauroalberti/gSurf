@@ -122,9 +122,22 @@ class Session:
         import pyogrio
         from pyproj import CRS, Transformer
 
+        from .curation import frame_of, is_gstruct
+
         frames = []
 
         for spec in specs:
+            # The one format here with no header to read. It is parsed instead,
+            # which costs what parsing a text file costs and is still the
+            # difference between a session that opens on it and one that cannot.
+            if is_gstruct(spec["path"]):
+                crs, bounds = frame_of(spec["path"])
+
+                if crs is not None:
+                    frames.append((crs, bounds))
+
+                continue
+
             info = pyogrio.read_info(spec["path"], layer=spec.get("layer"))
 
             if info["crs"] is None or info["total_bounds"] is None:

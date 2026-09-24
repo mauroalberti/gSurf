@@ -281,6 +281,15 @@ class VectorSource:
         paid for one feature at a time; see `role_of_contents`.
         """
 
+        from .curation import is_gstruct
+
+        # A `.gstruct` holds no layers to list -- it holds structures, and they
+        # are lines. One entry so that the dialog has something to put in the
+        # box it always shows; `TraceAttitudeSource` pays no attention to the
+        # name, there being nothing else in the file to have meant.
+        if is_gstruct(path):
+            return ["structures"] if role == "lines" else []
+
         import pyogrio
 
         found = []

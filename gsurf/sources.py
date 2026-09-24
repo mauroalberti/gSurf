@@ -38,7 +38,7 @@ from .session import Session
 from .vectors import VectorSource
 
 VECTOR_FILTER = (
-    "Vector (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb);;"
+    "Vector (*.gpkg *.shp *.geojson *.json *.gml *.kml *.sqlite *.fgb *.gstruct);;"
     "All files (*)"
 )
 

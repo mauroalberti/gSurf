@@ -431,6 +431,28 @@ own assertion — `Write curation...` writes a gstruct fragment, one entry per
 record changed, over a layer left exactly as it was found. Re-reading it
 tomorrow gives the survey back, not yesterday's opinion of it.
 
+**`Read curation...` is the other half of that**, and without it the first half
+is a file nobody opens. It lays a `.gstruct` over the records on show: what it
+says about a structure it names, and nothing about one it does not. A plane in
+it arrives as a record *beside* the one already there rather than over it — a
+measurement taken at an outcrop does not delete the one the survey recorded —
+and the report says how many of its claims found anything, because a curation
+whose idents match nothing looks exactly like one that worked.
+
+The traces slot takes a `.gstruct` directly too, which is the same reader coming
+in through the other door: one record per plane the file carries, the structure
+`kind` as the category, a fit's own interval as its span, and a trace carrying
+no plane offered to `Fit from the traces` like any other. What that buys is the
+anchor. A GeoPackage has nowhere to put `@x,y`, so an export flattens it to a
+progressive — and a progressive is a reading off a ruler that the projection and
+the digitising both move. Read here, it is re-derived against the geometry in
+hand: `check_gstruct.py` opens one file in two projections and once more with
+its trace redrawn, and the measurement stays on the same ground each time while
+the progressive moves 1.35 m between UTM zones. `gsurf/curation.py` is the only
+module that imports gstruct, which is on no index and so cannot be declared in
+`pyproject.toml`; install it from its own repository, or the two buttons say so
+plainly instead of raising.
+
 **`Fit from the traces` reads the attitudes off the map instead of the
 columns.** A contact crossing relief is a plane already: where the line goes in
 plan and where the ground is along it are three dimensions, and `gsurf/traces.py`

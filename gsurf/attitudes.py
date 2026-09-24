@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .curation import is_gstruct
+
 # What the azimuth field means, shared by everything that reads one. Dip
 # direction is what an Italian survey writes down (`Immersione`); the
 # right-hand-rule strike is what an English-language one usually does.
@@ -593,8 +595,6 @@ class TraceAttitudeSource:
         enabled_field=ENABLED_FIELD,
         half_span=DEFAULT_HALF_SPAN,
     ):
-        import geopandas as gpd
-
         self.path = Path(path)
         self.layer = layer
         self.crs = crs
@@ -621,6 +621,22 @@ class TraceAttitudeSource:
         self.traces = []
         self.num_lines = 0
         self._records = None
+
+        # Measurements the file kept that have no trace to sit on. Empty for a
+        # layer, which has no way to hold such a thing in the first place.
+        self.loose = []
+
+        # The other reader. Not a special case bolted on: what comes out of it
+        # is the same list of records, and everything past this point in the
+        # class -- the spans, the reach, the section, the export -- never learns
+        # which of the two it was. What differs is on the way in, where a
+        # GeoPackage has to flatten an anchor to a progressive and this does
+        # not.
+        if is_gstruct(self.path):
+            self._read_gstruct(bounds)
+            return
+
+        import geopandas as gpd
 
         try:
             frame = gpd.read_file(path, layer=layer) if layer else gpd.read_file(path)
@@ -712,6 +728,63 @@ class TraceAttitudeSource:
             self._group(frame, azimuth, dip) if self.has_attitudes else self._bare(frame)
         )
         self.num_lines = sum(len(record.lines) for record in self.traces)
+
+    def _read_gstruct(self, bounds):
+        """
+        The records off a `.gstruct`, which opens with no GDAL under it.
+
+        The fields the constructor was given are not consulted and cannot be:
+        the format says what everything is -- a dip direction is written as one,
+        an attitude is an `attitude` and a fit is a `fit` -- so there is nothing
+        for a picker to name. `is_rhr_strike` is forced off for the same reason
+        and not left as it was asked for: `140/31` in this file means an
+        immersion of 140, and a strike convention carried over from a previous
+        layer would rotate every plane in it by a right angle.
+        """
+
+        from pyproj import CRS
+
+        from .curation import read, records_of, reproject
+
+        try:
+            dataset = read(self.path)
+        except Exception as err:
+            self.problem = str(err).split("\n")[0]
+            return
+
+        if not dataset.crs:
+            # The same refusal as a layer with an empty .prj, and for the same
+            # reason: everything downstream is in the session's projection, and
+            # coordinates that do not say which one they are in cannot be put
+            # there without guessing.
+            self.problem = "no CRS declared by the file"
+            return
+
+        self.is_rhr_strike = False
+
+        # There are no layers in this file. The picker offers one entry because
+        # the box it shows is always there, and what it means is the file.
+        self.layer = None
+        self.crs = self.crs if self.crs is not None else CRS.from_user_input(dataset.crs)
+
+        reproject(dataset, CRS.from_user_input(dataset.crs), self.crs)
+
+        reading = records_of(dataset, bounds=bounds)
+
+        self.dropped = reading.dropped
+        self.outside = reading.outside
+
+        if not reading.records:
+            self.problem = (
+                "no structure in the area" if reading.outside
+                else "no structure carrying a path"
+            )
+            return
+
+        self.traces = reading.records
+        self.loose = reading.loose
+        self.num_lines = reading.traces
+        self.has_attitudes = any(record.plane is not None for record in self.traces)
 
     # -- reading -----------------------------------------------------------
 
@@ -1097,6 +1170,13 @@ class TraceAttitudeSource:
 
         if off:
             text += f", {off} held out of the section"
+
+        # Said rather than left in an attribute nobody reads: these are field
+        # measurements the source deliberately kept because they attached to no
+        # trace, and a tool that shows only what did attach would report a
+        # survey one size smaller than it is.
+        if self.loose:
+            text += f"; {len(self.loose)} measurement(s) with no trace to sit on"
 
         if self.dropped:
             detail = ", ".join(f"{count} {reason}" for reason, count in self.dropped.items())

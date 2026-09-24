@@ -471,6 +471,14 @@ class TracePanel(QtWidgets.QWidget):
         )
         self.save_button.clicked.connect(self.write_curation)
 
+        self.read_button = QtWidgets.QPushButton("Read curation...")
+        self.read_button.setToolTip(
+            "Lay a gstruct file over the records on show: what it says about a "
+            "structure it names, and nothing about one it does not. A plane in "
+            "it arrives as a record beside the one already there, not over it."
+        )
+        self.read_button.clicked.connect(self.read_curation)
+
         self.export_button = QtWidgets.QPushButton("Export attitudes...")
         self.export_button.setToolTip(
             "Save the attitudes on show as a point layer: one point where "
@@ -492,6 +500,7 @@ class TracePanel(QtWidgets.QWidget):
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.scope_button)
         buttons.addWidget(self.fit_button)
+        buttons.addWidget(self.read_button)
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.export_button)
 
@@ -1004,6 +1013,64 @@ class TracePanel(QtWidgets.QWidget):
             written += 1
 
         return "\n".join(lines), written
+
+    def read_curation(self):
+        """
+        A curation laid over the records on show.
+
+        The other half of `Write curation`, and the reason that file is worth
+        writing: an assertion saved beside a layer that was left alone is only
+        an assertion if it can be brought back. What it says lands on the
+        records it names and on nothing else, and the report says how much of it
+        found anything -- a file of five claims that matched no record is a file
+        applied to nothing, and it has to be possible to see that.
+        """
+
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Read curation", "", "gstruct (*.gstruct);;All files (*)"
+        )
+
+        if not path:
+            return
+
+        try:
+            applied = self.apply_curation(path)
+        except Exception as err:
+            QtWidgets.QMessageBox.critical(
+                self, "Unreadable curation", f"{path}\n\n{str(err).splitlines()[0]}"
+            )
+            return
+
+        QtWidgets.QMessageBox.information(
+            self, "Curation read", f"{applied.summary()}\n\n{path}"
+        )
+
+    def apply_curation(self, path):
+        """
+        The file over the records, as `Applied`.
+
+        Split from `read_curation` the way `curation_text` is from
+        `write_curation`, and for the same reason.
+
+        The records the file adds go into the scoped list as well as onto the
+        table. Otherwise `Back to the layer` -- which is about undoing a fit --
+        would quietly undo the curation too, and a plane somebody asserted at an
+        outcrop would disappear because a button about something else was
+        pressed.
+        """
+
+        from gsurf.curation import apply_to, read
+
+        records, applied = apply_to(self.source.traces, read(path))
+
+        if applied.added:
+            self._scoped = list(self._scoped) + applied.added
+
+        self.source.set_traces(records)
+        self.fill()
+        self.changed.emit()
+
+        return applied
 
     def export_attitudes(self):
         """
