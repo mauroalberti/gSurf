@@ -90,7 +90,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Four hundred and eighty-three assertions over eleven scripts, each also runnable
+Four hundred and ninety-nine assertions over eleven scripts, each also runnable
 on its own. They drive real windows through synthesized mouse events, so Qt is
 put in its off-screen mode unless you ask otherwise. `check_sections.py` is 26
 of those 47 seconds on its own, most of it opening a 234 Mpx DEM and sampling
@@ -459,13 +459,43 @@ corner of a sheet and not a sample of one — and unlike a refusal it would not
 announce itself.
 
 **But a whole sheet fitted is more than the section can drag.** The fit itself
-is 130 s for those 22531 contacts and the table takes the 12254 records it
-gives back in half a second; rebuilding the bundle over them is **17 s**, and
-that is the cost of every release of the mouse afterwards, against the quarter
-of a second the tool is built around. So fitting a sheet entire is a thing to
-do once and look at, and the workflow the section wants is a layer cut down
-first — by `Tipo`, or to the ground a section actually crosses. That cut does
-not exist in the dialog yet.
+is **160 s** for those 22531 contacts and the table takes the 12254 records it
+gives back in half a second; rebuilding the bundle over them is **15 to 19 s**,
+and that is the cost of every release of the mouse afterwards, against the
+quarter of a second the tool is built around. So fitting a sheet entire is a
+thing to do once and look at.
+
+**`Near the section only` is the cut that makes it something to work in.** It
+keeps the records whose trace comes within the bundle's own width plus one more
+profile's spacing — a fact about the section rather than another number to set,
+and the right size by construction: room to drag the trace or to widen the
+bundle by one without having to cut again. A 19 km section with five profiles
+500 m apart takes those 22531 contacts down to **156**, in 60 ms. The fit on
+them is **1.2 s** instead of 160, and the bundle **0.3 s** instead of 15.
+
+**And the section that comes out is the same one, tick for tick.** Nine
+crossings either way — the same profile of the bundle, the same progressive to
+the millimetre, the same apparent dip to four decimals off the same source
+plane. That is the claim worth making about a selection, and it is the one the
+timings are worth nothing without: what the cut removes is what the section
+could never have crossed, so it buys two orders of magnitude and costs nothing
+in the answer.
+
+A trace is kept whole or left out, never trimmed at the boundary — cutting it
+there would put an endpoint on it where a decision stopped rather than where a
+contact does, and the fit would go on to read a plane off that corner. The
+records are the same objects, so an attitude typed in by hand or a record
+switched off survives the cut and is still there when the layer comes back. A
+fit does not: it is a claim about the set of records it ran on, and a different
+set ends it, which the box says in both directions.
+
+**The other cut named here, by `Tipo`, is deliberately not built.** On this
+sheet it would take those 156 records to 97 — the stratigraphic contacts, which
+are the ones that draw a readable V. Set against 22531 → 156 for the spatial
+cut, that is a factor of 1.6 against a factor of 144, over a UI that would have
+to enumerate 27 free-text categories up to 130 characters long. The two-stage
+gate already refuses the faults, for the reason stated above, and refusing them
+a second time by name costs 0.3 s of fitting.
 
 **`Export attitudes...` is how a computed attitude leaves the tool.** A fit that
 exists only on a screen is not a result, and the curation file will not carry

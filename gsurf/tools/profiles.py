@@ -60,7 +60,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.lines import Line2D
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from gsurf.attitudes import DEFAULT_HALF_SPAN, TraceAttitudeSource
+from gsurf.attitudes import DEFAULT_HALF_SPAN, TraceAttitudeSource, within
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.vectors import VectorSource, single_parts
 
@@ -413,12 +413,17 @@ class TracePanel(QtWidgets.QWidget):
 
     changed = QtCore.pyqtSignal()
 
-    def __init__(self, source, dem=None, parent=None):
+    def __init__(self, source, dem=None, swath=None, parent=None):
         super().__init__(parent)
 
         self.source = source
         self.dem = dem
         self._filling = False
+
+        # Asked for when the button is clicked rather than held: the section
+        # moves, and a swath handed over at construction would be the ground
+        # the tool opened on and not the ground being worked.
+        self._swath = swath
 
         # The records as the layer gave them, kept so the fit can be undone.
         # A flag beside them and not an identity test against `source.traces`:
@@ -427,6 +432,13 @@ class TracePanel(QtWidgets.QWidget):
         # fit that had not happened.
         self._surveyed = list(source.traces)
         self._showing_fits = False
+
+        # What is on the table before any fitting: the whole layer, or the part
+        # of it near the section. Everything downstream works from this and not
+        # from `_surveyed` -- the fit especially, which is the whole reason the
+        # cut exists.
+        self._scoped = list(self._surveyed)
+        self._scope = None
 
         # The gate the records on show were admitted by, kept for the export.
         # None while the table holds the layer's own attitudes, which no gate
@@ -467,7 +479,18 @@ class TracePanel(QtWidgets.QWidget):
         )
         self.export_button.clicked.connect(self.export_attitudes)
 
+        self.scope_button = QtWidgets.QPushButton("Near the section only")
+        self.scope_button.setToolTip(
+            "Work on the contacts the section reaches instead of the whole "
+            "layer: everything within the bundle's width plus one more "
+            "profile's spacing. Nothing is cut -- a trace is kept whole or "
+            "left out -- and the fit then runs on what is left."
+        )
+        self.scope_button.setEnabled(swath is not None)
+        self.scope_button.clicked.connect(self.narrow_to_section)
+
         buttons = QtWidgets.QHBoxLayout()
+        buttons.addWidget(self.scope_button)
         buttons.addWidget(self.fit_button)
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.export_button)
@@ -661,7 +684,93 @@ class TracePanel(QtWidgets.QWidget):
 
         self._filling = False
 
-    # -- saying it somewhere that lasts -----------------------------------
+    # -- the ground being worked on ---------------------------------------
+
+    @property
+    def scoped(self):
+        """Whether the table holds part of the layer rather than all of it."""
+
+        return self._scope is not None
+
+    def narrow_to_section(self):
+        """
+        The button: cut to the section's ground, or take the whole layer back.
+
+        Split from `set_scope` the way `fit_from_traces` is from `apply_fit`,
+        and for the same reason -- the box is modal, and a check driving the
+        panel off screen would sit on it forever.
+        """
+
+        if self._scope is not None:
+            report = self.set_scope(None)
+        else:
+            area = self._swath() if self._swath is not None else None
+
+            if area is None:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "No section to cut to",
+                    "The section has no length yet. Drag it across the ground "
+                    "you want to work on and ask again.",
+                )
+                return
+
+            report = self.set_scope(area)
+
+        QtWidgets.QMessageBox.information(
+            self, "The records in hand", describe_scope(report)
+        )
+
+    def set_scope(self, area):
+        """
+        Only the records whose trace enters `area`, or the whole layer again.
+
+        This is what makes a sheet workable rather than something to look at
+        once. Of the 22531 contacts a CARG mosaic puts inside the DEM, 156 are
+        near a 19 km section: the fit goes from over two minutes to under one,
+        and rebuilding the bundle -- which happens at every release of the
+        mouse, against a quarter of a second of patience -- from seventeen
+        seconds to nothing worth timing.
+
+        A fit is a claim about a set of records, so changing the set ends it.
+        What was on the table would otherwise be the fit of a wider layer with
+        some of its answers hidden, which is a different statement from the fit
+        of this one. Asking again is cheap, and cutting first is exactly what
+        makes it cheap.
+
+        Nothing is applied when nothing is in scope, for the reason `apply_fit`
+        gives about a fit that found nothing: a table emptied of every record
+        is a worse answer than the one it replaced -- and here it would empty
+        the section too, with the explanation living only in a box that has
+        been dismissed.
+        """
+
+        kept = self._surveyed if area is None else within(self._surveyed, area)
+
+        report = dict(
+            kept=len(kept), total=len(self._surveyed),
+            narrowed=area is not None, dropped_fit=False, empty=not kept,
+        )
+
+        if not kept:
+            return report
+
+        report["dropped_fit"] = self._showing_fits
+
+        self._scope = area
+        self._scoped = kept
+        self._showing_fits = False
+        self._fit_gate = None
+        self.fit_button.setText("Fit from the traces")
+        self.scope_button.setText(
+            "All of the layer" if area is not None else "Near the section only"
+        )
+
+        self.source.set_traces(self._scoped)
+        self.fill()
+        self.changed.emit()
+
+        return report
 
     # -- attitudes off the trace instead of off the columns ----------------
 
@@ -705,7 +814,7 @@ class TracePanel(QtWidgets.QWidget):
         the dialog appears on the size of the job and not on principle.
         """
 
-        total = len(self._surveyed)
+        total = len(self._scoped)
 
         if total <= FIT_PROGRESS_ABOVE:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
@@ -771,7 +880,7 @@ class TracePanel(QtWidgets.QWidget):
 
         from gsurf.traces import fit_records
 
-        fitted, report = fit_records(self._surveyed, self.dem, progress=progress)
+        fitted, report = fit_records(self._scoped, self.dem, progress=progress)
 
         if report["stopped"] or not fitted:
             return report
@@ -786,14 +895,22 @@ class TracePanel(QtWidgets.QWidget):
         return report
 
     def restore_surveyed(self):
-        """The records as the layer gave them, edits and all."""
+        """
+        The records as the layer gave them, edits and all.
 
-        self.source.set_traces(self._surveyed)
+        Back to what is in scope and not to the whole layer: undoing a fit and
+        undoing a cut are two decisions, and one button doing both would take
+        away a choice that was made separately.
+        """
+
+        self.source.set_traces(self._scoped)
         self._showing_fits = False
         self._fit_gate = None
         self.fit_button.setText("Fit from the traces")
         self.fill()
         self.changed.emit()
+
+    # -- saying it somewhere that lasts -----------------------------------
 
     def write_curation(self):
         """
@@ -1030,6 +1147,68 @@ def attitudes_frame(records, crs, gate=None, dem=None):
         points.append(Point(x, y))
 
     return gpd.GeoDataFrame(rows, geometry=points, crs=crs)
+
+
+def section_swath(trace, count, offset):
+    """
+    The ground the bundle covers, with one more profile's width either side.
+
+    The bundle is `count` parallel lines `offset` apart with the trace in the
+    middle, so it reaches `(count - 1) / 2 * offset` to each side; one spacing
+    more than that is the margin, and it is a fact about the section rather
+    than another number to set. It is also the right size by construction:
+    room to drag the trace, or to widen the bundle by one profile, without
+    having to cut again.
+
+    Round-ended, so the margin is the same in every direction and the whole
+    thing is one sentence -- everything within `d` of the section's line. A
+    flat cap would stop dead at the two handles, which are precisely the
+    points that get pulled outwards.
+    """
+
+    from shapely.geometry import LineString
+
+    distance = (count + 1) / 2.0 * offset
+
+    if distance <= 0.0:
+        return None
+
+    return LineString(trace).buffer(distance)
+
+
+def describe_scope(report):
+    """What the cut left in hand, in the words the panel puts on screen."""
+
+    if report["empty"]:
+        return (
+            "No trace of this layer comes near the section, so nothing was "
+            "changed. Drag the section over the ground you mean to work on, "
+            "or widen the bundle, and ask again."
+        )
+
+    if report["narrowed"]:
+        said = [
+            f"{report['kept']} record(s) of {report['total']} are near enough "
+            f"to the section. The rest are untouched in the layer and come "
+            f'back with "All of the layer".'
+        ]
+        again = "and on this many records it is the quick one."
+    else:
+        said = [f"The whole layer is back on the table: {report['total']} record(s)."]
+        again = "and over a whole layer that is the long one."
+
+    # Said in both directions, because a fit is dropped going either way and
+    # the difference is only whether the next one will be quick. Leaving it to
+    # be noticed in the button's own wording would be the tool doing something
+    # unasked and then not mentioning it.
+    if report["dropped_fit"]:
+        said.append(
+            f"The fit did not come across: it was a claim about the set of "
+            f"records it ran on, and this is a different set. It can be asked "
+            f"for again, {again}"
+        )
+
+    return "\n\n".join(said)
 
 
 def remembered():
@@ -1432,7 +1611,9 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.traces_window = None
 
         if self.traces is not None:
-            self.panel = TracePanel(self.traces, dem=self.session.dem)
+            self.panel = TracePanel(
+                self.traces, dem=self.session.dem, swath=self._section_swath
+            )
             self.panel.changed.connect(self.update_bundle)
 
             self.traces_window = SatelliteWindow(
@@ -1946,6 +2127,20 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             num_profiles=count,
             offset=self.offset,
         )
+
+    def _section_swath(self):
+        """
+        The ground the bundle covers right now, or None while there is none.
+
+        Handed to the panel as this method and not as its result, because the
+        cut is asked for long after the window was built and against a section
+        that has been dragged since.
+        """
+
+        if self._length() < 1.0:
+            return None
+
+        return section_swath(self.trace, self.num_profiles, self.offset)
 
     def _grid(self, profilers):
         """

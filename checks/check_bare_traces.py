@@ -93,7 +93,7 @@ def vee(x0=600400.0, y0=4420050.0, width=250.0, length=1300.0, step=10.0):
 
 def main():
     import geopandas as gpd
-    from shapely.geometry import LineString
+    from shapely.geometry import LineString, Point
 
     from gsurf.attitudes import TraceAttitudeSource, TraceRecord
 
@@ -270,6 +270,156 @@ def main():
           TracePanel._attitude_text(blank))
     check("and one with a plane still reads as its attitude",
           "/" in TracePanel._attitude_text(given), TracePanel._attitude_text(given))
+
+    # -- cutting the layer down to the ground the section covers -------------
+
+    print("\n-- the ground being worked on --\n")
+
+    from geogst.core.geometries.shapes.lines import Ln
+
+    from gsurf.attitudes import within
+    from gsurf.tools.profiles import describe_scope, section_swath
+
+    def line_record(name, points):
+        line = Ln(np.asarray(points, dtype=float))
+
+        return TraceRecord(category=name, plane=None, lines=[line],
+                           length=float(line.length_2d()))
+
+    # A section along y = 0 from x = 0 to 1000, three profiles 100 m apart: the
+    # bundle reaches 100 m either side and the margin is one more spacing, so
+    # everything within 200 m of the line is in.
+    area = section_swath([(0.0, 0.0), (1000.0, 0.0)], 3, 100.0)
+
+    check("the swath reaches the bundle's width plus one more spacing",
+          area.contains(Point(500.0, 199.0)) and not area.contains(Point(500.0, 201.0)),
+          f"{(3 + 1) / 2 * 100.0:.0f} m either side")
+
+    check("a bundle with no spacing has no swath", section_swath(
+        [(0.0, 0.0), (1000.0, 0.0)], 3, 0.0) is None)
+
+    inside = line_record("in", [(400.0, -50.0), (600.0, 50.0)])
+    outside = line_record("out", [(400.0, 500.0), (600.0, 500.0)])
+    straddling = line_record("half", [(500.0, 100.0), (500.0, 900.0)])
+
+    # Bounding box over the swath's, geometry nowhere near it: the assertion
+    # that the cheap first test has not quietly become the answer.
+    corner = line_record("corner", [(1150.0, 150.0), (1190.0, 190.0)])
+
+    scattered = TraceRecord(
+        category="scattered", plane=None, length=0.0,
+        lines=[Ln(np.array([[3000.0, 3000.0], [3100.0, 3000.0]])),
+               Ln(np.array([[400.0, -10.0], [500.0, 10.0]]))],
+    )
+
+    candidates = [inside, outside, straddling, corner, scattered]
+    kept = within(candidates, area)
+
+    check("a trace inside is kept and one outside is not",
+          inside in kept and outside not in kept)
+
+    check("a bounding box over the swath is not enough",
+          corner not in kept,
+          f"its box is {corner.lines[0].coords[:, 0].min():.0f}-"
+          f"{corner.lines[0].coords[:, 0].max():.0f} east, the swath's ends "
+          f"{area.bounds[2]:.0f}")
+
+    check("a record is kept for any one of its lines",
+          scattered in kept, "one line 3 km away, one crossing the section")
+
+    # The one the whole rule turns on. Clipping here would put an endpoint on
+    # the trace where the selection stops, and the fit would then read a plane
+    # off a bend that is the edge of a decision rather than of a contact.
+    check("a trace crossing the edge is kept whole, not cut at it",
+          straddling in kept and abs(straddling.length - 800.0) < 1e-9
+          and len(straddling.lines[0].coords) == 2,
+          f"{straddling.length:.1f} m, {len(straddling.lines[0].coords)} vertices")
+
+    check("and the records that survive are the very same objects",
+          all(any(k is c for c in candidates) for k in kept))
+
+    # -- the panel, where the cut decides what gets fitted -------------------
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "scoped.gpkg"
+
+        # Two on the section's ground -- the V, which determines a plane, and a
+        # straight line, which does not -- and one a kilometre east of both.
+        gpd.GeoDataFrame(
+            {"Tipo": ["contatto", "contatto", "faglia"]},
+            geometry=[
+                LineString(vee()),
+                LineString([(600250, 4420100), (600600, 4420100)]),
+                LineString([(601500, 4420100), (601800, 4420100)]),
+            ],
+            crs="EPSG:25833",
+        ).to_file(path, layer="limiti", driver="GPKG")
+
+        source = TraceAttitudeSource(
+            path, crs="EPSG:25833", layer="limiti", category_field="Tipo",
+        )
+
+        dem = Dem(planar_dem(Path(tmp) / "plane2.tif"))
+        swath = section_swath([(600500, 4420000), (600500, 4421400)], 3, 100.0)
+
+        panel = TracePanel(source, dem=dem, swath=lambda: swath)
+
+        # Held in a name: a panel built inside the call is collected before the
+        # button is read, and Qt takes the C++ widget with it.
+        unsectioned = TracePanel(source, dem=dem)
+
+        check("with no section to cut to the button is not offered",
+              unsectioned.scope_button.isEnabled() is False)
+
+        check("the panel opens on the whole layer",
+              panel.table.rowCount() == 3 and not panel.scoped)
+
+        report = panel.set_scope(swath)
+
+        check("the cut leaves only what the section reaches",
+              panel.table.rowCount() == 2 and panel.scoped
+              and report["kept"] == 2 and report["total"] == 3,
+              f"{report['kept']} of {report['total']}")
+
+        check("and the button now offers the way back",
+              panel.scope_button.text() == "All of the layer",
+              panel.scope_button.text())
+
+        panel.apply_fit()
+
+        check("the fit runs on what is in scope, not on the layer",
+              panel.fitted and panel.table.rowCount() == 1
+              and all(r.attrs.get("fitted") for r in source.traces),
+              f"{panel.table.rowCount()} fitted from 2 in scope")
+
+        panel.restore_surveyed()
+
+        check("and undoing it comes back to the scope, not to the layer",
+              panel.table.rowCount() == 2 and panel.scoped and not panel.fitted,
+              f"{panel.table.rowCount()} rows")
+
+        # A fit is a claim about a set of records, so a different set ends it.
+        panel.apply_fit()
+        dropped = panel.set_scope(swath)
+
+        check("cutting again drops the fit and says it did",
+              dropped["dropped_fit"] and not panel.fitted
+              and "fit did not come across" in describe_scope(dropped),
+              describe_scope(dropped).splitlines()[-1][:60])
+
+        elsewhere = section_swath([(700000, 4500000), (701000, 4500000)], 3, 100.0)
+        empty = panel.set_scope(elsewhere)
+
+        check("a cut that would empty the table changes nothing",
+              empty["empty"] and panel.table.rowCount() == 2 and panel.scoped
+              and "nothing was changed" in describe_scope(empty))
+
+        whole = panel.set_scope(None)
+
+        check("and letting the scope go brings the whole layer back",
+              panel.table.rowCount() == 3 and not panel.scoped
+              and whole["kept"] == 3
+              and panel.scope_button.text() == "Near the section only")
 
     print()
 

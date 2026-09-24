@@ -367,6 +367,45 @@ def point_at(lines, s):
     return None
 
 
+def within(records, area):
+    """
+    The records whose trace enters `area`, each kept whole or dropped whole.
+
+    The same rule as the `bounds` a source is read with, for the same reason: a
+    trace is cut by the profile it is intersected with, and not by the ground
+    somebody has decided to work on. Trimming it here would invent an endpoint
+    where the selection ends -- and the fit would then read a plane off a bend
+    that is the edge of a choice rather than of a contact. What narrows is
+    which contacts are in hand, never what any one of them says.
+
+    The bounding box first and the geometry only for what survives it. On a
+    CARG sheet this is twenty-two thousand records against one polygon, all but
+    a couple of hundred of them decided by four comparisons.
+    """
+
+    from shapely.geometry import LineString
+
+    left, bottom, right, top = area.bounds
+    kept = []
+
+    for record in records:
+        traced = [
+            line.coords[:, :2] for line in record.lines
+            if line.coords is not None and len(line.coords) >= 2
+        ]
+
+        near = [
+            xy for xy in traced
+            if xy[:, 0].min() <= right and xy[:, 0].max() >= left
+            and xy[:, 1].min() <= top and xy[:, 1].max() >= bottom
+        ]
+
+        if near and any(area.intersects(LineString(xy)) for xy in near):
+            kept.append(record)
+
+    return kept
+
+
 def _finite(value):
     """A number, or nothing where the cell was empty."""
 
