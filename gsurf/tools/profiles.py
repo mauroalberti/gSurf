@@ -923,13 +923,15 @@ class TracePanel(QtWidgets.QWidget):
 
     def write_curation(self):
         """
-        The edits as a gstruct fragment: one assertion per record changed.
+        The edits as a gstruct fragment: refusals as `use`, reaches as `fit`.
 
-        `reach` is a proposed axis, not one the format already defines. It
-        behaves like the axes that are there -- an interval on a trace, last
-        one covering a progressive wins -- so `value_at` would read it without
-        being taught anything; but the name is a suggestion and should be
-        settled before anything is built on it.
+        Both kinds of line are the format's own, which they were not before: a
+        refusal used to go out on an invented `use` axis with an invented value,
+        and a reach on an invented `reach` axis, and both would have been read
+        back by `value_at` without complaint -- which is what made them worth
+        settling rather than leaving. `use` is now in gstruct 0.2 with a
+        vocabulary, and a reach is a plane over an interval, which the format
+        already had a word for.
         """
 
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
@@ -939,80 +941,66 @@ class TracePanel(QtWidgets.QWidget):
         if not path:
             return
 
-        text, written = self.curation_text()
+        try:
+            text, report = self.curation_text()
+        except ImportError as err:
+            QtWidgets.QMessageBox.critical(
+                self, "Cannot write a curation", str(err)
+            )
+            return
 
         Path(path).write_text(text, encoding="utf8")
 
+        said = [
+            f"{report['structures']} structure(s): "
+            f"{report['refusals']} refusal(s), {report['fits']} fit(s)."
+        ]
+
+        # Said in the box rather than left to be noticed by whoever opens the
+        # file later. A record the layer gives no ident to cannot be named by a
+        # curation at all, so a decision made about it is a decision that does
+        # not leave this window.
+        if report["unnamed"]:
+            said.append(
+                f"{report['unnamed']} decision(s) could not be written: the layer "
+                f"gives those records no ident, and a curation names what it "
+                f"speaks about."
+            )
+
+        if report["planeless"]:
+            said.append(
+                f"{report['planeless']} reach(es) set on a trace with no attitude "
+                f"were not written: a fit is a plane over an interval."
+            )
+
         QtWidgets.QMessageBox.information(
-            self,
-            "Curation written",
-            f"{written} structure(s) carry an assertion.\n\n{path}",
+            self, "Curation written", "\n\n".join(said) + f"\n\n{path}"
         )
 
     def curation_text(self):
-        """The fragment and how many structures it speaks about."""
+        """
+        The fragment, and a report of what did and did not get into it.
 
-        lines = [
-            "gstruct 0.1",
-            f"crs EPSG:{self.source_epsg()}",
-            'project "Curatela da gSurf: portata e giaciture decise in sezione"',
-            'note "Si applica sopra il dataset sorgente. Ogni riga e\' '
-            'un\'asserzione umana, non un derivato."',
-            "",
-        ]
+        The building of it is in `gsurf.curation`, beside the reading: the two
+        have to agree about every name in the file, and a writer that lived here
+        would be agreeing with a reader it cannot see. Here there is only what
+        the panel knows and that module does not -- which layer is open, and
+        what the reach defaults to.
+        """
 
-        written = 0
+        from gsurf.curation import curation_of
 
-        for record in self.source.traces:
-            # A fit is a derivative, and this file says in its own header that
-            # every line in it is a human assertion. A fitted span written out
-            # here would be the tool quoting itself back as testimony -- and
-            # every one of them carries a span, so the whole file would become
-            # that. They are skipped, and the way to keep a fit is to accept it
-            # and set the reach by hand.
-            if record.attrs.get("fitted"):
-                continue
+        layer = getattr(self.source, "layer", None)
+        opened = getattr(self.source, "path", None)
 
-            assertions = []
-
-            if not record.enabled:
-                assertions.append("  span use * * excluded src=gsurf")
-
-            # Only a reach somebody set. A record still living on the tool's
-            # default has had no decision made about it, and writing the
-            # default out as an assertion would put words in the geologist's
-            # mouth -- and freeze a number that is meant to be moved.
-            ends = (
-                record.reach_endpoints(self.source.half_span)
-                if record.span is not None else None
-            )
-
-            if ends is not None:
-                (x0, y0), (x1, y1) = ends
-                s0, s1 = record.extent(self.source.half_span)
-
-                # A reach can be asserted about a contact whose attitude is
-                # still unread -- how far the thing extends and what it dips
-                # are two claims, and the file carries whichever has been made.
-                plane = (
-                    f" plane={record.plane.dipazim:.0f}/{record.plane.dipang:.0f}"
-                    if record.plane is not None else ""
-                )
-
-                assertions.append(
-                    f"  span reach @{x0:.2f},{y0:.2f} @{x1:.2f},{y1:.2f} "
-                    f"{(s1 - s0) / 2.0:.0f} src=gsurf{plane}"
-                )
-
-            if not assertions:
-                continue
-
-            lines.append(f'structure "{record.category}"')
-            lines.extend(assertions)
-            lines.append("")
-            written += 1
-
-        return "\n".join(lines), written
+        return curation_of(
+            self.source.traces,
+            self.source.half_span,
+            crs=f"EPSG:{self.source_epsg()}",
+            source=None if opened is None else (
+                f"{Path(opened).name}:{layer}" if layer else Path(opened).name
+            ),
+        )
 
     def read_curation(self):
         """

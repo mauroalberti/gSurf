@@ -931,6 +931,13 @@ class TraceAttitudeSource:
         The columns that are neither geometry nor already a field of a record,
         lifted out of the loop.
 
+        The category column is *not* excluded, though it is a field of a record.
+        Being the category is a role a column was given in a dialog, not a claim
+        that it means nothing else: on `misure_montealpi.gpkg` the column picked
+        is `code`, which is also each fault's name, and dropping it here left
+        every record unable to say what it was called -- so a curation written
+        off those records could name nothing and said nothing about anything.
+
         Read row by row this is `frame.iloc[ndx]`, which builds a Series per
         call: unnoticeable over the fifty records a curated fault layer makes,
         and eight and a half seconds over the twenty-four thousand a bare CARG
@@ -939,7 +946,6 @@ class TraceAttitudeSource:
         """
 
         used = {
-            self.category_field,
             self.dip_dir_field,
             self.dip_field,
             self.anchor_field,

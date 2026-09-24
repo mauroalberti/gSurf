@@ -74,13 +74,20 @@ UNCONSTRAINED = "traccia-rettilinea"
 # and is reported rather than acted on: `value_at` would read an invented axis
 # perfectly well, which is exactly why acting on one silently would let it
 # become real without anybody deciding it should.
-AXES = ("certainty", "exposure")
+AXES = ("certainty", "exposure", "use")
 
-# What `in_section` has to say for a record to arrive held out of the section.
-# The name is the one gSurf already reads off a column (`ENABLED_FIELD`), so the
-# same claim travels under the same name whether it comes in a GeoPackage field
-# or as a structure attribute.
-OUT_OF_SECTION = ("no", "false", "0", "off", "excluded")
+# `use` is the one of the three this tool acts on rather than carries. It is the
+# curator's decision about a stretch -- `rejected` means nothing there holds, not
+# the fit and not the measurement -- and it went into gstruct 0.2 because the
+# panel needed to write a refusal down and had nowhere to put one. This module
+# used to read it off a structure attribute called `in_section`, which was a name
+# invented here; an axis says it in the format's own grammar, and says it about a
+# stretch rather than about a whole fault.
+USE = "use"
+ACCEPTED, REJECTED, UNSAID = "accepted", "rejected", "unknown"
+
+# The version of gstruct that has the axis in it.
+NEEDS = (0, 2)
 
 # Where a record's identity is looked for, in order. `ident` is what gstruct
 # calls it; `code` is what `export_gsurf.py` names the column it flattens the
@@ -127,6 +134,41 @@ def is_gstruct(path):
     return path is not None and Path(path).suffix.lower() == SUFFIX
 
 
+def module():
+    """
+    The gstruct library, or an ImportError written to be read in a dialog.
+
+    The one dependency this project cannot name in its `pyproject.toml`: the
+    name on PyPI belongs to something else, so gstruct is installed from its own
+    repository or not at all. Every caller of this shows what comes out of here
+    to somebody, so it says what to do rather than where it broke.
+    """
+
+    try:
+        import gstruct
+    except ImportError as err:
+        raise ImportError(
+            "gstruct is not installed. It is on no package index -- the name "
+            "there belongs to an unrelated project -- so it is installed from "
+            "its own repository:  pip install -e <gstruct repo>"
+        ) from err
+
+    # The same refusal gstruct makes about a file from the future, in the other
+    # direction: 0.2 is where the `use` axis and `span_at` arrived, and an older
+    # library would read a refusal without acting on it -- a stretch drawn into
+    # a section that somebody had rejected, which is a wrong answer that looks
+    # like an answer.
+    if tuple(int(n) for n in gstruct.VERSION.split(".")) < NEEDS:
+        raise ImportError(
+            f"gstruct {gstruct.VERSION} is installed and this needs "
+            f"{'.'.join(str(n) for n in NEEDS)} or later: the `use` axis is "
+            f"read there, and an older library would ignore a refusal instead "
+            f"of refusing to read it. Update the gstruct repository."
+        )
+
+    return gstruct
+
+
 def read(path):
     """
     The file as a dataset, with every anchor projected onto its own path.
@@ -138,20 +180,7 @@ def read(path):
     the geometry the records brought with them.
     """
 
-    try:
-        import gstruct
-    except ImportError as err:
-        # The one dependency this project cannot name in its `pyproject.toml`:
-        # the name on PyPI belongs to something else, so gstruct is installed
-        # from its own repository or not at all. Both callers of this show what
-        # comes out of here in a dialog, so it is written to be read there.
-        raise ImportError(
-            "gstruct is not installed. It is on no package index -- the name "
-            "there belongs to an unrelated project -- so it is installed from "
-            "its own repository:  pip install -e <gstruct repo>"
-        ) from err
-
-    return gstruct.load(str(path))
+    return module().load(str(path))
 
 
 def reproject(dataset, source, target):
@@ -331,7 +360,6 @@ def records_of(dataset, bounds=None):
         if structure.label:
             common["label"] = structure.label
 
-        enabled = _enabled(structure.attrs)
         planes = 0
 
         for attitude in structure.attitudes:
@@ -341,6 +369,7 @@ def records_of(dataset, bounds=None):
 
             planes += 1
             place = length / 2.0 if attitude.s is None else float(attitude.s)
+            axes = _axes_at(structure, place)
 
             reading.records.append(
                 TraceRecord(
@@ -350,10 +379,10 @@ def records_of(dataset, bounds=None):
                     length=length,
                     anchor=None if attitude.s is None else float(attitude.s),
                     span=None,
-                    enabled=enabled,
+                    enabled=_accepted(axes),
                     attrs={
                         **common,
-                        **_axes_at(structure, place),
+                        **axes,
                         **dict(attitude.attrs),
                         "src": attitude.attrs.get("src", "field"),
                         **({} if attitude.offset is None
@@ -374,6 +403,7 @@ def records_of(dataset, bounds=None):
             )
             verdict = fit.attrs.get("verdict", "")
             place = length / 2.0 if span is None else (span[0] + span[1]) / 2.0
+            axes = _axes_at(structure, place)
 
             reading.records.append(
                 TraceRecord(
@@ -386,10 +416,13 @@ def records_of(dataset, bounds=None):
                     # Off where the trace never constrained the dip, and left on
                     # where it did: the rule is `attitude_at`'s own, and it
                     # travels with the record instead of being reapplied here.
-                    enabled=enabled and verdict != UNCONSTRAINED,
+                    # A curator's `use` overrules it either way -- the verdict is
+                    # a default, and somebody who has been to the outcrop knows
+                    # something the singular values do not.
+                    enabled=_accepted(axes, otherwise=verdict != UNCONSTRAINED),
                     attrs={
                         **common,
-                        **_axes_at(structure, place),
+                        **axes,
                         **dict(fit.attrs),
                         "src": fit.attrs.get("from", "fit"),
                         "fitted": True,
@@ -398,14 +431,16 @@ def records_of(dataset, bounds=None):
             )
 
         if planes == 0:
+            axes = _axes_at(structure, length / 2.0)
+
             reading.records.append(
                 TraceRecord(
                     category=structure.kind or "unknown",
                     plane=None,
                     lines=lines,
                     length=length,
-                    enabled=enabled,
-                    attrs={**common, **_axes_at(structure, length / 2.0)},
+                    enabled=_accepted(axes),
+                    attrs={**common, **axes},
                 )
             )
 
@@ -437,26 +472,51 @@ def records_of(dataset, bounds=None):
 
 def _axes_at(structure, s):
     """
-    What the format's two axes say at one place along the trace.
+    What the format's axes say at one place along the trace.
 
-    `value_at` and not the spans directly, because the rule that the last span
+    `span_at` and not the spans directly, because the rule that the last span
     covering a progressive wins is how a local correction is written -- by
     adding a line, never by editing one -- and reading the list any other way
     would quietly prefer the general statement to the correction over it.
+
+    The span rather than its value, for `use` alone, so that `reason=` travels
+    with the refusal. A row that arrives switched off with no way to ask why is
+    a row somebody will switch back on.
     """
 
-    return {axis: structure.value_at(axis, s) for axis in AXES}
+    out = {}
+
+    for axis in AXES:
+        span = structure.span_at(axis, s)
+        out[axis] = UNSAID if span is None else span.value
+
+        if axis == USE and span is not None and span.attrs.get("reason"):
+            out["use.reason"] = span.attrs["reason"]
+
+    return out
 
 
-def _enabled(attrs):
-    """Whether a structure arrives in the section or held out of it."""
+def _accepted(axes, otherwise=True):
+    """
+    Whether a record arrives in the section, once the `use` axis has spoken.
 
-    said = attrs.get("in_section")
+    Where it says nothing -- which is the normal case, and is not a refusal --
+    the automatic rule decides, and that is what `otherwise` carries: for a fit
+    it is its own verdict, for a measurement it is yes. Where it does speak it
+    wins outright, both ways: a curator who writes `accepted` over a stretch a
+    straight trace had switched off is overruling the gate on purpose, and a
+    gate that could not be overruled would be a rule rather than a default.
+    """
 
-    if said is None:
+    said = axes.get(USE, UNSAID)
+
+    if said == REJECTED:
+        return False
+
+    if said == ACCEPTED:
         return True
 
-    return str(said).strip().lower() not in OUT_OF_SECTION
+    return otherwise
 
 
 def _overlaps(coords, bounds):
@@ -562,6 +622,13 @@ def apply_to(records, dataset):
     covers no record of its own structure is counted as landing nowhere rather
     than dropped, because a curation whose intervals miss is a file that looks
     applied and is not.
+
+    **`use` is the one axis acted on rather than carried.** `rejected` takes a
+    record out of the section and `accepted` puts it back, both of them against
+    whatever the automatic rule had decided -- a curator overruling a gate is
+    the point of a curation, not an accident to be guarded against. It reaches a
+    plane the same file adds, too, since an axis is about a stretch of ground
+    and not about the rows that happened to be open when it was read.
     """
 
     from .attitudes import TraceRecord
@@ -599,11 +666,14 @@ def apply_to(records, dataset):
             if key in IDENT_KEYS or key in AXES or key in ("kind", "label")
         }
 
-        if "in_section" in structure.attrs:
-            for record in found:
-                record.enabled = _enabled(structure.attrs)
-
-            applied.assertions += 1
+        # Resolved once, because a plane the file *adds* sits somewhere too and
+        # has to answer to a refusal covering that somewhere. An axis is about a
+        # stretch of ground, not about the rows that happened to be open when it
+        # was read.
+        refusals = [
+            (*_interval(lines, length, span), span.value)
+            for span in structure.spans if span.axis == USE
+        ]
 
         for span in structure.spans:
             if span.axis not in AXES:
@@ -618,6 +688,14 @@ def apply_to(records, dataset):
                     record.attrs[span.axis] = span.value
                     landed += 1
 
+                    if span.axis == USE:
+                        record.enabled = _accepted(
+                            {USE: span.value}, otherwise=record.enabled
+                        )
+
+                        if span.attrs.get("reason"):
+                            record.attrs["use.reason"] = span.attrs["reason"]
+
             if landed:
                 applied.assertions += 1
             else:
@@ -628,6 +706,7 @@ def apply_to(records, dataset):
                 continue
 
             at = None if attitude.anchor is None else _project(lines, attitude.anchor)
+            said = _said_at(refusals, length / 2.0 if at is None else at[0])
 
             applied.added.append(
                 TraceRecord(
@@ -637,8 +716,10 @@ def apply_to(records, dataset):
                     length=length,
                     anchor=None if at is None else at[0],
                     span=None,
+                    enabled=_accepted({USE: said}, otherwise=_accepted(identity)),
                     attrs={
                         **identity,
+                        **({} if said == UNSAID else {USE: said}),
                         **dict(attitude.attrs),
                         "src": attitude.attrs.get("src", "field"),
                         **({} if at is None else {"off_m": round(at[1], 1)}),
@@ -653,6 +734,7 @@ def apply_to(records, dataset):
 
             s0, s1 = _interval(lines, length, fit)
             verdict = fit.attrs.get("verdict", "")
+            said = _said_at(refusals, (s0 + s1) / 2.0)
 
             applied.added.append(
                 TraceRecord(
@@ -662,9 +744,13 @@ def apply_to(records, dataset):
                     length=length,
                     anchor=None,
                     span=(s0, s1),
-                    enabled=verdict != UNCONSTRAINED,
+                    enabled=_accepted(
+                        {USE: said},
+                        otherwise=verdict != UNCONSTRAINED and _accepted(identity),
+                    ),
                     attrs={
                         **identity,
+                        **({} if said == UNSAID else {USE: said}),
                         **dict(fit.attrs),
                         "src": fit.attrs.get("from", "fit"),
                         "fitted": True,
@@ -676,6 +762,207 @@ def apply_to(records, dataset):
     applied.ignored = dict(ignored)
 
     return list(records) + applied.added, applied
+
+
+# -- records as a curation ------------------------------------------------
+
+# What a fit says about itself, carried out in the order FORMAT.md lists it and
+# skipped where the record has not got it. A fit read in from a `.gstruct` goes
+# back out with its own diagnostics intact; one computed here reports `window`
+# and `span_verdict`, which are the two numbers it actually has. Nothing on this
+# list is invented for the occasion, and `nvert` in particular is never written
+# by gSurf: the format reserves it for digitised vertices, and this tool samples
+# the DEM, which is a different count of a different thing.
+FIT_KEYS = (
+    "window", "span_verdict", "verdict", "nvert", "dof", "s2", "s3", "eps",
+    "snr", "flat", "jack", "plan", "drape", "seed", "licence", "span", "dem",
+    "sampled", "station",
+)
+
+
+def curation_of(records, half_span, crs=None, source=None):
+    """
+    The records as a curation, as `(text, report)`: what was decided, in gstruct.
+
+    Written with the format's own writer rather than as text, which is the whole
+    reason this lives here and not in the panel. A fragment built by hand has to
+    get the quoting, the ordering and the grammar right on its own and can be
+    wrong in ways that only show up when somebody tries to read it back; a
+    `Dataset` handed to `dumps` cannot be unparseable, because `dumps` is the
+    other half of the parser.
+
+    **What comes out is two kinds of line, and the file says which is which.**
+    A `span use ... rejected` is a human decision. A `fit` is a derivative, and
+    carries `from=` saying what derived it -- a window swept over a trace, or a
+    reach somebody set by hand. The file this replaces declared every line in
+    itself a human assertion, and so had to drop every fit on the floor to stay
+    honest; declaring the two apart is what lets the fits be written at all.
+
+    **Only what was decided or computed here.** A refusal the record's own
+    attributes already account for is not restated, and neither is a fit that
+    came in with the file. Both would be true, and both would be wrong to write:
+    a curation restating its source is not laid over it, it is a second copy of
+    it, and applied back it would double every fit it had just read.
+
+    **A record is named by its ident, not by its category.** A category is a
+    legend entry and a curation has to name one structure, so a record the layer
+    gives no ident to cannot be spoken about: those are counted in the report,
+    not guessed at. Records sharing an ident share one `structure` block.
+
+    **The interval on a refusal is a locator.** The rule elsewhere is that a
+    reach nobody set is not written down -- writing the tool's default out as an
+    assertion would put words in the geologist's mouth. A refusal is different:
+    the claim is `rejected` and the interval only says where, so the record's own
+    extent is used, default half-span and all. The granularity is the format's:
+    rejecting a stretch rejects what sits on it, and where two planes sit at one
+    place it cannot tell them apart.
+    """
+
+    gstruct = module()
+
+    dataset = gstruct.Dataset(
+        crs=crs or "",
+        meta={
+            "version": gstruct.VERSION,
+            "project": "Curatela da gSurf: portata e giaciture decise in sezione",
+            "note": "Si applica sopra il dataset sorgente, che non viene toccato. "
+                    "Le righe `span use` sono decisioni umane; i `fit` sono "
+                    "derivati e portano in `from=` da dove vengono.",
+        },
+    )
+
+    if source:
+        dataset.meta["source"] = str(source)
+
+    report = dict(structures=0, refusals=0, fits=0, unnamed=0, planeless=0)
+    structures = {}
+
+    for record in records:
+        ends = record.reach_endpoints(half_span)
+        start, end = (None, None) if ends is None else ends
+        lines = []
+
+        if record.enabled != _accounted(record):
+            lines.append(gstruct.Span(
+                axis=USE, value=ACCEPTED if record.enabled else REJECTED,
+                start=start, end=end, attrs={"src": "gsurf"},
+            ))
+            report["refusals"] += 1
+
+        fit = _fit_of(gstruct, record, start, end)
+
+        if fit is not None:
+            lines.append(fit)
+            report["fits"] += 1
+        elif record.span is not None and record.plane is None:
+            # A reach on a trace nobody has read an attitude off. There is no
+            # fit to write, because a fit is a plane over an interval and there
+            # is no plane; and the record draws no tick in a section either, so
+            # what was decided has nothing yet to be a decision about.
+            report["planeless"] += 1
+
+        if not lines:
+            continue
+
+        # Looked up here and not at the top: a record with nothing to say about
+        # it is not a record that could not be named, and counting it as one
+        # would report a whole unnamed layer as a drawer full of lost decisions.
+        ident = ident_of(record)
+
+        if ident is None:
+            report["unnamed"] += len(lines)
+            continue
+
+        if ident not in structures:
+            # No `kind`: a curation names structures, it does not describe them
+            # again. The kind is the source's fact and is already in the file
+            # this one is laid over.
+            structures[ident] = gstruct.Structure(ident=ident)
+            dataset.structures.append(structures[ident])
+            report["structures"] += 1
+
+        for line in lines:
+            if isinstance(line, gstruct.Fit):
+                structures[ident].fits.append(line)
+            else:
+                structures[ident].spans.append(line)
+
+    return gstruct.dumps(dataset), report
+
+
+def _accounted(record):
+    """
+    Whether a record would be in the section on what it already carries.
+
+    The writer's half of `records_of`, and the reason `use` has two values
+    rather than one. A record is only written about where the panel and its own
+    attributes disagree: switched off with nothing to account for it is a
+    refusal somebody made here, and switched *on* against a `rejected` axis or a
+    straight-trace verdict is somebody overruling, which is just as much a
+    decision and would be lost if only refusals were written.
+
+    Without this the file would restate every refusal it had just read, and the
+    ones the gate made on its own would come back signed by a geologist who
+    never made them.
+    """
+
+    verdict = record.attrs.get("verdict", "")
+
+    return _accepted(record.attrs, otherwise=verdict != UNCONSTRAINED)
+
+
+def _fit_of(gstruct, record, start, end):
+    """
+    A record as a `fit`, or None where there is nothing derived to write.
+
+    Two ways a plane comes to hold over an interval rather than at a point, and
+    both of them are derivations, which is what `fit` is for. One is computed --
+    a window swept along the trace until it holds -- and carries the diagnostics
+    of that computation. The other is a reach somebody set in the table: a
+    measurement taken at one outcrop, extended along the fault by judgement.
+    `from=` is what tells them apart afterwards, and it is not decoration --
+    `attitude_at` gives a measurement precedence over a fit near the outcrop and
+    falls back to the fit further along, which is exactly what a reach means.
+
+    A reach still on the tool's default is not one: nobody decided 250 m, so
+    nobody says so. Neither is a fit that arrived in the file this curation will
+    be laid over: the header says *si applica sopra il dataset sorgente*, and a
+    file that restates its source is not laid over it -- applied back, it would
+    add every one of those fits a second time, which is our own round trip
+    corrupting the thing it was supposed to preserve. `window` is what tells
+    them apart, and it is a fact about the fit rather than a flag set for this
+    purpose: only gSurf's own fitter reads a plane over a swept window, so only
+    its fits carry the metres they were read over.
+
+    What this does not carry is a plane *edited* in the table on a record that
+    came with one. That is neither a computation nor a reach, and there is no
+    way here to tell an edited value from the one that was read -- it is the
+    editor's to write, and it is named here so that it is a gap somebody chose
+    rather than one nobody noticed.
+    """
+
+    if record.plane is None:
+        return None
+
+    ours = record.attrs.get("window") is not None
+
+    if not ours and (record.span is None or record.attrs.get("fitted")):
+        return None
+
+    attrs = {"from": str(record.attrs.get("src") or "gsurf") if ours else "reach"}
+
+    if not ours:
+        attrs["src"] = "gsurf"
+
+    for key in FIT_KEYS:
+        said = record.attrs.get(key)
+
+        if said is not None and str(said) != "":
+            attrs[key] = str(said)
+
+    return gstruct.Fit(
+        plane=gstruct_plane(record.plane), start=start, end=end, attrs=attrs
+    )
 
 
 def _place(record):
@@ -695,6 +982,24 @@ def _place(record):
         return (record.span[0] + record.span[1]) / 2.0
 
     return record.length / 2.0
+
+
+def _said_at(intervals, place):
+    """
+    The last of a set of `(s0, s1, value)` covering a place, or `unknown`.
+
+    `Structure.value_at`'s rule, applied to intervals already resolved against
+    the records' own trace. The last one wins, which is how a correction is
+    written in this format: by adding a line, never by editing one.
+    """
+
+    said = UNSAID
+
+    for s0, s1, value in intervals:
+        if s0 <= place <= s1:
+            said = value
+
+    return said
 
 
 def _interval(lines, length, span):

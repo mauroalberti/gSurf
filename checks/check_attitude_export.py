@@ -1,10 +1,11 @@
 """
 Does a computed attitude get out of the tool, and land where it was read?
 
-A fit that exists only on a screen is not a result. `curation_text` will not
-carry one and should not -- that file declares every line in it a human
-assertion -- so the way out is a point layer, and a point layer is only worth
-writing if the point is right. What has to hold is that the point sits on the
+A fit that exists only on a screen is not a result. `curation_text` now carries
+one -- as a `fit`, with the window it was read over -- but a curation is a file
+laid over another file, and a point layer is what you hand to somebody who has
+neither. A point layer is only worth writing if the point is right. What has to
+hold is that the point sits on the
 trace at the progressive the plane was read at, that the span and the window
 travel with it, that the gate that admitted it travels too, and that the file
 can be read back with all of it intact.

@@ -36,7 +36,7 @@ AOI = Path("/home/mauro/Documenti/Ricerca/AppenninoMeridionale/gstruct")
 # The trace everything exact is measured along: due east, a vertex every 100 m.
 X0, Y0 = 600000.0, 4420000.0
 
-SOURCE = """gstruct 0.1
+SOURCE = """gstruct 0.2
 crs EPSG:25833
 project "a synthetic dataset, built so the answers are known"
 
@@ -58,8 +58,9 @@ structure F002 "Beta" fid=2
     602000.00 4420300.00
     602000.00 4420600.00
 
-structure F003 "Gamma" fid=3 in_section=no
+structure F003 "Gamma" fid=3
   kind fault
+  span use * * rejected src=curatela reason="ricalca una rottura di pendio"
   attitude @603000.00,4420000.00 plane 270/60 station=S2 src=field
   path 2
     603000.00 4420000.00
@@ -76,18 +77,19 @@ observation S9 @605000.00,4425000.00 plane 55/70 station=S9 src=field
     unattached=oltre-soglia nearest=F001 distance=5099.0
 """
 
-# A curation: five claims, no geometry at all. Two of them are about where along
+# A curation: six claims, no geometry at all. Two of them are about where along
 # the trace they hold, which is the case that could not even be parsed before --
 # `s` is derived by projection, and a file with no path has nothing to project
 # onto until it is laid over one that has.
-CURATION = """gstruct 0.1
+CURATION = """gstruct 0.2
 crs EPSG:25833
 note "Si applica sopra il sintetico. Ogni riga e' un'asserzione umana."
 
-structure F001 in_section=no
+structure F001
   span exposure @600250.00,4420000.00 @600350.00,4420000.00 exposed src=field
   span exposure @600600.00,4420000.00 @601000.00,4420000.00 covered src=field
-  span use * * excluded src=gsurf
+  span use * * rejected src=gsurf reason="non va in questa sezione"
+  span vergence * * east src=field
   attitude @600800.00,4420000.00 plane 120/45 station=S7 src=field
 
 structure F999
@@ -217,8 +219,11 @@ def main():
 
     print("\n-- what arrives switched off --\n")
 
-    check("a structure the file holds out of the section arrives held out",
-          by_ident(source.traces, "F003")[0].enabled is False)
+    rejected = by_ident(source.traces, "F003")[0]
+
+    check("a stretch the curator rejected arrives held out, with the reason on it",
+          rejected.enabled is False and rejected.attrs.get("use") == "rejected",
+          rejected.attrs.get("use", "nothing said"))
 
     straight = by_ident(source.traces, "F004")[0]
 
@@ -325,8 +330,12 @@ def main():
     check("a structure the records never heard of is named, not swallowed",
           applied.missing == ["F999"] and applied.matched == 1, str(applied.missing))
 
+    # `vergence` is a plausible proposal and not a typo, which is the case worth
+    # covering: `value_at` would read it perfectly well, and acting on it
+    # silently is how an invented axis becomes real without anybody deciding it
+    # should. That is what `use` itself was until it went into the format.
     check("an axis this tool does not act on is reported instead of acted on",
-          applied.ignored == {"use": 1}, str(applied.ignored))
+          applied.ignored == {"vergence": 1}, str(applied.ignored))
 
     check("an interval that covers no record of its structure is counted",
           applied.nowhere == 1,
@@ -382,6 +391,109 @@ def main():
     check("and what it added survives going back to the layer",
           len(by_ident(panel.source.traces, "F001")) == 3,
           f"{len(panel.source.traces)} records after the undo")
+
+    print("\n-- and back out, as a curation --\n")
+
+    from gsurf.curation import curation_of
+    from gsurf.curation import module as gstruct_module
+
+    # A fresh reading, so that what is written out is a decision made here and
+    # not the overlay from the block above still sitting on the records.
+    again = TraceAttitudeSource(path, native)
+    mine = by_ident(again.traces, "F001", fitted=False)[0]
+    computed = by_ident(again.traces, "F001", fitted=True)[0]
+
+    mine.span = (mine.anchor - 120.0, mine.anchor + 120.0)   # a reach, set by hand
+    by_ident(again.traces, "F002")[0].enabled = False        # and a refusal
+
+    text, report = curation_of(again.traces, again.half_span,
+                               crs="EPSG:25833", source="source.gstruct")
+
+    print(text.rstrip() + "\n")
+
+    check("a refusal goes out on the axis the format defines, not an invented one",
+          "span use" in text and "rejected" in text and "excluded" not in text,
+          f"{report['refusals']} refusal(s)")
+
+    check("a reach goes out as a fit, because that is what a plane over an "
+          "interval is",
+          "from=reach" in text and "span reach" not in text,
+          f"{report['fits']} fit(s)")
+
+    # A fit computed *here* goes out with `window=` and the rest of what it was
+    # computed by -- which the old writer dropped, having declared every line in
+    # the file a human assertion. That one needs the fitter and a DEM, so it is
+    # checked where both are: `check_sections.py`, over Monte Alpi.
+
+    check("structures are named by ident, not by category",
+          "structure F001" in text and "structure fault" not in text)
+
+    # F003 arrived switched off because the file says so, and F004 because its
+    # trace is straight. Neither is a decision made here, and a curation that
+    # signed them would be handing the geologist a refusal the gate had made.
+    check("a refusal the file already accounts for is not restated as a new one",
+          "F003" not in text and report["refusals"] == 1,
+          f"{report['refusals']} refusal(s) written, of "
+          f"{sum(1 for r in again.traces if not r.enabled)} records switched off")
+
+    check("nor is a fit that arrived with the file",
+          "from=trace-dem" not in text and report["fits"] == 1,
+          "it is already in the thing this is laid over")
+
+    # The real test of a writer: the parser it was written against.
+    back = gstruct_module().loads(text)
+
+    check("what comes out parses, and says the same thing",
+          {s.ident for s in back.structures} == {"F001", "F002"}
+          and len(back.by_ident("F001").fits) == 1,
+          f"{len(back.structures)} structures, "
+          f"{sum(len(s.fits) for s in back.structures)} fits, "
+          f"{sum(len(s.spans) for s in back.structures)} spans")
+
+    check("and a curation carries no geometry, not even an empty one",
+          "path" not in text and "kind" not in text,
+          "it names the structures; the path is in the file it is laid over")
+
+    # Round trip, all the way: the refusal written here has to come back as the
+    # same record switched off. A file that writes what it cannot read is a file
+    # that looks like a record of a decision and is not one.
+    third = TraceAttitudeSource(path, native)
+    _, over = apply_to(third.traces, gstruct_module().loads(text))
+
+    check("laid back over the records, the refusal comes home",
+          by_ident(third.traces, "F002")[0].enabled is False
+          and by_ident(third.traces, "F001", fitted=False)[0].enabled is True,
+          over.summary())
+
+    check("and the reach comes back as its own derived record, beside the "
+          "measurement it was extended from",
+          any(record.attrs.get("from") == "reach" for record in over.added),
+          f"{len(over.added)} added, "
+          f"{sorted({r.attrs.get('from', '?') for r in over.added})}")
+
+    # The reason the writer holds back what it read: this file is laid over the
+    # source, so anything it restated would arrive twice. One record added for
+    # one decision made, and the file's own five untouched.
+    check("and nothing the file already said arrives a second time",
+          len(third.traces) + len(over.added) == len(again.traces) + 1,
+          f"{len(again.traces)} records, {len(over.added)} added by the curation")
+
+    # Nothing is guessed for a record the layer never named. The measurement
+    # below is real and its decision is real, and both of them stay in the
+    # window, which the box that writes the file has to say out loud.
+    orphan = TraceAttitudeSource(path, native)
+
+    for record in orphan.traces:
+        record.attrs.pop("ident", None)
+        record.attrs.pop("code", None)
+        record.enabled = False
+
+    empty, silent = curation_of(orphan.traces, orphan.half_span, crs="EPSG:25833")
+
+    check("a record the layer gives no ident to is counted, not invented a name for",
+          silent["structures"] == 0 and silent["unnamed"] > 0
+          and "structure" not in empty,
+          f"{silent['unnamed']} line(s) with nothing to address them to")
 
     print("\n-- the real thing --\n")
 

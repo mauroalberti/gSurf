@@ -431,6 +431,26 @@ own assertion — `Write curation...` writes a gstruct fragment, one entry per
 record changed, over a layer left exactly as it was found. Re-reading it
 tomorrow gives the survey back, not yesterday's opinion of it.
 
+What it writes is the format's own vocabulary, which it was not always. A record
+held out of the section used to go out as `span use * * excluded` and a reach as
+`span reach … 250`, on two axes nobody had defined: `value_at` would have read
+either of them without complaining, which is precisely what made them worth
+settling instead of leaving. `use` is now an axis of gstruct 0.2, with
+`accepted | rejected | unknown` and `reason=` for the why, and it is not a
+preference of this tool — it generalises a rule that was already hard-coded in
+`attitude_at`, where a fit read off a straight trace does not enter a section.
+A reach needed no new axis at all: a plane holding over an interval is a `fit`,
+which the format already had, so it goes out as one with `from=reach` beside the
+computed fits that carry `from=` and the window they were read over.
+
+**The file carries what was decided here, not a copy of what it is laid over.**
+A refusal the record's own attributes already account for is not restated, and a
+fit that arrived with the source is not written back out: both would be true and
+both would be wrong, since applying such a file would add every fit it had just
+read a second time. What that leaves is short — on Monte Alpi, one line for one
+decision — and re-applying it changes nothing, which is the property a curation
+is supposed to have.
+
 **`Read curation...` is the other half of that**, and without it the first half
 is a file nobody opens. It lays a `.gstruct` over the records on show: what it
 says about a structure it names, and nothing about one it does not. A plane in

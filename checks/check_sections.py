@@ -617,7 +617,10 @@ def main():
               f"{(s1 - s0) / 2.0:.0f} m either side of {record.anchor:.0f}")
 
         text, _ = panel.curation_text()
-        check("a reach that was set is an assertion", "span reach" in text)
+        check("a reach that was set goes out as a fit: a plane over an interval",
+              "from=reach" in text and "span reach" not in text,
+              "`reach` was an invented axis; a derived plane over a stretch "
+              "is a word the format already has")
 
         panel.table.item(anchored, 4).setText("")
         check("and emptying it hands the record back to the default",
@@ -625,7 +628,7 @@ def main():
 
         text, _ = panel.curation_text()
         check("a reach left on the default is not one",
-              "span reach" not in text,
+              "from=reach" not in text,
               "nobody decided 250 m, so nobody says so")
 
         panel.table.item(anchored, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
@@ -637,10 +640,12 @@ def main():
               ),
               f"{sum(1 for r in source.traces if not r.enabled)} held out")
 
-        text, written = panel.curation_text()
-        check("the edits come out as a gstruct fragment",
-              written >= 1 and "span use * * excluded" in text,
-              f"{written} structure(s), {len(text.splitlines())} lines")
+        text, report = panel.curation_text()
+        check("the edits come out as a gstruct fragment, on the format's own axis",
+              report["structures"] >= 1 and "span use" in text
+              and "rejected" in text and "excluded" not in text,
+              f"{report['structures']} structure(s), {report['refusals']} refusal(s), "
+              f"{len(text.splitlines())} lines")
         check("and the source layer was never written to",
               source.path.stat().st_mtime == mtime, source.path.name)
 
@@ -673,10 +678,14 @@ def main():
               f"{sum(len(v) for v in source.records.values())} planes in "
               f"{len(source.records)} categories")
 
-        fitted_text, fitted_written = panel.curation_text()
-        check("a fit is not written out as a human assertion",
-              fitted_written == 0 and "span reach" not in fitted_text,
-              "the file says every line in it is one, so a derivative cannot be")
+        fitted_text, fitted_report = panel.curation_text()
+        check("a fit is written out as a fit, with what it was computed by",
+              fitted_report["fits"] == len(source.traces)
+              and "from=" in fitted_text and "window=" in fitted_text
+              and "from=reach" not in fitted_text,
+              f"{fitted_report['fits']} fit(s) over "
+              f"{fitted_report['structures']} structure(s); the file separates "
+              f"a decision from a derivative instead of dropping the derivatives")
 
         check("the report says what left the section, rather than leaving it to be noticed",
               report["silent"] + report["fitted"] == report["traces"],
