@@ -109,6 +109,142 @@ def layer_at(directory, name="traces.gpkg", crs="EPSG:25833"):
     return path
 
 
+# The synthetic topography: one inclined plane, so the answer to "what does the
+# best fit through a trace draped on it come out as" is known from the arithmetic
+# that built it rather than from the code being checked. Any curve lying on a
+# plane lies on it exactly, so every window that has a lever arm must return
+# this, and the only scatter is the DEM's own cell quantisation -- half a cell of
+# gradient, 1.4 m here.
+RELIEF_DIP, RELIEF_DIP_DIR = 30.0, 90.0
+CELL = 5.0
+
+# Where the V turns, and therefore the only stretch of it that can carry an
+# attitude. The first limb is hypot(1200, 600) long, which is where the apex
+# falls along the trace; twice that is the whole of it.
+APEX_X = X0 + 1300.0
+APEX_S = (1200.0 ** 2 + 600.0 ** 2) ** 0.5
+
+
+def relief_at(directory, name="plane.tif", crs="EPSG:25833"):
+    """A DEM that is one plane, dipping 30 degrees due east and nothing else."""
+
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    cols, rows = int(2700 / CELL), int(1600 / CELL)
+
+    # Cell centres, so that a sample anywhere inside a cell is off by at most
+    # half a cell of gradient. Taking the corner instead would put a systematic
+    # half-cell shift into every elevation and tilt the answer.
+    x = X0 + (np.arange(cols) + 0.5) * CELL
+    z = 2000.0 - np.tan(np.radians(RELIEF_DIP)) * (x - X0)
+
+    path = Path(directory) / name
+
+    with rasterio.open(
+        path, "w", driver="GTiff", width=cols, height=rows, count=1,
+        dtype="float32", crs=crs,
+        transform=from_origin(X0, Y0 + 1400.0, CELL, CELL),
+    ) as out:
+        out.write(np.repeat(z[None, :], rows, axis=0).astype("float32"), 1)
+
+    return path
+
+
+def draped_at(directory, name="draped.gpkg", angles=False):
+    """
+    Four traces on that plane, each one a different thing for the gate to say.
+
+    VEE turns once, so exactly the stretch around the bend can carry a plane and
+    the rest cannot -- which is what makes it the test that a fit is written over
+    the stretch that held and not over the trace. ZIG turns everywhere, so the
+    whole path holds and the extent has no neighbour to stop at. RING is a
+    closed circle, which is the case that was silently broken: its two path ends
+    are one point. FLAT is dead straight, and has to come out with nothing.
+    """
+
+    import geopandas as gpd
+    import numpy as np
+    from shapely.geometry import LineString
+
+    def densify(points, step=20.0):
+        out = []
+        for (ax, ay), (bx, by) in zip(points, points[1:]):
+            count = max(2, int(((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5 / step))
+            out.extend(
+                (ax + t * (bx - ax), ay + t * (by - ay))
+                for t in (i / count for i in range(count))
+            )
+        out.append(points[-1])
+        return LineString(out)
+
+    vee = densify([(X0 + 100.0, Y0), (APEX_X, Y0 + 600.0), (X0 + 2500.0, Y0)])
+
+    teeth = [(X0 + 100.0, Y0 + 700.0)]
+    for tooth in range(6):
+        teeth.append((X0 + 200.0 + tooth * 200.0, Y0 + 700.0 + 100.0 * (tooth % 2)))
+    zig = densify(teeth)
+
+    turn = np.radians(np.arange(0.0, 360.0 + 1e-9, 6.0))
+    ring = LineString([
+        (X0 + 700.0 + 200.0 * float(np.sin(a)), Y0 + 1100.0 + 200.0 * float(np.cos(a)))
+        for a in turn
+    ])
+
+    flat = densify([(X0 + 1400.0, Y0 + 1000.0), (X0 + 2500.0, Y0 + 1000.0)])
+
+    columns = {"code": ["VEE", "ZIG", "RING", "FLAT"]}
+
+    if angles:
+        # A plane in the table as well, so that one structure carries two kinds
+        # of fit and their order can be asked about. Deliberately nothing like
+        # the topography's: 200/70 against 90/30 is unmistakable.
+        columns["immersione"] = [200.0] * 4
+        columns["inclinazione"] = [70.0] * 4
+
+    path = Path(directory) / name
+
+    gpd.GeoDataFrame(
+        columns, geometry=[vee, zig, ring, flat], crs="EPSG:25833"
+    ).to_file(path, layer="tracce", driver="GPKG")
+
+    return path
+
+
+def stations_at(directory, name="stazioni.gpkg", crs="EPSG:25833"):
+    """
+    Four measured points against F001, which runs due east a kilometre from Y0.
+
+    S1 stands on it, S2 is fifty metres off it, S3 is four hundred, and S4 has a
+    position and no plane. Each one is a different answer the writer has to give,
+    and none of them is "dropped".
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    rows = [
+        ("S1", 200.0, 40.0, Point(X0 + 100.0, Y0)),
+        ("S2", 210.0, 45.0, Point(X0 + 600.0, Y0 + 50.0)),
+        ("S3", 220.0, 50.0, Point(X0 + 500.0, Y0 - 400.0)),
+        ("S4", None, None, Point(X0 + 900.0, Y0 + 5.0)),
+    ]
+
+    path = Path(directory) / name
+
+    gpd.GeoDataFrame(
+        {
+            "sigla": [r[0] for r in rows],
+            "immersione": [r[1] for r in rows],
+            "inclinazione": [r[2] for r in rows],
+        },
+        geometry=[r[3] for r in rows], crs=crs,
+    ).to_file(path, layer="punti", driver="GPKG")
+
+    return path
+
+
 def one_line(directory, name, crs, ident="F001"):
     """One trace, for the checks that are about the header rather than the rows."""
 
@@ -158,6 +294,11 @@ def main():
         )
 
         text, report = transcript_of(path, mapping, project="una prova")
+
+        # Kept under its own name because `text` is reused by the sections
+        # below, and it is this file -- seven structures off the faglie layer --
+        # that the editor is opened on at the end.
+        transcript = text
 
         dataset = gstruct.loads(text)
 
@@ -414,13 +555,328 @@ def main():
         check("and a layer in degrees is refused here rather than at the editor's door",
               "geographic" in refused and "metres" in refused, refused[:70])
 
+        print("\n-- a plane read off the topography, one per stretch that holds --\n")
+
+        from gsurf.imports import FROM_DEM
+
+        relief = relief_at(tmp)
+        draped = draped_at(tmp)
+
+        text, fitted = transcript_of(
+            draped, Mapping(layer="tracce", ident_field="code",
+                            dem_path=str(relief)),
+        )
+
+        read = gstruct.loads(text)
+
+        vee = read.by_ident("VEE")
+        zig = read.by_ident("ZIG")
+        ring = read.by_ident("RING")
+        flat = read.by_ident("FLAT")
+
+        planes = [
+            (structure.ident, structure.fits[0].plane)
+            for structure in (vee, zig, ring)
+            if structure is not None and structure.fits
+        ]
+
+        # The DEM is one plane and every one of these traces lies on it, so the
+        # answer is the arithmetic that built the raster and not anything in the
+        # code. Two degrees of slack for the DEM's own cell quantisation, which
+        # is half a cell of gradient -- 1.4 m of height over 5 m of ground.
+        check("the plane the DEM was built from is what comes back off every trace",
+              len(planes) == 3
+              and all(abs(plane.dip - RELIEF_DIP) <= 2.0
+                      and abs(plane.dip_dir - RELIEF_DIP_DIR) <= 2.0
+                      for _, plane in planes),
+              ", ".join(f"{ident} {plane}" for ident, plane in planes))
+
+        # The load-bearing negative, and the reason the gate is in this at all: a
+        # plane through a straight trace is arbitrary rather than imprecise, and
+        # writing one would be a number nobody could tell from a measurement.
+        check("a dead straight trace carries no fit at all, having no plane to carry",
+              flat is not None and not flat.fits and fitted.silent == 1,
+              f"{len(flat.fits) if flat else '?'} fits, silent={fitted.silent}")
+
+        stretch = vee.fits[0] if vee is not None and vee.fits else None
+
+        check("the V's one fit is the stretch that turns, not the trace it is on",
+              stretch is not None
+              and stretch.s0 < APEX_S < stretch.s1
+              and (stretch.s1 - stretch.s0) < vee.length / 10.0,
+              f"{stretch.s0:.0f}..{stretch.s1:.0f} of {vee.length:.0f} m, "
+              f"apex at {APEX_S:.0f}" if stretch else "no fit")
+
+        # The widening, and where it stops. `runs` reports the interval the
+        # window *centres* covered, which for one position is a single step -- so
+        # a fit read over 250 m of trace would claim 25 m of it, and `attitude_at`
+        # would answer `assente` over ground the plane was computed from. It
+        # reaches half a window further, and no further than a neighbouring
+        # verdict: on either side of the V's bend the gate said `line`.
+        reach = (stretch.s1 - stretch.s0) if stretch else 0.0
+        window = float(stretch.attrs["window"]) if stretch else 0.0
+
+        check("and it does not widen across a verdict: the gate said line either side",
+              stretch is not None and reach < window,
+              f"{reach:.0f} m claimed, read over {window:.0f} m")
+
+        whole = zig.fits[0] if zig is not None and zig.fits else None
+
+        check("a trace that holds throughout is claimed throughout, `*` at the path end",
+              whole is not None and whole.start is None
+              and (whole.s1 - whole.s0) > 0.95 * zig.length,
+              f"{whole.s0:.0f}..{whole.s1:.0f} of {zig.length:.0f} m" if whole
+              else "no fit")
+
+        # The regression, and it was a silent one: on a closed trace `path[-1]`
+        # is `path[0]`, so a fit reaching both ends written as two anchors is one
+        # coordinate twice, and reads back covering nothing. Eight traces of
+        # `elementi_tettonici` are rings, and every fit on them was lost this way.
+        loop = ring.fits[0] if ring is not None and ring.fits else None
+
+        check("a closed ring keeps its fit: two anchors at one point would cover nothing",
+              loop is not None
+              and ring.path[0] == ring.path[-1]
+              and loop.start is None and loop.end is None
+              and (loop.s1 - loop.s0) > 0.99 * ring.length,
+              f"{loop.s1 - loop.s0:.0f} of {ring.length:.0f} m" if loop
+              else "no fit")
+
+        check("the fit says what read it, over how much, and to what verdict",
+              stretch is not None
+              and stretch.attrs.get("from") == FROM_DEM
+              and stretch.attrs.get("span_verdict") == "held"
+              and stretch.attrs.get("window") and stretch.attrs.get("windows"),
+              str(stretch.attrs) if stretch else "no fit")
+
+        # FORMAT.md reserves `nvert` for digitised vertices and says in as many
+        # words that gSurf is not to write it, sampling the DEM instead. The rest
+        # are `export_geology.py`'s error budget, which this has no eps for.
+        check("and writes none of the other producer's numbers, having none of them",
+              stretch is not None
+              and not any(key in stretch.attrs
+                          for key in ("nvert", "dof", "snr", "flat", "jack",
+                                      "eps", "plan", "drape", "verdict")),
+              str(sorted(stretch.attrs)) if stretch else "no fit")
+
+        check("and the file still survives its own round trip",
+              gstruct.dumps(read) == text)
+
+        # Three facts, counted apart. Together they would say the topography
+        # refused 1200 traces of `elementi_tettonici` when most were never asked:
+        # 106 of the first 1200 over the DEM are off it, and the sheet's median
+        # trace is 165 m against a 250 m window.
+        check("the three ways of carrying no fit are counted apart, not summed",
+              all(hasattr(fitted, name)
+                  for name in ("silent", "too_short", "unreached"))
+              and fitted.too_short == 0 and fitted.unreached == 0,
+              f"silent={fitted.silent} short={fitted.too_short} "
+              f"off={fitted.unreached}")
+
+        elsewhere = relief_at(tmp, "utm32.tif", crs="EPSG:25832")
+
+        refused = ""
+
+        try:
+            transcript_of(draped, Mapping(layer="tracce", ident_field="code",
+                                         dem_path=str(elsewhere)))
+        except Exception as err:
+            refused = str(err)
+
+        check("a DEM in another projection is refused, not silently sampled",
+              "25832" in refused and "25833" in refused, refused[:70])
+
+        # Given up on rather than finished, which the file has to be able to say.
+        # A fit on the first N structures and none on the rest would leave a
+        # structure with no fit meaning either "refused" or "never reached", and
+        # those are opposite facts.
+        _, given_up = transcript_of(
+            draped,
+            Mapping(layer="tracce", ident_field="code", dem_path=str(relief)),
+            progress=lambda done, total: done == 0,
+        )
+
+        check("a fitting given up on writes no fit at all, and says so in the file",
+              given_up.stopped and given_up.fits == 0
+              and any("interrotto" in note for note in given_up.notes),
+              f"stopped={given_up.stopped} fits={given_up.fits}")
+
+        print("\n-- the measured points, attached or kept with the reason --\n")
+
+        from gsurf.imports import NO_ATTITUDE, UNATTACHED
+
+        points = stations_at(tmp)
+
+        with_points = Mapping(
+            layer="faglie", ident_field="code", label_field="nome",
+            dip_dir_field="strike", dip_field="dip", is_rhr_strike=True,
+            keep_fields=("code",),
+            points_path=str(points), points_layer="punti",
+            points_ident_field="sigla", points_dip_dir_field="immersione",
+            points_dip_field="inclinazione",
+        )
+
+        text, joined = transcript_of(path, with_points)
+
+        near = gstruct.loads(text)
+        alpha = near.by_ident("F001")
+
+        stations = {a.attrs.get("station"): a for a in alpha.attitudes}
+
+        check("a point standing on the trace attaches to it, and says it stood on it",
+              joined.attached == 2 and "S1" in stations
+              and abs(stations["S1"].s - 100.0) < 0.1
+              and stations["S1"].attrs.get("off") == "0.0",
+              f"attached={joined.attached} "
+              + (f"s={stations['S1'].s:.1f}" if "S1" in stations else "no S1"))
+
+        # `off` is the one number that says how much of an attachment this was:
+        # `s` is derived and looks equally exact at any distance from the trace.
+        check("and one fifty metres off it attaches too, with the fifty metres written",
+              "S2" in stations
+              and abs(float(stations["S2"].attrs.get("off", "0")) - 50.0) < 0.1
+              and abs(stations["S2"].s - 600.0) < 0.1,
+              stations["S2"].attrs.get("off") if "S2" in stations else "no S2")
+
+        # The whole point of attaching anything: FORMAT.md's precedence puts a
+        # measurement inside `max_gap` above every fit, so the stretch nearest the
+        # outcrop stops reporting the column and starts reporting the compass --
+        # and further along, where no measurement reaches, it goes back.
+        at_outcrop = alpha.attitude_at(100.0)
+        far_off = alpha.attitude_at(1000.0)
+
+        check("a measurement outranks the plane from the table, and only where it reaches",
+              at_outcrop[1].startswith("misurata:S1")
+              and at_outcrop[0].dip_dir == 200.0
+              and far_off[1].startswith("fit:")
+              and far_off[0].dip_dir == DIP_DIRECTION,
+              f"{at_outcrop[1]} / {far_off[1]}")
+
+        kept = {ob.ident: ob for ob in near.observations}
+
+        check("a point past the threshold is kept, with the distance and the threshold",
+              joined.observations == 2 and "S3" in kept
+              and kept["S3"].attrs.get("unattached") == UNATTACHED
+              and kept["S3"].attrs.get("nearest") == "F001"
+              and kept["S3"].attrs.get("threshold") == "100"
+              and abs(float(kept["S3"].attrs.get("distance", 0)) - 400.0) < 0.1,
+              str(kept["S3"].attrs) if "S3" in kept else str(list(kept)))
+
+        # Rule 3 has two causes and one answer. A point with no plane is not a
+        # measurement to attach, and dropping it would lose a station that was
+        # visited -- so it is written with a plane of nothing and the reason.
+        check("and one with no plane is kept for the other reason, not thrown away",
+              "S4" in kept and kept["S4"].plane is None
+              and kept["S4"].attrs.get("no_attitude") == NO_ATTITUDE
+              and "unattached" not in kept["S4"].attrs,
+              str(kept["S4"].attrs) if "S4" in kept else str(list(kept)))
+
+        check("and a file with observations in it still round trips",
+              gstruct.dumps(near) == text)
+
+        # A station's code column is not called what a trace's ident is called,
+        # and the guessing is the whole of why this dialog asks so little: what
+        # it picks becomes the name `attitude_at` reports every measurement by.
+        check("the dialog guesses a station layer's own columns, code included",
+              dialog.set_points(str(points)) is True
+              and dialog.station_combo.currentText() == "sigla"
+              and dialog.points_dip_dir_combo.currentText() == "immersione"
+              and dialog.points_dip_combo.currentText() == "inclinazione",
+              f"{dialog.station_combo.currentText()}/"
+              f"{dialog.points_dip_dir_combo.currentText()}")
+
+        dialog._clear_points()
+
+        check("and backing out of the point layer leaves the mapping without one",
+              not dialog.mapping().has_points
+              and dialog.mapping().points_path is None
+              and not dialog.points_layer_combo.isEnabled())
+
+        # Two ways of writing the same positions, and one meaning, so this is not
+        # a decision worth refusing over -- unlike the DEM, where the dip
+        # direction itself would have come out of the wrong north.
+        import geopandas as gpd
+
+        elsewhere_points = Path(tmp) / "in4326.gpkg"
+        gpd.read_file(points, layer="punti").to_crs("EPSG:4326").to_file(
+            elsewhere_points, layer="punti", driver="GPKG")
+
+        moved = Mapping(**{**vars(with_points), "points_path": str(elsewhere_points)})
+
+        _, reprojected = transcript_of(path, moved)
+
+        check("a point layer in another projection is reprojected, and the note says so",
+              reprojected.attached == joined.attached
+              and any("riproiettati" in note for note in reprojected.notes),
+              f"attached={reprojected.attached}")
+
+        naked = gpd.read_file(points, layer="punti").set_crs(None, allow_override=True)
+        nowhere = Path(tmp) / "nocrs.gpkg"
+        naked.to_file(nowhere, layer="punti", driver="GPKG")
+
+        refused = ""
+
+        try:
+            transcript_of(path, Mapping(
+                **{**vars(with_points), "points_path": str(nowhere)}))
+        except Exception as err:
+            refused = str(err)
+
+        check("and one with no projection at all is refused: a distance needs units",
+              "no projection" in refused and "metres" in refused, refused[-60:])
+
+        print("\n-- two kinds of fit on one structure, and which one answers --\n")
+
+        both = draped_at(tmp, "draped2.gpkg", angles=True)
+
+        text, mixed = transcript_of(both, Mapping(
+            layer="tracce", ident_field="code",
+            dip_dir_field="immersione", dip_field="inclinazione",
+            dem_path=str(relief),
+        ))
+
+        two = gstruct.loads(text).by_ident("VEE")
+
+        check("a structure can carry both, and the derived one is written first",
+              two is not None and len(two.fits) == 2
+              and two.fits[0].attrs.get("from") == FROM_DEM
+              and two.fits[1].attrs.get("from") == FROM,
+              ", ".join(f.attrs.get("from", "?") for f in two.fits) if two else "none")
+
+        # Which matters because `attitude_at` takes the *first* fit that covers a
+        # progressive where `span_at` takes the *last* span. So the specific
+        # statement goes first among fits and last among spans, and having it the
+        # wrong way round is not an error anywhere -- it is the wrong plane.
+        on_the_bend = two.attitude_at(APEX_S) if two else (None, "")
+        away = two.attitude_at(10.0) if two else (None, "")
+
+        check("so the stretch read off the ground answers on it, and the column elsewhere",
+              on_the_bend[0] is not None
+              and abs(on_the_bend[0].dip - RELIEF_DIP) <= 2.0
+              and away[0] is not None and away[0].dip == 70.0,
+              f"at the bend {on_the_bend[0]}, away {away[0]}")
+
+        check("the point layer's two angle columns are both named or neither",
+              dialog.refusal(Mapping(points_path="x", points_dip_dir_field="a"))
+              is not None
+              and dialog.refusal(Mapping(points_path="x", points_dip_dir_field="a",
+                                         points_dip_field="b")) is None)
+
+        # A step that is most of the window makes a held stretch one window wide
+        # and its extent the step, which is the thing `_reach` exists to stop
+        # being the normal case rather than the corner.
+        check("and a step that barely overlaps its window is refused",
+              dialog.refusal(Mapping(fit_step=200.0, fit_fallback=250.0))
+              is not None
+              and dialog.refusal(Mapping(fit_step=25.0, fit_fallback=250.0)) is None)
+
         print("\n-- and the file opens in the tool it was written for --\n")
 
         from gsurf.session import Session
         from gsurf.tools import editor
 
         written = Path(tmp) / "imported.gstruct"
-        written.write_text(text, encoding="utf-8")
+        written.write_text(transcript, encoding="utf-8")
 
         spec = dict(path=str(written), role="lines", layer="structures",
                     dip_dir_field=None, dip_field=None, is_rhr_strike=False)

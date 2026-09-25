@@ -87,7 +87,11 @@ rather than copying it:
   importer are the shape of the module: the source string kept beside anything
   normalised from it, what the source does not say written `unknown` with a
   reason, nothing dropped that could be carried, and no synonyms turned into
-  grades.
+  grades. Given a DEM it also reads a plane off the topography along each trace,
+  one `fit` between anchors per stretch the gate holds — the producer FORMAT.md
+  says is missing rather than the format — and given a point layer it attaches
+  the measurements that fall near a trace and keeps the rest as `observation`s
+  with the distance that refused them.
 
 The pre-2026 application lived in a `gSurf/` package beside this one and was
 removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
@@ -112,7 +116,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and fifty-eight assertions over fifteen scripts, each also runnable on
+Six hundred and eighty-four assertions over fifteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
 its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
@@ -769,8 +773,91 @@ of a kilometre, which is false twice over, and the editor's band reads
 is not a gap: the provenance a fit reports is its verdict, the three verdicts in
 FORMAT.md are all about how a plane came off a DEM, and this one came off a
 table — a word invented to fill that field would be a verdict on a computation
-that never ran. Nothing is fitted to the topography here; that is
-`traces.fit_records`, and it wants a DEM open.
+that never ran.
+
+**A plane off the topography becomes one `fit` per stretch that holds, between
+two anchors.** This is the line FORMAT.md already had somebody else's name
+against: *gli intervalli ancorati ci sono e si leggono — gSurf ne scrive, uno per
+finestra che tiene — quindi qui manca il produttore, non il formato*. Name a DEM
+in the dialog and this is that producer. The window is swept per trace, the gate
+decides where the plane is held, loose or merely a line, and a run that is only a
+line becomes nothing at all: a plane through a straight trace is arbitrary rather
+than imprecise, and writing one would put a number in the file that nobody could
+tell from a measurement. The diagnostics are `window=` and `span_verdict=`, which
+FORMAT.md names as this producer's own, plus `windows=`, `step=`, `sampled=` and
+`dem=`; never `nvert=`, which counts digitised vertices where this counts DEM
+samples.
+
+The check builds a DEM that is one plane dipping 30° due east and drapes four
+traces on it, so what the fit must come back as is the arithmetic that made the
+raster: a V that turns once, a sawtooth that turns everywhere, a closed circle,
+and one dead straight. The V yields a fit over 50 m of its 2683, bracketing the
+bend; the straight one yields nothing; the other two hold throughout.
+
+**A fit reaches half a window past the centres that held, and no further than the
+next verdict.** `TraceSpans.runs` reports where the window *centres* passed,
+which for a single position is one step — and on 1200 traces of
+`elementi_tettonici` that made every one of 244 fits claim 25 m of trace after
+being read over 150 to 600 m of it, so `attitude_at` answered `assente` across
+ground the plane had been computed from. Widened, the median fit claims 237 m and
+0.40 of its trace. It stops at a neighbouring run because that run is a verdict,
+usually `line`: the gate, asked about that stretch, said the plane was not
+determined there, and answering with the neighbour's plane would be overruling
+the gate with the gate's own data. The ends of a trace are different in kind —
+no window could be centred there, so nothing was ever asked — and that is the
+ground it may take. `traces` deliberately does not widen and is right not to:
+there the runs are summed into metres per verdict, and widened ones would total
+past the trace. Nothing sums these.
+
+**An end of the path is written `*`, not as an anchor.** On a closed trace
+`path[-1]` is `path[0]`, so a fit reaching both ends written as two anchors is
+one coordinate twice and reads back covering nothing. Eight traces of
+`elementi_tettonici` are closed rings, and every fit on them was being lost that
+way — a plane in the file, over no part of the trace it came off.
+
+**The three ways of carrying no fit are counted apart.** Off the DEM, shorter
+than the window, and sampled-but-nothing-held are opposite facts, and one number
+for them reports the wrong one: of `elementi_tettonici`'s 12718 traces, 6371 fall
+outside the 5 m DEM entirely and the sheet's median trace is 165 m against a
+250 m window. Where the fallback window does not fit a trace, the longest swept
+window that does is used instead — the fallback is a default and not a scale
+somebody chose — and `window=` in the file says which was used.
+
+Stopping the fit stops the whole fit: no `fit` is written at all, and the header
+says so. Fits on the first N structures and none on the rest would leave a
+structure with no fit meaning either *refused* or *never reached*.
+
+**A measured point becomes an `attitude` on the nearest trace, or an
+`observation` saying why not.** Name a point layer and its two angle columns; the
+threshold is `within`, default 100 m, which is `export_geology.py`'s and has
+evidence under it — 23 of the 24 Monte Alpi field attitudes fall inside it, with
+a median offset of half a metre. Past it the point is still written, with
+`nearest=`, `distance=` and `threshold=`, which is rule 3 and what lets the
+number be argued with afterwards instead of guessed at. A point with no readable
+plane goes the same way for the other reason. Every attached attitude carries
+`off=`, the metres it stands from the trace, because `s` is derived and looks
+equally exact at any distance.
+
+That threshold is a claim about the survey, not a constant. Attaching the AOI's
+11933 bedding attitudes to the tectonic lines puts 1596 of them on a trace and
+keeps 10337 as observations — and a bedding reading 73 m from a fault is inside
+the default while being a measurement of something else. It outranks the fit
+while it is there, since FORMAT.md gives a measurement within `max_gap`
+precedence over every fit; `off=` is what makes that visible, and the editor is
+where a curator rejects it.
+
+Two kinds of fit can sit on one structure, and they are ordered rather than
+merged: `attitude_at` takes the **first** fit covering a progressive where
+`span_at` takes the **last** span, so the specific statement goes first among
+fits and last among spans. The stretch read off the ground is written before the
+column that speaks for the whole trace. Getting that backwards is not an error
+anywhere — it is the wrong plane, silently.
+
+One limit worth stating: both report `fit:?`, because neither writes `verdict=`
+and neither honestly can. The three verdicts in FORMAT.md are about a plane off a
+DEM with an error budget this does not compute, and `span_verdict=held` is not
+one of them. What tells the two apart in the file is `from=`, which
+`attitude_at` does not read.
 
 **`certainty` and `exposure` come out `unknown`, with the reason.** Not an
 omission, and FORMAT.md's own example of why: `Tipologia` on a CARG tectonic
@@ -805,11 +892,18 @@ Measured on the CARG sheets of the AOI, at 1:25.000 over eight sheets:
 |---|---|---|---|---|
 | `elementi_tettonici` | 12718 | 3.6 s | 5.7 MB | 1.3 s |
 | `limiti_geologici` | 24717 | 6.8 s | 19.6 MB | 3.1 s |
+| `elementi_tettonici` + 5 m DEM + 11933 attitudes | 12718 | 25 s | 7.7 MB | 2.3 s |
 
 `reopened` is the editor window built on the result, structure chooser and all.
 The dialog says the feature count before anything is written, and says it more
 loudly above five thousand: each one becomes a block with its own name, and the
-editor lists them all.
+editor lists them all. With a DEM named it also says roughly how long the fitting
+will take, at 10 ms a trace measured — four minutes on a sheet of 24717 — because
+that is the one phase that changes the order of magnitude of the wait, and the
+only one with a Stop.
+
+The third row is the whole of stage three on a real sheet: 863 fits on 659
+traces, 1596 attitudes attached and 10337 points kept as observations.
 
 ### Things worth knowing
 

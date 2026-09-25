@@ -103,10 +103,15 @@ class Launcher(QtWidgets.QMainWindow):
         """
         The import, which is here because it is not a tool and has no session.
 
-        It opens no DEM, draws no map and returns no window: it reads a layer,
-        asks what its columns mean, and writes a file. Put among the tools it
-        would be the one button that does not lead to a map, and the launcher's
-        whole shape is that picking a tool decides what it then asks for.
+        It draws no map and returns no window: it reads a layer, asks what its
+        columns mean, and writes a file. Put among the tools it would be the one
+        button that does not lead to a map, and the launcher's whole shape is
+        that picking a tool decides what it then asks for.
+
+        It will open a DEM if one is named, to read a plane off the topography
+        along each trace -- but for the file being written and not for a session
+        to be held open on, which is the distinction that keeps this out of the
+        tools box rather than the absence of a raster.
 
         It sits here rather than nowhere because the editor's slot takes a
         `.gstruct` and nothing else, which is correct and which left a mapped
@@ -122,7 +127,8 @@ class Launcher(QtWidgets.QMainWindow):
         button.clicked.connect(self.import_lines)
 
         caption = QtWidgets.QLabel(
-            "Transcribe a line layer into the format the trace editor reads."
+            "Transcribe a line layer into the format the trace editor reads, "
+            "with attitudes attached and planes read off a DEM if you name them."
         )
         caption.setWordWrap(True)
         caption.setStyleSheet("color: gray; font-size: 10px;")
