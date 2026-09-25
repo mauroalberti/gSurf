@@ -250,6 +250,26 @@ def main():
         check("and a refused block leaves the document as it was",
               document.text_of(0) == was and not document.dirty)
 
+        # The header a block is read under is not a gate, and `_header` used to
+        # say it was. The `+ span` button writes a `use` axis, which is gstruct
+        # 0.2, and both curations in the AOI declare 0.1 -- nothing stops it,
+        # because `loads` refuses a file ahead of the library and nothing else.
+        aged = Document(written(
+            tmp, "old.gstruct",
+            'gstruct 0.1\ncrs EPSG:25833\n\nstructure F001 "Alpha" fid=1\n'
+            '  kind fault\n  path 2\n'
+            f'    {X0:.2f} {Y0:.2f}\n    {X0 + 1000.0:.2f} {Y0:.2f}\n'))
+
+        added = (f'  span use @{X0 + 200.0:.2f},{Y0:.2f} '
+                 f'@{X0 + 400.0:.2f},{Y0:.2f} rejected reason="due"')
+        aged.replace(0, aged.text_of(0) + "\n" + added)
+
+        check("a 0.2 axis goes into a file that declares 0.1, and answers there",
+              aged._header().startswith("gstruct 0.1")
+              and aged.dataset.structures[0].attitude_at(300.0, 250.0)[1]
+              == "rifiutata:due",
+              aged.dataset.structures[0].attitude_at(300.0, 250.0)[1])
+
         # -- what holds along a trace -------------------------------------
 
         print("\n-- what holds --\n")

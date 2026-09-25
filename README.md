@@ -102,7 +102,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and seventeen assertions over fourteen scripts, each also runnable on
+Six hundred and eighteen assertions over fourteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
 its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
@@ -675,6 +675,16 @@ button: a contact that does not hold is said not to hold — `span use * *
 rejected`, with the reason on it — which leaves both the geometry and the
 grounds in the file. Removing the lines would leave neither, and nobody could
 afterwards tell a fault that was rejected from one that was never mapped.
+
+That refusal is the one place where editing a file raises what it requires of a
+reader, and the header is left saying otherwise. `use` is an axis of 0.2, both
+curations in the AOI declare `gstruct 0.1`, and nothing objects: a block is
+parsed under the version the file declares, but no construct is gated on it, and
+`loads` refuses only a file *ahead* of the library. Under this library it reads
+correctly, so the cost is not visible from here — a reader that really is 0.1
+would draw a stretch the curator had rejected, which is the thing the version
+was raised to prevent. Bumping the line would mean rewriting a header the tool
+otherwise never touches, so for now it is written down rather than done.
 
 **What it does not do yet.** A loose `observation` attaches to no path, so there
 is no trace to select it on and no ruler to draw it along; they are counted on

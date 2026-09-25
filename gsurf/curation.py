@@ -628,13 +628,27 @@ class Document:
 
     def _header(self):
         """
-        The lines a block has to be read under for it to mean what it means.
+        The two file-level lines put back in front of a block, so that `loads`
+        reads a file and not a fragment: the version the file declares, and its
+        CRS.
 
-        The file's declared version and not the library's: a 0.1 file is read as
-        one, and a block of it that would be refused under a later version is
-        refused here too rather than quietly upgraded. The CRS travels because a
-        block carries coordinates and nothing else in it says which projection
-        they are in.
+        Neither of them gates what is in the block. `_version` refuses a file
+        *ahead* of the library and nothing else, and a file that has already
+        loaded cannot be ahead of it; no line is read differently for the
+        version written over it. So the `span use` the `+ span` button writes --
+        which is 0.2 -- goes into a file that says `gstruct 0.1` without a word,
+        and that is how either curation in the AOI can be edited at all, since
+        both of them declare 0.1. The upgrade is quiet in the direction nobody
+        would guess: the file's contents move and its declaration does not, and
+        a reader that really is 0.1 would then draw a stretch the curator had
+        rejected -- which is the thing the version was raised to prevent.
+
+        The declaration travels anyway because it is the file's and not the
+        library's, and a block belongs to the file it came out of: if a
+        construct is ever gated by version, it has to be gated on what this
+        file says. The CRS travels for the same reason -- a block carries
+        coordinates and nothing else in it says which projection they are in --
+        though today nothing in the parse asks.
         """
 
         head = [f"gstruct {self.dataset.meta.get('version', module().VERSION)}"]
