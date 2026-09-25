@@ -78,6 +78,16 @@ rather than copying it:
   agreed in one file. A dataset arrives as records, a curation lays over records
   already open, records go back out as a curation of the differences, and a file
   is held as the text it is for the editor to splice.
+- `gsurf/imports.py` — the way into that format from a mapped layer, which is
+  the direction neither script in the gstruct repository runs: `export_gsurf.py`
+  goes out to a GeoPackage, and `export_geology.py` comes in from one survey's
+  own columns. A line layer is asked what its columns mean and written out as
+  structures with their paths — a transcript and not a curation, since there is
+  no source file for it to be laid over. The four rules FORMAT.md sets for an
+  importer are the shape of the module: the source string kept beside anything
+  normalised from it, what the source does not say written `unknown` with a
+  reason, nothing dropped that could be carried, and no synonyms turned into
+  grades.
 
 The pre-2026 application lived in a `gSurf/` package beside this one and was
 removed in 2026-09: it had not run since the rebuild — `pygsf`, `gst` and
@@ -102,7 +112,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and twenty-four assertions over fourteen scripts, each also runnable on
+Six hundred and fifty-eight assertions over fifteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
 its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
@@ -198,6 +208,13 @@ Asking per tool is also what keeps the dialog short. Asked before the tool is
 known, it has to cover every source any tool might want: a longer dialog that
 says less about the one you picked, and tall enough to push its own buttons off
 a short screen. It scrolls now, and can be dragged to any size.
+
+Under the tools is `Import — lines to .gstruct`, which is not one: it opens no
+DEM, draws no map and hands back no window. It is there because the trace editor
+takes a `.gstruct` and nothing else, which is right — there is nothing in a
+mapped layer to edit — and which left a layer with no way in at all. It reads a
+line layer, asks what its columns mean, writes the file, and remembers it in the
+`traces` slot, so the editor proposes it next without anybody browsing for it.
 
 Two of the three can still be started on their own, which is what a repeated run
 wants:
@@ -611,15 +628,15 @@ over rather than reported back — what the dialog reports as refused, the
 launcher forgets, and forgetting here would have the editor delete the sections'
 layer on the way past.
 
-A layer that reaches `build` anyway is still refused outright, with the reason:
-it has no text to edit and no way to hold a span or a fit. **Nothing here
-converts one yet.** `export_geology.py` in the gstruct repository builds a
-`.gstruct` from mapped layers, but it is a script written for one survey — the
-paths, the layer names, the vocabulary each source spells `fault` in, the
-distance an attitude attaches over — and generalising it into an import, with
-the relevant fields named in a dialog, is its own piece of work. Note which
-direction each script runs: `export_gsurf.py` goes the other way, from a
-`.gstruct` out to a GeoPackage.
+A layer that reaches `build` anyway is still refused outright, with the reason —
+it has no text to edit and no way to hold a span or a fit — and with what to do
+instead, which is the launcher's `Import — lines to .gstruct`. That message has
+been wrong twice, both times by naming a script: `export_gsurf.py` runs the
+other way, out of a `.gstruct` and into a GeoPackage, so the box refusing
+`misure_montealpi.gpkg` was telling whoever read it to go and run the script
+that had produced the file; and `export_geology.py`, which does come in from a
+layer, is a script written for one survey and not a way in for anybody else.
+`check_editor.py` asserts the box names no `.py` at all.
 
 So is a file whose ruler is degrees. Everything along a trace here is metres —
 the reach, the window a fit was read on, `DEFAULT_MAX_GAP` — and an anchor is
@@ -712,6 +729,87 @@ that is handled; a file declaring no CRS at all is read as the session's and
 says so in the status bar, rather than being refused — though if that session is
 itself in degrees, the refusal above applies and names the session as where the
 projection came from, since that is a different thing to go and fix.
+
+### Usage — import, lines to .gstruct
+
+On the launcher, under the tools. Pick a file, pick one of its line layers, and
+say what the columns mean: which one is the ident, which the label, which two
+hold the angles and under which convention, and which of the rest to carry
+through. Then `Write .gstruct...`. What comes out is a file of `structure` blocks
+with their paths — a transcript, not a curation: a curation carries no geometry
+and states only what was decided, because restating its source would make it a
+second copy of it, and here the second copy is the whole point, there being no
+source file for it to be laid over.
+
+**One structure per line, and no pooling.** The sections tool pools features
+that share a category and an attitude, because two fragments carrying one plane
+are one plane digitised in pieces and a panel should list it once. A file is not
+a panel: pooling here would merge two faults that happen to dip alike into one
+block under one name, and the name is what a curation has to hold on to
+afterwards.
+
+**A structure has one path, so a multipart feature becomes several.** Joining the
+parts end to end is the one thing that cannot be done — it invents a segment that
+is not on the ground, and an anchor near the gap would project onto it — and
+keeping only the longest, which is what `export_geology.py` does, is data thrown
+away. So the parts are written as their own structures, suffixed, sharing `set=`
+with the name they came from. The same suffix covers a name the source used
+twice, which is the other way an ident arrives not unique; the two are counted
+apart in the report, since a split trace is this program doing the only thing it
+can and a repeated name is the source saying something about itself.
+
+**A plane in the table becomes a `fit` over the whole trace, carrying
+`from=table`.** FORMAT.md defines an `attitude` as an observation *at a point*,
+and a column that speaks for a trace has no point to be at: anchored to the
+midpoint it would claim a place nobody stood. Measured on the synthetic trace in
+`check_imports.py`, where the answer is known at both ends — written as a
+midpoint attitude, `attitude_at` reports `misurata-lontana:1000m` at the far end
+of a kilometre, which is false twice over, and the editor's band reads
+`misurata-lontana:999m`. As a fit it answers `fit:?` everywhere along it. The `?`
+is not a gap: the provenance a fit reports is its verdict, the three verdicts in
+FORMAT.md are all about how a plane came off a DEM, and this one came off a
+table — a word invented to fill that field would be a verdict on a computation
+that never ran. Nothing is fitted to the topography here; that is
+`traces.fit_records`, and it wants a DEM open.
+
+**`certainty` and `exposure` come out `unknown`, with the reason.** Not an
+omission, and FORMAT.md's own example of why: `Tipologia` on a CARG tectonic
+sheet holds `certo`, `incerto` and `sepolto` — 10027, 2205 and 486 of them over
+the eight sheets of the AOI — and those three words are two axes mixed, which is
+how "certain but not exposed" ends up with no box to be written in and `incerto`
+and `sepolto` end up mutually exclusive. Deciding in a dialog which axis each
+word belongs on would be that damage done silently. The column is preserved
+beside them as `raw.Tipologia`, the axes are written with `reason=` so the
+silence is a statement rather than an absence, and the curator settles it in the
+editor.
+
+**`kind` is a token typed once, or left unsaid.** The writer does not quote a
+kind and the parser reads back one word, so a value with a space in it is
+truncated on the round trip and the file says something other than what it looks
+like — `kind faglia diretta` comes back `faglia`. A kind of two words is
+therefore refused rather than written. A column would be no better here: `Tipo`
+is free Italian text in 28 spellings, several with a parenthetical instruction to
+the cartographer inside the value, and on a sheet whose 24717 lines are 16506
+stratigraphic contacts and 2152 faults there is no one answer to type either.
+Unsaid is the true answer, and the editor is where it stops being.
+
+Two refusals are about the header rather than the rows, and both close the same
+trap. A projection with no EPSG code is refused, because `crs` is read back as
+one token and a WKT written there would lose all but its first word. A layer in
+degrees is refused here rather than at the editor's door, since writing a file
+the next tool will turn away is work for nobody.
+
+Measured on the CARG sheets of the AOI, at 1:25.000 over eight sheets:
+
+| layer | features | written | file | reopened |
+|---|---|---|---|---|
+| `elementi_tettonici` | 12718 | 3.6 s | 5.7 MB | 1.3 s |
+| `limiti_geologici` | 24717 | 6.8 s | 19.6 MB | 3.1 s |
+
+`reopened` is the editor window built on the result, structure chooser and all.
+The dialog says the feature count before anything is written, and says it more
+loudly above five thousand: each one becomes a block with its own name, and the
+editor lists them all.
 
 ### Things worth knowing
 

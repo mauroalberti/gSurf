@@ -63,7 +63,7 @@ MISSING_COLOUR = "#a03000"
 _UNASKED = object()
 
 
-def _first_match(candidates, fields):
+def first_match(candidates, fields):
     """The first candidate name present among the fields, case-insensitively."""
 
     lowered = {str(field).lower(): str(field) for field in fields}
@@ -800,11 +800,11 @@ class AnglePicker(LayerPicker):
                 asked = wanted.get(key, _UNASKED)
 
                 if asked is _UNASKED:
-                    chosen = _first_match(guesses, fields)
+                    chosen = first_match(guesses, fields)
                 elif asked is None:
                     chosen = None
                 else:
-                    chosen = asked if asked in fields else _first_match(guesses, fields)
+                    chosen = asked if asked in fields else first_match(guesses, fields)
 
                 combo.setCurrentText(chosen or self.NO_FIELD)
 
@@ -959,7 +959,7 @@ class TracePicker(AnglePicker):
             self.category_combo.addItem("(none)")
             self.category_combo.addItems(fields)
 
-            chosen = asked if asked in fields else _first_match(self.CATEGORY_FIELDS, fields)
+            chosen = asked if asked in fields else first_match(self.CATEGORY_FIELDS, fields)
             self.category_combo.setCurrentText(chosen or "(none)")
 
         self.category_combo.setEnabled(bool(fields))

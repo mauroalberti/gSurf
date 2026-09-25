@@ -88,6 +88,7 @@ class Launcher(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
         layout.addWidget(tools_box)
+        layout.addWidget(self._import_box())
         layout.addWidget(session_box)
         layout.addStretch(1)
 
@@ -95,6 +96,75 @@ class Launcher(QtWidgets.QMainWindow):
         self.setMinimumWidth(460)
 
         self._describe()
+
+    # -- getting data in at all --------------------------------------------
+
+    def _import_box(self):
+        """
+        The import, which is here because it is not a tool and has no session.
+
+        It opens no DEM, draws no map and returns no window: it reads a layer,
+        asks what its columns mean, and writes a file. Put among the tools it
+        would be the one button that does not lead to a map, and the launcher's
+        whole shape is that picking a tool decides what it then asks for.
+
+        It sits here rather than nowhere because the editor's slot takes a
+        `.gstruct` and nothing else, which is correct and which left a mapped
+        layer with no way in at all -- and a conversion nobody can reach is a
+        conversion that does not exist.
+        """
+
+        box = QtWidgets.QGroupBox("Import")
+        layout = QtWidgets.QVBoxLayout(box)
+
+        button = QtWidgets.QPushButton("Lines to .gstruct...")
+        button.setMinimumHeight(28)
+        button.clicked.connect(self.import_lines)
+
+        caption = QtWidgets.QLabel(
+            "Transcribe a line layer into the format the trace editor reads."
+        )
+        caption.setWordWrap(True)
+        caption.setStyleSheet("color: gray; font-size: 10px;")
+        caption.setIndent(4)
+
+        layout.addWidget(button)
+        layout.addWidget(caption)
+
+        return box
+
+    def import_lines(self):
+        """
+        Writes a `.gstruct` from a layer, and remembers it where the editor asks.
+
+        Remembered rather than merely written, which is the whole of why this
+        returns a path: the file is new, so it is in no history and no project,
+        and the next dialog would offer everything except the thing just made.
+        It goes in as a spec and not a bare path because that is the shape the
+        `traces` slot restores from -- with no columns named, the format saying
+        what everything is being the reason a `.gstruct` needs none.
+        """
+
+        from .imports import run
+
+        written = run(self)
+
+        if written is None:
+            return None
+
+        spec = dict(
+            path=written,
+            role="lines",
+            layer="structures",
+            dip_dir_field=None,
+            dip_field=None,
+            is_rhr_strike=False,
+        )
+
+        self.chosen["traces"] = spec
+        self.recent.remember(dict(traces=spec))
+
+        return written
 
     # -- the session -------------------------------------------------------
 

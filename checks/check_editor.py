@@ -580,15 +580,19 @@ def main():
 
         layer = written(tmp, "not-a-format.gpkg", "")
 
-        # The second half is the assertion: `export_gsurf.py` runs the other
-        # way, from a `.gstruct` out to a GeoPackage, so naming it here sent
-        # whoever read this box off to run the script that had made the file
-        # they were being refused.
-        check("a layer is not a thing this edits, and it names the right script",
+        # The second half is the assertion, and it has been wrong twice in the
+        # same way: this box used to name `export_gsurf.py`, which runs the other
+        # way and had produced the very file being refused, and then
+        # `export_geology.py`, which is a script for one survey and not a way in
+        # for anybody else. What a refusal owes the reader is the thing to do
+        # instead, and there is now one in the program -- so the assertion is
+        # that it points there and at no script at all.
+        check("a layer is not a thing this edits, and it says where to convert one",
               tool.build(session, {"traces": dict(path=str(layer))}) is None
               and shown
-              and "export_geology.py" in shown[-1]
-              and "export_gsurf.py" not in shown[-1],
+              and "Import" in shown[-1]
+              and ".gstruct" in shown[-1]
+              and ".py" not in shown[-1],
               (shown[-1] if shown else "nothing said").split("\n")[-1][:60])
 
         empty = written(tmp, "empty.gstruct", "gstruct 0.2\ncrs EPSG:25833\n")

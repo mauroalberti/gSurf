@@ -1231,10 +1231,9 @@ def build(session, chosen, legend="beside"):
             "Nothing to edit",
             f"{path}\n\nThis edits a .gstruct, which is a text format with one "
             f"fact per line. A layer has no text to edit and no way to hold a "
-            f"span or a fit, and nothing here converts one yet: "
-            f"`export_geology.py`, in the gstruct repository, builds a file "
-            f"from mapped layers, and it is a script written for one survey "
-            f"rather than an import.",
+            f"span or a fit.\n\nTo get one from a layer: Import - lines to "
+            f".gstruct, on the launcher. It asks what the columns mean and "
+            f"writes a file, which this then opens.",
         )
         return None
 
