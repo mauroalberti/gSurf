@@ -56,6 +56,7 @@ from gsurf.curation import (
     PROVENANCE,
     UNCONSTRAINED,
     Document,
+    degrees_not_metres,
     is_gstruct,
     nearest_structure,
     place_on,
@@ -1237,6 +1238,19 @@ def build(session, chosen, legend="beside"):
     if not document.dataset.structures:
         QtWidgets.QMessageBox.critical(
             None, "Nothing to edit", f"{path}\n\nno structure in the file"
+        )
+        return None
+
+    # Refused at the door rather than handled inside, because there is nothing
+    # here that would only half work: the band along the top is metres, the
+    # reach is metres, and an anchor written to two decimals of a degree lands
+    # somewhere else entirely. A tool that opened anyway would be a tool that
+    # writes the file wrong.
+    said = degrees_not_metres(document.dataset, getattr(session, "crs", None))
+
+    if said:
+        QtWidgets.QMessageBox.critical(
+            None, "Degrees, not metres", f"{path}\n\n{said}"
         )
         return None
 

@@ -54,7 +54,7 @@ hemisphere and looks like a result.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -261,6 +261,91 @@ def frame_of(path):
     return CRS.from_user_input(dataset.crs), (min(xs), min(ys), max(xs), max(ys))
 
 
+def degrees_not_metres(dataset, fallback=None):
+    """
+    Why this file cannot be measured along, or None if it can.
+
+    Everything read along a trace is a progressive in the file's own units --
+    `attitude_at`'s reach, a fit's window, `DEFAULT_MAX_GAP` -- and everything
+    written back is a coordinate to two decimals, which is a centimetre in a
+    projected CRS and 0.01 degrees in a geographic one. Measured on the first
+    vertex of `merid_faults.gstruct` taken to EPSG:4326: `@16.27,39.92`, which
+    is 472 m from the point that was picked. The reason an anchor is snapped to
+    the trace at all is that fifty metres of error would say something false
+    about where somebody stood, so writing four hundred is not a rounding.
+
+    The CRS is the one declared, or the caller's where the file declares none:
+    a file with no `crs` line is read at face value in the session's, so that is
+    the ruler either way. An unreadable one is refused here rather than left to
+    raise from inside a transformer.
+    """
+
+    declared = dataset.crs or fallback
+
+    if declared is None:
+        return None
+
+    from pyproj import CRS
+
+    # Which of the two it is matters to the sentence: a file that declares a
+    # projection is wrong about itself, and one that declares none is being read
+    # in the session's, which is somebody's answer in a dialog and a different
+    # thing to go and fix.
+    whose = (
+        f"this file is written in {declared}"
+        if dataset.crs
+        else f"this file declares no projection and is read as the session's, {declared}"
+    )
+
+    try:
+        crs = CRS.from_user_input(declared)
+    except Exception as err:
+        return f"{whose}, which cannot be read: {type(err).__name__}: {err}"
+
+    if not crs.is_geographic:
+        return None
+
+    said = (
+        f"{whose}, which is geographic: its "
+        f"coordinates are degrees, and the ruler everything along a trace is "
+        f"measured with -- a progressive, a reach, the window a fit was read "
+        f"on -- is metres. An anchor is written to two decimals, a centimetre "
+        f"in a projected CRS and about a kilometre in this one."
+    )
+
+    slip = _anchor_slip(crs, dataset)
+
+    if slip is not None:
+        said += (
+            f" The first vertex in it would be written {slip:,.0f} m from "
+            f"where it is."
+        )
+
+    return said + (
+        " Reproject it to the projection the survey was mapped in -- "
+        "`export_gsurf.py` writes the layer's own -- and open it again."
+    )
+
+
+def _anchor_slip(crs, dataset):
+    """How far `@x,y` to two decimals lands from the first vertex, in metres."""
+
+    point = next(
+        (vertex for structure in dataset.structures for vertex in structure.path[:1]),
+        None,
+    )
+    geod = crs.get_geod()
+
+    if point is None or geod is None:
+        return None
+
+    lon, lat = point
+
+    # The same expression `insert_anchor` writes with, so this is the error the
+    # editor would make and not an estimate of it.
+    return geod.inv(lon, lat, float(f"{lon:.2f}"), float(f"{lat:.2f}"))[2]
+
+
 # -- the file as text, and the blocks it is made of ------------------------
 
 # What `attitude_at` answers with, as the word before the colon. The five are
@@ -303,6 +388,51 @@ def _opens(line):
     word = line.split("#", 1)[0].strip().partition(" ")[0]
 
     return word if word in ("structure", "observation") else None
+
+
+def _split_keeping_ends(source):
+    """
+    The content lines, and the terminator each one came with.
+
+    `splitlines()` decides *where* the lines are, because that is what `loads`
+    uses and a scanner that disagreed with it would slice the file somewhere it
+    does not -- but it throws the terminators away, and rejoining with `"\\n"`
+    then rewrites every line of a CRLF file in order to replace one block of it.
+    Measured on `curation.gstruct` converted to CRLF: thirty carriage returns
+    in, none out, for an edit to a block of two lines, and in git a one-block
+    change that arrives as a whole-file diff is a change nobody reads.
+
+    The join was only the second half of that, and the smaller one. The first
+    was that `read_text` is text mode, so the carriage returns were already gone
+    before any of this saw them -- which is why `Document` opens with
+    `newline=""` and this is handed a source that still has its own endings in
+    it. Both halves had to go for either to be worth fixing.
+
+    So the terminator is kept beside its line. The last one is `""` where the
+    file ends without a newline, which is preserved rather than tidied: what the
+    editor promises is the bytes it did not touch.
+    """
+
+    lines, ends = [], []
+
+    for kept in source.splitlines(keepends=True):
+        # One line in, one line out: `kept` is what `splitlines` calls a line,
+        # so splitting it again can only give that line back, and the rest of
+        # it is the separator -- whichever of the seven `splitlines` honours.
+        (bare,) = kept.splitlines()
+
+        lines.append(bare)
+        ends.append(kept[len(bare):])
+
+    return lines, ends
+
+
+def _dominant(ends):
+    """The terminator a line written from scratch takes: the file's own."""
+
+    counted = Counter(end for end in ends if end)
+
+    return counted.most_common(1)[0][0] if counted else "\n"
 
 
 @dataclass
@@ -372,9 +502,16 @@ class Document:
     def __init__(self, path):
         self.path = Path(path)
 
-        source = self.path.read_text(encoding="utf-8")
+        # `newline=""` and not `read_text`, which is where the terminators were
+        # being lost before they got anywhere near the writing: text mode
+        # translates CRLF to LF on the way in, so a file's own line endings are
+        # not something a later join can put back -- they were never read. The
+        # same argument holds in the other direction and `save` says so there.
+        with self.path.open(encoding="utf-8", newline="") as handle:
+            source = handle.read()
 
-        self.lines = source.splitlines()
+        self.lines, self.ends = _split_keeping_ends(source)
+        self.newline = _dominant(self.ends)
         self.dataset = module().loads(source)
         self.blocks = _blocks(self.lines)
         self.dirty = False
@@ -458,8 +595,9 @@ class Document:
             )
 
         block = self.blocks[index]
+        fresh = text.splitlines()
         candidate = list(self.lines)
-        candidate[block.start:block.end] = text.splitlines()
+        candidate[block.start:block.end] = fresh
         blocks = _blocks(candidate)
 
         if len(blocks) != len(self.blocks):
@@ -468,7 +606,20 @@ class Document:
                 f"block(s) where the file expects one"
             )
 
+        # The lines that went in take this file's terminator, and the file's
+        # last line keeps the one it had: whether a file ends with a newline is
+        # a property of the file, not of whichever block happens to be last in
+        # it. Editing any other block does not reach the tail, so the
+        # restoration is only doing anything in the case where it has to.
+        ends = list(self.ends)
+        tail = ends[-1] if ends else ""
+        ends[block.start:block.end] = [self.newline] * len(fresh)
+
+        if ends:
+            ends[-1] = tail
+
         self.lines = candidate
+        self.ends = ends
         self.blocks = blocks
         self.dataset.structures[index] = parsed.structures[0]
         self.dirty = True
@@ -496,16 +647,22 @@ class Document:
     # -- the whole of it --------------------------------------------------
 
     def text(self):
-        """The file as it would be written out."""
+        """The file as it would be written out, terminators and all."""
 
-        return "\n".join(self.lines) + "\n"
+        return "".join(line + end for line, end in zip(self.lines, self.ends))
 
     def save(self, path=None):
         """Writes it, and takes the path written to as its own from then on."""
 
         target = self.path if path is None else Path(path)
 
-        target.write_text(self.text(), encoding="utf-8")
+        # `newline=""` again, and this half of it has never been exercised:
+        # text mode turns every `"\n"` into `os.linesep`, which is `"\n"` here
+        # and `"\r\n"` on Windows. Written through `write_text` there, a file
+        # read as LF would be saved as CRLF throughout -- the same whole-file
+        # rewrite as before, in the other direction and on the other platform.
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(self.text())
 
         self.path = target
         self.dirty = False

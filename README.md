@@ -102,10 +102,10 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and twelve assertions over fourteen scripts, each also runnable on
+Six hundred and seventeen assertions over fourteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
-its off-screen mode unless you ask otherwise. `check_sections.py` is 26 of those
-55 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
+its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
+45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
 it.
 
 They are checks and not unit tests, in that most of them assert against
@@ -604,6 +604,16 @@ A layer is refused outright, with the reason: it has no text to edit and no way
 to hold a span or a fit, and `export_gsurf.py` is what turns one into a file
 this opens.
 
+So is a file whose ruler is degrees. Everything along a trace here is metres —
+the reach, the window a fit was read on, `DEFAULT_MAX_GAP` — and an anchor is
+written to two decimals, which is a centimetre in a projected CRS and about a
+kilometre in a geographic one. The refusal quotes the cost for the file in
+front of it: the first vertex of `merid_faults.gstruct` taken to EPSG:4326 would
+be written `@16.27,39.92`, which is **472 m** from the point that was picked.
+Since the whole argument for snapping an anchor to the trace is that fifty
+metres of error would say something false about where somebody stood, writing
+four hundred is not a rounding, and half a tool that works is not worth opening.
+
 **What it shows that reading the file does not.** Precedence in this format is a
 computation over several lines at once — a refusal beats a measurement, a
 measurement within reach beats a fit, a fit beats a measurement further off — so
@@ -649,6 +659,17 @@ that deletes the geologist's reasoning is not a Save. Splicing one block also
 means a plane typed as `140.5/31` stays `140.5/31`, where a round trip would
 round it to whole degrees.
 
+Every other byte includes the line endings, which took a second attempt to get
+right. `read_text` and `write_text` are text mode in both directions: reading
+turns CRLF into LF, so the file's own endings are not something the writing can
+put back — they were never read — and writing turns every LF into `os.linesep`,
+which on Windows is CRLF. Either way a one-block edit arrives as a whole-file
+diff, which is the reliable way to have nobody read it. Both ends open with
+`newline=""` now and the terminator is kept beside its line rather than
+reconstructed, so a file of mixed endings keeps each line's own. The four
+assertions on this in `check_editor.py` exist because its fixture is a Python
+literal: on its own it could only ever have proved the LF case, and it did.
+
 There is no delete, and that is the format's answer rather than a missing
 button: a contact that does not hold is said not to hold — `span use * *
 rejected`, with the reason on it — which leaves both the geometry and the
@@ -661,7 +682,9 @@ opening and carried through a save untouched, but they cannot be edited here.
 The model stays in the file's own projection while the map is in the session's,
 and the two crossings — a path drawn, an anchor picked — are the only places
 that is handled; a file declaring no CRS at all is read as the session's and
-says so in the status bar, rather than being refused.
+says so in the status bar, rather than being refused — though if that session is
+itself in degrees, the refusal above applies and names the session as where the
+projection came from, since that is a different thing to go and fix.
 
 ### Things worth knowing
 

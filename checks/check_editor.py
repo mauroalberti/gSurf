@@ -160,6 +160,70 @@ def main():
         check("saving a file nobody edited gives back the same bytes",
               path.read_text(encoding="utf-8") == original)
 
+        # -- the terminators the file came with ----------------------------
+
+        print("\n-- line endings --\n")
+
+        # The check above is the right assertion against the wrong file: this
+        # fixture is a Python literal, so its endings are LF and it cannot see a
+        # save that puts LF back where something else was. These are the shapes
+        # a text file arrives in that the fixture is not, and before they were
+        # written the loss was thirty carriage returns out of thirty.
+
+        def as_saved(name, raw, index=0, added=None):
+            """One block spliced back into `raw`, and the bytes that came out."""
+
+            where = Path(tmp) / name
+            where.write_bytes(raw)
+
+            spliced = Document(where)
+            block = spliced.text_of(index)
+            spliced.replace(index, block if added is None else block + "\n" + added)
+            spliced.save()
+
+            return where.read_bytes()
+
+        # Named, because a backslash cannot go inside an f-string expression
+        # until 3.12 and the floor here is 3.9.
+        CR, LF = b"\r", b"\n"
+        CRLF = CR + LF
+
+        lf = source_text().encode("utf-8")
+        crlf = source_text().replace("\n", "\r\n").encode("utf-8")
+
+        out = as_saved("crlf.gstruct", crlf)
+        carriage = out.count(CR)
+        stray = out.count(LF) - out.count(CRLF)
+
+        check("a CRLF file comes back CRLF, byte for byte",
+              out == crlf,
+              f"{carriage} CR and {stray} bare LF, in {len(out)} of {len(crlf)} bytes")
+
+        out = as_saved(
+            "crlf-added.gstruct", crlf, added='  span use * * rejected reason="x"'
+        )
+        now, before = out.count(CRLF), crlf.count(CRLF)
+
+        check("and a line written into it takes the file's ending, not this file's",
+              out.count(LF) == now == before + 1,
+              f"{now} CRLF where there were {before}, {out.count(LF) - now} bare LF")
+
+        out = as_saved("no-newline.gstruct", lf.rstrip(LF))
+
+        check("a file that ends without a newline is not handed one",
+              out == lf.rstrip(LF),
+              "it gained one" if out.endswith(LF) else "it ends as it did")
+
+        # Mixed endings are not a hypothetical -- a Windows editor appending to a
+        # Unix file makes one -- and they are the case that says whether the
+        # terminators are kept line by line or guessed once for the whole file.
+        mixed = source_text().replace("\n", "\r\n", 4).encode("utf-8")
+        out = as_saved("mixed.gstruct", mixed, index=1)
+
+        check("and in a file of mixed endings the lines nobody edited keep theirs",
+              out == mixed,
+              f"{out.count(CR)} CR where there were {mixed.count(CR)}")
+
         # -- a block that will not go in ----------------------------------
 
         print("\n-- refusals --\n")
@@ -516,6 +580,23 @@ def main():
               tool.build(session, {"traces": dict(path=str(ahead))}) is None
               and "9.9" in shown[-1],
               shown[-1].split("\n")[-1][:60])
+
+        # The first vertex of `merid_faults.gstruct` taken to EPSG:4326. The
+        # refusal is not about the projection being unusual: it is that an anchor
+        # is written to two decimals, which here is the 472 m the message quotes,
+        # and that every number along a trace -- the reach, a fit's window,
+        # `DEFAULT_MAX_GAP` -- is metres. Half of this tool cannot work in
+        # degrees, so none of it opens.
+        degrees = written(
+            tmp, "degrees.gstruct",
+            "gstruct 0.2\ncrs EPSG:4326\n\nstructure F1\n  path 2\n"
+            "    16.270831 39.915793\n    16.280000 39.920000\n",
+        )
+
+        check("nor one whose ruler is degrees, and it says how far that is",
+              tool.build(session, {"traces": dict(path=str(degrees))}) is None
+              and "472 m" in shown[-1],
+              shown[-1].split(": ")[-1][:70])
 
     print()
 
