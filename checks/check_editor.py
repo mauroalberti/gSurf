@@ -580,9 +580,15 @@ def main():
 
         layer = written(tmp, "not-a-format.gpkg", "")
 
-        check("a layer is not a thing this edits, and it says why",
+        # The second half is the assertion: `export_gsurf.py` runs the other
+        # way, from a `.gstruct` out to a GeoPackage, so naming it here sent
+        # whoever read this box off to run the script that had made the file
+        # they were being refused.
+        check("a layer is not a thing this edits, and it names the right script",
               tool.build(session, {"traces": dict(path=str(layer))}) is None
-              and shown and "export_gsurf.py" in shown[-1],
+              and shown
+              and "export_geology.py" in shown[-1]
+              and "export_gsurf.py" not in shown[-1],
               (shown[-1] if shown else "nothing said").split("\n")[-1][:60])
 
         empty = written(tmp, "empty.gstruct", "gstruct 0.2\ncrs EPSG:25833\n")

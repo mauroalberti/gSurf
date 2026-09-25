@@ -54,6 +54,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from gsurf.curation import (
     DEFAULT_MAX_GAP,
     PROVENANCE,
+    SUFFIX,
     UNCONSTRAINED,
     Document,
     degrees_not_metres,
@@ -76,6 +77,14 @@ WANTS = dict(
     polygons="optional",
     lines="optional",
 )
+
+# And the slot takes one kind of file, which no other tool's does. A mapped
+# layer in `traces` is a perfectly good answer to the sections and no answer at
+# all here: there is nothing in a layer to edit, and every part of this window
+# reads text. Said to the dialog rather than only at the door, so the choice is
+# never offered -- `build` still refuses, for the ways in that do not pass
+# through a dialog.
+ONLY = dict(traces=SUFFIX)
 
 # The five answers `attitude_at` can give, as colours. Measured and computed are
 # different hues rather than different shades, because the distinction between
@@ -1222,8 +1231,10 @@ def build(session, chosen, legend="beside"):
             "Nothing to edit",
             f"{path}\n\nThis edits a .gstruct, which is a text format with one "
             f"fact per line. A layer has no text to edit and no way to hold a "
-            f"span or a fit: `export_gsurf.py` is what turns one into a file "
-            f"this can open.",
+            f"span or a fit, and nothing here converts one yet: "
+            f"`export_geology.py`, in the gstruct repository, builds a file "
+            f"from mapped layers, and it is a script written for one survey "
+            f"rather than an import.",
         )
         return None
 

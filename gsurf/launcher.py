@@ -98,12 +98,13 @@ class Launcher(QtWidgets.QMainWindow):
 
     # -- the session -------------------------------------------------------
 
-    def ask(self, entry, wants):
+    def ask(self, entry, wants, only=None):
         """What to open for this tool, filled in from the last answer. None if cancelled."""
 
         dialog = SourcesDialog(
             self,
             wants=wants,
+            only=only,
             chosen=self.chosen,
             recent=self.recent,
             title=f"gSurf - {entry['name'].lower()}",
@@ -193,7 +194,7 @@ class Launcher(QtWidgets.QMainWindow):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
-        chosen = self.ask(entry, module.WANTS)
+        chosen = self.ask(entry, module.WANTS, getattr(module, "ONLY", None))
 
         if chosen is None:
             return

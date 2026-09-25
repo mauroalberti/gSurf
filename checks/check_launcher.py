@@ -228,7 +228,7 @@ def main():
         # The one blocking call stands in for the dialog. Everything else in
         # `start` runs as it does in earnest: the session is opened here, the
         # module is imported here, the window is built and shown here.
-        launcher.ask = lambda entry, wants: dict(attitudes=attitudes)
+        launcher.ask = lambda entry, wants, only=None: dict(attitudes=attitudes)
         launcher.start(entries["Fold axes"])
         app.processEvents()
 
@@ -253,7 +253,7 @@ def main():
         check("with nothing left holding the window", launcher.tool_window is None)
         check("and the session still open underneath", launcher.session is fold_session)
 
-        launcher.ask = lambda entry, wants: dict(dem=dem_path)
+        launcher.ask = lambda entry, wants, only=None: dict(dem=dem_path)
         launcher.start(entries["Plane on a DEM"])
         app.processEvents()
 
@@ -270,7 +270,7 @@ def main():
         app.processEvents()
 
         standing = launcher.session
-        launcher.ask = lambda entry, wants: None
+        launcher.ask = lambda entry, wants, only=None: None
         launcher.start(entries["Fold axes"])
 
         check(

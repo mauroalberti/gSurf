@@ -349,9 +349,76 @@ def main():
         )
         check("the slot going with it", "dem" not in refusing.chosen)
 
+        print("\n-- a slot two tools fill differently --")
+
+        # `traces` is a mapped layer to the sections and a `.gstruct` to the
+        # editor, and the store keeps one list per slot. So the editor has to
+        # step over the layer rather than refuse it: what a dialog reports as
+        # refused, `ask` forgets -- which is the section just above, the same
+        # store and the same line of code.
+        faults = directory / "faults.gpkg"
+        faults.write_bytes(b"")
+
+        curation = directory / "curation.gstruct"
+        curation.write_text("gstruct 0.2\ncrs EPSG:25833\n", encoding="utf-8")
+
+        def as_traces(path, layer):
+            return dict(path=str(path), role="lines", layer=layer,
+                        dip_dir_field=None, dip_field=None, is_rhr_strike=False)
+
+        mapped = as_traces(faults, "faults")
+        written = as_traces(curation, "structures")
+
+        both = Recent(store_in(directory, "both.ini"))
+        both.remember(dict(traces=written))
+        both.remember(dict(traces=mapped))
+
+        editor = modules["Trace editor"]
+
+        carrying = Launcher(recent=both)
+
+        check("the run carries the layer the sections were opened on",
+              carrying.chosen.get("traces") == mapped)
+
+        editing = SourcesDialog(
+            wants=editor.WANTS, only=editor.ONLY,
+            chosen=carrying.chosen, recent=both,
+        )
+
+        box = editing.boxes["traces"]
+        offered = [box.path_combo.itemText(n) for n in range(box.path_combo.count())]
+
+        check("the editor is offered the curation and not the layer",
+              offered == ["curation.gstruct - structures"], str(offered))
+
+        check("and the layer it was carrying is stepped over, not refused",
+              editing.refused == [] and box.value() is None,
+              f"refused {editing.refused}")
+
+        check("the slot saying what it takes", "required, .gstruct" in box.title(),
+              box.title())
+
+        dismiss_next_dialog()
+        carrying.ask(entries["Trace editor"], editor.WANTS, editor.ONLY)
+
+        check("and asking leaves the sections' layer in the store",
+              [entry["path"] for entry in both.entries("traces")]
+              == [str(faults), str(curation)],
+              str([Path(entry["path"]).name for entry in both.entries("traces")]))
+
+        # The other half of "hidden, not dropped": the tool that wants it is
+        # still offered it, from the list the editor has just been through.
+        sections = SourcesDialog(wants=modules["Sections"].WANTS, recent=both)
+        theirs = sections.boxes["traces"]
+
+        check("and the sections are still offered both",
+              [theirs.path_combo.itemText(n) for n in range(theirs.path_combo.count())]
+              == ["faults.gpkg - faults", "curation.gstruct - structures"])
+
         launcher.close()
         cancelled.close()
         refusing.close()
+        carrying.close()
 
     print()
 

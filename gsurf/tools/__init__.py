@@ -7,6 +7,11 @@ A tool is a window plus what it has to be given, and the two are kept apart:
 opened on. That is what lets the launcher ask for the right things for the tool
 that was picked, instead of asking for everything any tool might want.
 
+A tool that can use only one kind of file in a slot adds `ONLY` beside it, a
+slot mapped to the suffix -- the trace editor takes a `.gstruct` in `traces`
+where the sections take a mapped layer. Optional, and read with `getattr`: the
+three tools that take whatever fits the slot say nothing.
+
 What is here is only what can be shown without importing anything: a name, a
 line of description, and where the module is. Importing a tool pulls in
 matplotlib, and the fold axes pull in geogst and mplstereonet on top of that,

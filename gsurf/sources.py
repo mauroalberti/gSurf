@@ -13,6 +13,12 @@ without a DEM and has no use for attitudes, the fold axes are the other way
 round. The required ones are coloured, so that what is missing can be seen
 rather than inferred from an Open button that stays grey.
 
+A tool may narrow a slot further with `ONLY`, a slot mapped to the one suffix
+it takes: the trace editor's `traces` is a `.gstruct` where the sections' is a
+mapped layer, and the same slot answering to two tools is why this is a filter
+on what is shown rather than anything written down. What it hides stays in the
+history for the tool that wants it.
+
 The choices come back as one dictionary keyed by slot -- `dem` a path, the rest
 specs -- and that same shape goes into `open_session` and on into the tool. One
 shape rather than three is what keeps the command line and the dialog from
@@ -117,6 +123,10 @@ class SlotBox(QtWidgets.QGroupBox):
         self.base_title = title
         self.level = "optional"
 
+        # The one suffix this slot takes, when the tool that asked for it can
+        # use nothing else. None is every file the picker can open.
+        self.only = None
+
         # What this slot has held before, newest first, in whatever shape this
         # picker's own `restore` takes. Empty until the dialog offers them.
         self.entries = []
@@ -156,10 +166,34 @@ class SlotBox(QtWidgets.QGroupBox):
 
         return combo
 
+    def restrict(self, suffix):
+        """
+        Narrows the slot to one kind of file, for a tool that can use no other.
+
+        Hiding and not forgetting, which is the whole of the care needed here:
+        the history is kept per slot and a slot outlives the tool that filled
+        it. `traces` is a mapped layer to the sections and a `.gstruct` to the
+        editor, and the layer has to still be there when the sections ask
+        again. So this filters what is shown and touches nothing stored.
+        """
+
+        self.only = suffix.lower()
+        self._mark()
+
+    def takes(self, entry):
+        """Whether this slot, as narrowed, will have that file at all."""
+
+        if self.only is None:
+            return True
+
+        path, _ = identity(entry)
+
+        return Path(path).suffix.lower() == self.only
+
     def offer(self, entries):
         """The remembered choices for this slot, before anything is restored."""
 
-        self.entries = [entry for entry in entries if entry]
+        self.entries = [entry for entry in entries if entry and self.takes(entry)]
         self._relist()
 
     def offer_project(self, entries):
@@ -173,7 +207,9 @@ class SlotBox(QtWidgets.QGroupBox):
         a half-filled angle slot is nothing at all.
         """
 
-        self.project_entries = [entry for entry in entries if entry]
+        self.project_entries = [
+            entry for entry in entries if entry and self.takes(entry)
+        ]
 
         # Said on the closed box, because nothing else on it changes. A slot
         # that offers nothing and a slot that now offers twenty-eight both read
@@ -282,8 +318,9 @@ class SlotBox(QtWidgets.QGroupBox):
 
     def _mark(self):
         required = self.level == "required"
+        said = self.level if self.only is None else f"{self.level}, {self.only}"
 
-        self.setTitle(f"{self.base_title} ({self.level})")
+        self.setTitle(f"{self.base_title} ({said})")
 
         if not required:
             self.setStyleSheet("")
@@ -457,8 +494,17 @@ class LayerPicker(SlotBox):
     # -- the file ----------------------------------------------------------
 
     def _browse(self):
+        # No "All files" once the slot is narrowed: a browser that still offers
+        # everything and then refuses what was picked is asking a question it
+        # has already decided the answer to.
+        chooser = (
+            VECTOR_FILTER
+            if self.only is None
+            else f"{self.only.lstrip('.')} (*{self.only})"
+        )
+
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, f"Choose the file: {self.role}", "", VECTOR_FILTER
+            self, f"Choose the file: {self.role}", "", chooser
         )
 
         if path:
@@ -506,6 +552,22 @@ class LayerPicker(SlotBox):
 
     def set_path(self, path, layer=None, preferred=None, quiet=False):
         """Loads the list of layers fit for the role. Returns False if there are none."""
+
+        # The last way in for a file the slot does not take: the file dialog no
+        # longer offers one, the lists no longer hold one, and the dialog skips
+        # one it was carrying, so what is left is a path typed by hand. Not
+        # reachable from `restore`, which is why saying so out loud is safe --
+        # a refusal there is reported to the launcher and forgets the entry.
+        if not self.takes(dict(path=str(path))):
+            if not quiet:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Not for this tool",
+                    f"{Path(path).name}\n\nThis tool takes a {self.only} in "
+                    f"this slot, and nothing else.",
+                )
+
+            return False
 
         # Said of the file that was here, which this is not. `restore` puts it
         # back afterwards, being the only caller that has anything to put.
@@ -958,7 +1020,8 @@ class SourcesDialog(QtWidgets.QDialog):
     """
 
     def __init__(
-        self, parent=None, wants=None, chosen=None, recent=None, title="gSurf - sources"
+        self, parent=None, wants=None, chosen=None, recent=None, only=None,
+        title="gSurf - sources"
     ):
         super().__init__(parent)
 
@@ -967,6 +1030,7 @@ class SourcesDialog(QtWidgets.QDialog):
         self.setMinimumHeight(240)
 
         self.wants = dict(wants or {})
+        self.only = dict(only or {})
         chosen = dict(chosen or {})
 
         self.boxes = {}
@@ -981,6 +1045,11 @@ class SourcesDialog(QtWidgets.QDialog):
         for slot, level in self.wants.items():
             box = picker_for(slot)
             box.set_requirement(level)
+
+            # Before the lists are filled, since it decides what goes in them.
+            if slot in self.only:
+                box.restrict(self.only[slot])
+
             box.changed.connect(self._refresh_ok)
 
             # Before `restore`, which puts the choice being put back at the top
@@ -1121,12 +1190,22 @@ class SourcesDialog(QtWidgets.QDialog):
         deserves an answer, having one put back for you is not -- so a refused
         slot is left empty, coloured if the tool needs it, and named in the
         list this returns.
+
+        **A choice this tool does not take is skipped and not refused**, and the
+        difference is the whole of it: what this returns is forgotten. The
+        sections leave a mapped layer in `traces` and the editor takes only a
+        `.gstruct`, so reporting it would have the editor delete the sections'
+        layer from the history on the way past -- a tool erasing another tool's
+        answer to a question it was never asked.
         """
 
         refused = []
 
         for slot, box in self.boxes.items():
             if not chosen.get(slot):
+                continue
+
+            if not box.takes(chosen[slot]):
                 continue
 
             if box.restore(chosen[slot]) is False:

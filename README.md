@@ -102,7 +102,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and eighteen assertions over fourteen scripts, each also runnable on
+Six hundred and twenty-four assertions over fourteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
 its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
@@ -600,9 +600,26 @@ readable is a number that threshold sets.
 
 Takes a `.gstruct` and nothing else it cannot get from it; a DEM and a vector
 backdrop are optional and are there to put the traces on ground you recognise.
-A layer is refused outright, with the reason: it has no text to edit and no way
-to hold a span or a fit, and `export_gsurf.py` is what turns one into a file
-this opens.
+The sources dialog offers nothing else for that slot — not from the history, not
+from a QGIS project, not from Browse — because `ONLY` says so beside `WANTS`,
+and the slot's title reads `Traces (required, .gstruct)`.
+
+What is filtered there is hidden and not dropped. The history is kept per slot
+and a slot outlives the tool that filled it: `traces` is a mapped layer to the
+sections and a `.gstruct` here, and a choice this tool cannot take is stepped
+over rather than reported back — what the dialog reports as refused, the
+launcher forgets, and forgetting here would have the editor delete the sections'
+layer on the way past.
+
+A layer that reaches `build` anyway is still refused outright, with the reason:
+it has no text to edit and no way to hold a span or a fit. **Nothing here
+converts one yet.** `export_geology.py` in the gstruct repository builds a
+`.gstruct` from mapped layers, but it is a script written for one survey — the
+paths, the layer names, the vocabulary each source spells `fault` in, the
+distance an attitude attaches over — and generalising it into an import, with
+the relevant fields named in a dialog, is its own piece of work. Note which
+direction each script runs: `export_gsurf.py` goes the other way, from a
+`.gstruct` out to a GeoPackage.
 
 So is a file whose ruler is degrees. Everything along a trace here is metres —
 the reach, the window a fit was read on, `DEFAULT_MAX_GAP` — and an anchor is
