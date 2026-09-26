@@ -17,9 +17,20 @@ gap, that an axis nobody interpreted says so in the format's own grammar, and
 that a strike is still recognisable as a strike after being turned into a dip
 direction.
 
-The four refusals are the other half, and each one is a file that would have been
+The refusals are the other half, and each one is a file that would have been
 wrong rather than unreadable: a kind of two words, a projection with no EPSG
-code, a layer in degrees, and one angle column named without the other.
+code, a layer in degrees written as though it were metres, one angle column
+named without the other, half a striation, and half of a join.
+
+The relational half is checked against the shape a survey takes as soon as one
+station carries two measurements -- a point layer of stations and a table keyed
+to it -- and what is asserted there is that nothing wins silently: two surfaces
+measured at one place come out as two attitudes with names that tell them apart,
+each saying how many others stood at that spot, and the plane a profile draws
+names the surface it was measured on. The rest of that section is the cases a
+join can lose that a distance cannot: a measure whose station does not exist, a
+station with nothing measured at it, and a column that exists on both sides under
+one name.
 
     python check_imports.py
 """
@@ -241,6 +252,69 @@ def stations_at(directory, name="stazioni.gpkg", crs="EPSG:25833"):
         },
         geometry=[r[3] for r in rows], crs=crs,
     ).to_file(path, layer="punti", driver="GPKG")
+
+    return path
+
+
+def stations_and_measures(directory, name="relazionale.gpkg", crs="EPSG:25833"):
+    """
+    Five stations with no angles on them, and seven measures in a table.
+
+    The shape a survey takes as soon as a station carries two measurements, and
+    every case the join has to have an answer for, once each: S1 has two measured
+    surfaces at one place, S2 one with a horizontal striation on it, S3 is four
+    hundred metres off the trace, S4 was visited and its plane was not readable,
+    S5 has no row in the table at all -- and two rows point at no station, one by
+    a code nobody wrote down and one by a code that matches nothing.
+    """
+
+    import geopandas as gpd
+    import pandas as pd
+    import pyogrio
+    from shapely.geometry import Point
+
+    path = Path(directory) / name
+
+    gpd.GeoDataFrame(
+        {"sigla": ["S1", "S2", "S3", "S4", "S5"]},
+        geometry=[
+            Point(X0 + 100.0, Y0),          # on the trace
+            Point(X0 + 600.0, Y0 + 50.0),   # fifty metres off it
+            Point(X0 + 500.0, Y0 - 400.0),  # four hundred, so past the threshold
+            Point(X0 + 900.0, Y0 + 5.0),
+            Point(X0 + 300.0, Y0 + 10.0),
+        ],
+        crs=crs,
+    ).to_file(path, layer="stazioni", driver="GPKG")
+
+    # Two surfaces at S1, and the column that says which is which. A striation
+    # on the second of them and on S2's only one -- that second at plunge 0,
+    # which is a strike-slip fault's stria and the row `admissible` would pass
+    # with no trend at all.
+    rows = [
+        ("S1", "p1", 200.0, 40.0, None, None, "primo piano"),
+        ("S1", "p2", 20.0, 70.0, 35.0, 12.0, "secondo piano, con stria"),
+        ("S2", "", 210.0, 45.0, 300.0, 0.0, "stria orizzontale"),
+        ("S3", "", 220.0, 50.0, 100.0, 20.0, "oltre soglia"),
+        ("S4", "", None, None, 88.0, None, "piano illeggibile, mezza stria"),
+        ("S99", "", 250.0, 60.0, None, None, "codice che non esiste"),
+        (None, "", 260.0, 65.0, None, None, "senza codice"),
+    ]
+
+    pyogrio.write_dataframe(
+        pd.DataFrame(
+            {
+                "codice": [r[0] for r in rows],
+                "piano": [r[1] for r in rows],
+                "immersione": [r[2] for r in rows],
+                "inclinazione": [r[3] for r in rows],
+                "trend": [r[4] for r in rows],
+                "plunge": [r[5] for r in rows],
+                "nota": [r[6] for r in rows],
+            }
+        ),
+        path, layer="misure", append=True,
+    )
 
     return path
 
@@ -824,6 +898,315 @@ def main():
 
         check("and one with no projection at all is refused: a distance needs units",
               "no projection" in refused and "metres" in refused, refused[-60:])
+
+        print("\n-- the measures in a table of their own, keyed to the stations --\n")
+
+        from gsurf.imports import MEASURE, ORPHAN, STATION_SUFFIX
+        from gsurf.vectors import VectorSource
+
+        relational = stations_and_measures(tmp)
+
+        check("a layer with no geometry is a table, and is not offered as points",
+              VectorSource.candidate_layers(relational, VectorSource.TABLE)
+              == ["misure"]
+              and VectorSource.candidate_layers(relational, "points") == ["stazioni"],
+              str(VectorSource.candidate_layers(relational, VectorSource.TABLE)))
+
+        keyed = Mapping(
+            layer="faglie", ident_field="code", label_field="nome",
+            dip_dir_field="strike", dip_field="dip", is_rhr_strike=True,
+            points_path=str(relational), points_layer="stazioni",
+            points_ident_field="sigla",
+            measures_path=str(relational), measures_layer="misure",
+            points_join_field="sigla", measures_join_field="codice",
+            # The angles are the *table's* columns: that is the whole difference,
+            # and the field names in the mapping do not change to say so.
+            points_dip_dir_field="immersione", points_dip_field="inclinazione",
+            surface_field="piano",
+            trend_field="trend", plunge_field="plunge",
+            points_keep_fields=("nota",),
+        )
+
+        text, joint = transcript_of(path, keyed)
+
+        together = gstruct.loads(text)
+        alpha = together.by_ident("F001")
+
+        check("the join reads every row, and counts the stations apart from them",
+              joint.sites == 5 and joint.measures == 5 and joint.orphans == 2,
+              f"sites={joint.sites} measures={joint.measures} "
+              f"orphans={joint.orphans}")
+
+        by_station = {a.attrs.get("station"): a for a in alpha.attitudes}
+
+        # The whole point of the exercise. Two surfaces at one station are two
+        # attitudes at one anchor, so at one `s`, and both are in the file.
+        check("two surfaces measured at one station both travel, under their own names",
+              joint.attached == 3 and joint.several == 1
+              and f"S1{MEASURE}p1" in by_station and f"S1{MEASURE}p2" in by_station
+              and by_station[f"S1{MEASURE}p1"].plane.dip_dir == 200.0
+              and by_station[f"S1{MEASURE}p2"].plane.dip_dir == 20.0,
+              f"attached={joint.attached} several={joint.several} "
+              + ", ".join(sorted(k for k in by_station if k)))
+
+        check("and each says how many others stood at the same spot",
+              by_station[f"S1{MEASURE}p1"].attrs.get("siblings") == "1"
+              and by_station[f"S1{MEASURE}p2"].attrs.get("siblings") == "1"
+              and "siblings" not in by_station["S2"].attrs,
+              str(by_station[f"S1{MEASURE}p1"].attrs.get("siblings")))
+
+        # Which is what makes the file readable afterwards: `attitude_at` answers
+        # with one plane whatever is at that progressive, and at equal `s` it
+        # answers with the first written. What it could not do before was say
+        # which -- `misurata:S1` is the same sentence whichever of the two it
+        # picked, and now the sentence names the surface.
+        drawn = alpha.attitude_at(100.0)
+
+        check("a profile drawn from it names the surface it drew, not just the station",
+              drawn[1].startswith(f"misurata:S1{MEASURE}p1")
+              and drawn[0].dip_dir == 200.0,
+              drawn[1])
+
+        check("a station with one measure keeps its plain code, as it always had",
+              "S2" in by_station and by_station["S2"].plane.dip == 45.0,
+              str(sorted(k for k in by_station if k)))
+
+        # -- the striations ------------------------------------------------
+
+        striae = {ln.attrs.get("station"): ln for ln in alpha.lineations}
+
+        check("a striation becomes a `lineation`, at the same anchor as its plane",
+              joint.lineations == 2 and f"S1{MEASURE}p2" in striae
+              and striae[f"S1{MEASURE}p2"].trend == 35.0
+              and striae[f"S1{MEASURE}p2"].plunge == 12.0
+              and abs(striae[f"S1{MEASURE}p2"].s
+                      - by_station[f"S1{MEASURE}p2"].s) < 0.01,
+              f"{joint.lineations} lineation(s): " + ", ".join(sorted(striae)))
+
+        # `admissible` exempts a zero dip from needing an azimuth, because a
+        # horizontal bed has no dip direction. A horizontal stria has a perfectly
+        # good trend, and a rule borrowed from planes would have written `nan`.
+        check("a horizontal striation keeps its trend instead of becoming nan",
+              "S2" in striae and striae["S2"].trend == 300.0
+              and striae["S2"].plunge == 0.0,
+              f"{striae['S2'].trend}/{striae['S2'].plunge}" if "S2" in striae else "none")
+
+        check("and half a striation is not one, and is counted as not carried",
+              joint.dropped.get("point lineation: one angle of the two") == 1,
+              str(joint.dropped))
+
+        # -- what did not attach, and what had no station at all ------------
+
+        kept = {ob.ident: ob for ob in together.observations}
+
+        check("a striation past the threshold is written on the observation instead",
+              "S3" in kept and kept["S3"].attrs.get("lineation") == "100/20"
+              and kept["S3"].attrs.get("unattached") == UNATTACHED,
+              str(kept["S3"].attrs) if "S3" in kept else str(list(kept)))
+
+        check("a station whose table row has no plane is kept with the reason",
+              "S4" in kept and kept["S4"].attrs.get("no_attitude") == NO_ATTITUDE
+              and "S5" in kept
+              and kept["S5"].attrs.get("no_attitude") == NO_ATTITUDE,
+              str(sorted(kept)))
+
+        # Rule 3 on the one loss a join can cause and distance cannot: `how=left`
+        # -- which is what the one existing join does -- would have made both of
+        # these rows into rows that were never read.
+        orphans = [ob for ob in together.observations
+                   if ob.attrs.get("orphan") == ORPHAN]
+
+        check("a measure whose station does not exist is kept, with no anchor at all",
+              len(orphans) == 2
+              and all(ob.anchor is None for ob in orphans)
+              and {ob.attrs.get("key") for ob in orphans} == {"S99", "(vuoto)"}
+              and any(ob.plane is not None and ob.plane.dip == 60.0 for ob in orphans),
+              ", ".join(f"{ob.ident}:{ob.attrs.get('key')}" for ob in orphans))
+
+        check("and a file holding one still round trips, `*` and all",
+              gstruct.dumps(together) == text
+              and any(line.startswith("observation ") and " * " in line
+                      for line in text.splitlines()),
+              "")
+
+        check("the measure's own note travels, under the name the table gave it",
+              by_station["S2"].attrs.get("raw.nota") == "stria orizzontale",
+              str(by_station["S2"].attrs))
+
+        # -- the ordinal, where there is no column to say which surface ------
+
+        text, unnamed_surface = transcript_of(
+            path, Mapping(**{**vars(keyed), "surface_field": None})
+        )
+
+        ordinals = gstruct.loads(text).by_ident("F001")
+
+        check("with no surface column the two are told apart by the table's order",
+              {a.attrs.get("station") for a in ordinals.attitudes}
+              >= {f"S1{MEASURE}1", f"S1{MEASURE}2"}
+              and unnamed_surface.attached == 3,
+              ", ".join(sorted(a.attrs.get("station", "?")
+                               for a in ordinals.attitudes)))
+
+        # -- a column name on both sides of the join ------------------------
+
+        # `comments` on a station beside `comments` on a measure is what
+        # `geology.gpkg` actually holds, and pandas would suffix both into names
+        # no mapping could have been written against.
+        import geopandas as gpd
+        import pandas as pd
+        import pyogrio
+
+        both_sides = Path(tmp) / "omonime.gpkg"
+        gpd.read_file(relational, layer="stazioni").assign(
+            nota=["sito 1", "sito 2", "sito 3", "sito 4", "sito 5"]
+        ).to_file(both_sides, layer="stazioni", driver="GPKG")
+        pyogrio.write_dataframe(
+            pd.DataFrame(pyogrio.read_dataframe(
+                relational, layer="misure", read_geometry=False)),
+            both_sides, layer="misure", append=True,
+        )
+
+        text, collided = transcript_of(path, Mapping(**{
+            **vars(keyed),
+            "points_path": str(both_sides), "measures_path": str(both_sides),
+            "points_keep_fields": ("nota", f"nota{STATION_SUFFIX}"),
+        }))
+
+        shared = gstruct.loads(text).by_ident("F001")
+        one_of_them = {a.attrs.get("station"): a for a in shared.attitudes}["S2"]
+
+        check("a column on both sides comes out twice, and says which side it is",
+              collided.attached == 3
+              and one_of_them.attrs.get("raw.nota") == "stria orizzontale"
+              and one_of_them.attrs.get(f"raw.nota{STATION_SUFFIX}") == "sito 2",
+              str(one_of_them.attrs))
+
+        # And the station's own code read off the station's own side: with the key
+        # column colliding, the bare name after a join is the *measure's* copy,
+        # which is blank on exactly the stations that had no measure.
+        check("and a station with nothing measured at it is still called by its code",
+              "S5" in {ob.ident for ob in gstruct.loads(text).observations},
+              str(sorted(ob.ident for ob in gstruct.loads(text).observations)))
+
+        # -- and the dialog asking all of it ---------------------------------
+
+        dialog.set_points(str(relational), "stazioni")
+
+        check("a station layer with no angles on it offers none, which is the case",
+              dialog.points_dip_dir_combo.currentText() == dialog.NO_FIELD
+              and dialog.station_combo.currentText() == "sigla"
+              and dialog.points_join_combo.currentText() == "sigla",
+              f"{dialog.points_dip_dir_combo.currentText()}/"
+              f"{dialog.station_combo.currentText()}")
+
+        check("and the table fills them, along with the key and the striation",
+              dialog.set_measures(str(relational)) is True
+              and dialog.measures_layer_combo.currentText() == "misure"
+              and dialog.points_dip_dir_combo.currentText() == "immersione"
+              and dialog.points_dip_combo.currentText() == "inclinazione"
+              and dialog.trend_combo.currentText() == "trend"
+              and dialog.plunge_combo.currentText() == "plunge"
+              and dialog.surface_combo.currentText() == "piano",
+              f"{dialog.points_dip_dir_combo.currentText()}/"
+              f"{dialog.trend_combo.currentText()}/"
+              f"{dialog.surface_combo.currentText()}")
+
+        # `codice` is the key and `immersione` is the azimuth: both are already in
+        # the file under their own names, and `raw.immersione=210` beside
+        # `raw="immersione=210 inclinazione=45"` is one number written twice.
+        ticked = {
+            dialog.points_keep_list.item(row).text():
+            dialog.points_keep_list.item(row).checkState().name
+            for row in range(dialog.points_keep_list.count())
+        }
+
+        check("the columns already spoken for are offered unticked, the rest ticked",
+              ticked.get("nota") == "Checked"
+              and ticked.get("immersione") == "Unchecked"
+              and ticked.get("codice") == "Unchecked"
+              and ticked.get("sigla") == "Unchecked",
+              str(ticked))
+
+        said = dialog.mapping()
+
+        check("and what it all comes to is one mapping with a join in it",
+              said.has_measures and said.has_points and said.has_lineations
+              and said.measures_join_field == "codice"
+              and said.points_join_field == "sigla"
+              and said.points_keep_fields == ("nota",),
+              f"{said.points_join_field}={said.measures_join_field} "
+              f"keep={said.points_keep_fields}")
+
+        dialog._clear_measures()
+
+        check("clearing the table puts the question back to the points themselves",
+              dialog.mapping().measures_path is None
+              and not dialog.mapping().has_measures
+              and not dialog.measures_layer_combo.isEnabled()
+              and dialog.points_dip_dir_combo.currentText() == dialog.NO_FIELD,
+              dialog.points_dip_dir_combo.currentText())
+
+        check("a table with no station layer to key it to is refused",
+              dialog.refusal(Mapping(measures_path="x")) is not None
+              and "station" in dialog.refusal(Mapping(measures_path="x")))
+
+        check("and a table with only one half of the key named is refused",
+              dialog.refusal(Mapping(
+                  points_path="p", measures_path="x",
+                  points_dip_dir_field="a", points_dip_field="b",
+                  points_join_field="sigla")) is not None
+              and dialog.refusal(Mapping(
+                  points_path="p", measures_path="x",
+                  points_dip_dir_field="a", points_dip_field="b",
+                  points_join_field="sigla",
+                  measures_join_field="codice")) is None)
+
+        check("a trend with no plunge is refused, being a bearing and not a line",
+              dialog.refusal(Mapping(trend_field="trend")) is not None
+              and dialog.refusal(Mapping(plunge_field="plunge")) is not None
+              and dialog.refusal(Mapping(trend_field="trend",
+                                         plunge_field="plunge")) is None)
+
+        print("\n-- the projection the file is written in, asked for --\n")
+
+        from gsurf.imports import crs_refusal, projected_for
+
+        # Zone 32 from a layer at 11 degrees east, which is a fact about the
+        # layer: the code is not in it anywhere, and the extent is.
+        proposed_crs, why = projected_for(degrees, "faglie")
+
+        check("a layer in degrees proposes the UTM zone its own extent falls in",
+              proposed_crs == "EPSG:32632" and "degrees" in (why or ""),
+              f"{proposed_crs} - {why}")
+
+        check("and a layer already in metres proposes itself, which changes nothing",
+              projected_for(path, "faglie") == ("EPSG:25833", None),
+              str(projected_for(path, "faglie")))
+
+        text, moved_over = transcript_of(
+            degrees, Mapping(layer="faglie", ident_field="code",
+                             target_crs="EPSG:32632")
+        )
+
+        written_in = gstruct.loads(text)
+
+        check("a layer in degrees can be written by naming a projection for it",
+              written_in.crs == "EPSG:32632"
+              and written_in.structures
+              and written_in.structures[0].length > 1000.0
+              and any("riproiettate" in note for note in moved_over.notes),
+              f"{written_in.crs}, "
+              + (f"{written_in.structures[0].length:.0f} m"
+                 if written_in.structures else "no structure"))
+
+        check("and naming a geographic one is refused where it was typed",
+              crs_refusal("EPSG:4326") is not None
+              and "degrees" in crs_refusal("EPSG:4326")
+              and crs_refusal("EPSG:25833") is None
+              and crs_refusal("") is None
+              and crs_refusal("banana") is not None,
+              (crs_refusal("EPSG:4326") or "")[:50])
 
         print("\n-- two kinds of fit on one structure, and which one answers --\n")
 

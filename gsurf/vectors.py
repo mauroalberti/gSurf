@@ -72,12 +72,20 @@ class VectorSource:
     # The OGR type suffix: 'Polygon' and 'MultiPolygon' both end in 'Polygon',
     # and so for the other two pairs. A layer with no geometry --
     # `fault_attitudes` in geology.gpkg is a pure table -- has no suffix and
-    # stays out of all three roles, which is where it belongs.
+    # stays out of all three roles, which is where it belongs: nothing in a
+    # panel or a profile can be drawn from it.
     GEOMETRY_SUFFIX = {
         "polygons": "Polygon",
         "lines": "LineString",
         "points": "Point",
     }
+
+    # And the role that is not one of `ROLES`, for the same reason: a table is
+    # never a source to draw, so it has no slot, no style and no place in the
+    # picker. It is asked for by name, by the one dialog that has a use for a
+    # layer with no geometry -- structural measures keyed to a station, which
+    # are a table in every survey that records more than one per station.
+    TABLE = "tables"
 
     # What OGR writes after the type when the coordinates carry more than two
     # numbers. It is a property of the coordinates and not of the shape: a
@@ -279,6 +287,13 @@ class VectorSource:
         costs -- and that is what lets the dialog filter while the user
         chooses. The layers that declare nothing are the exception, and are
         paid for one feature at a time; see `role_of_contents`.
+
+        **`TABLE` is a role and not the absence of one.** A layer declaring no
+        geometry column was invisible in every slot, which is correct for the
+        three that draw and wrong for the one that joins: a station layer says
+        where somebody stood and a table says what they measured, and asking
+        for the second through a filter that only knows geometries is asking
+        for something the filter cannot name.
         """
 
         from .curation import is_gstruct
@@ -298,9 +313,12 @@ class VectorSource:
             name = str(name)
             fits = VectorSource.geometry_role(declared)
 
-            # 'None' is a table and has no contents worth asking about;
-            # 'Unknown' is a layer that was never asked.
-            if fits is None and str(declared).startswith("Unknown"):
+            # 'None' is a table, and is not asked about its contents: the
+            # declaration is the answer, and reading a feature would find no
+            # geometry either. 'Unknown' is a layer that was never asked.
+            if declared is None:
+                fits = VectorSource.TABLE
+            elif fits is None and str(declared).startswith("Unknown"):
                 fits = VectorSource.role_of_contents(path, name)
 
             if fits == role:
