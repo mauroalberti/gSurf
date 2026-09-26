@@ -46,12 +46,22 @@ divide, though, into habits and places: how many profiles at what spacing is a
 way of working and carries to whatever opens next, while a trace is metres in a
 projection and means somewhere else under another one. Places come back only
 over the source they were written on. See `applicable`.
+
+**Continuing a section is not keeping one.** That store is a single slot, and
+the next line dragged overwrites it: it is how a morning resumes, not how a
+result is kept. `Section > Save section as...` writes the same payload to a named
+file instead -- beside the data, under a name, in whatever the work is versioned
+with -- and `Open section...` puts it back, reprojecting coordinates written
+under another projection and refusing, whole and with the numbers, a section of
+ground this session is not open on. The format and both readers are in
+`gsurf.sections`.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from time import perf_counter
 
@@ -60,8 +70,24 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.lines import Line2D
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from gsurf import sections
 from gsurf.attitudes import DEFAULT_HALF_SPAN, TraceAttitudeSource, within
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
+
+# The numbers a stored section may hold, and the two readers that check them.
+# Imported rather than defined here because there are two doors into this tool --
+# the conf file it writes on the way out, and a section file somebody names --
+# and a bound enforced at one of them only is not a bound. See `gsurf.sections`.
+from gsurf.sections import (
+    BUNDLE_RANGE,
+    OFFSET_RANGE,
+    REACH_RANGE,
+    STATE_KEY,
+    SectionError,
+    applicable,
+    read_state,
+    source_key,
+)
 from gsurf.vectors import VectorSource, single_parts
 
 # The DEM is the section: without a topographic surface there is no profile to
@@ -79,16 +105,6 @@ WANTS = dict(
 BUNDLE_DEFAULT = 5
 OFFSET_DEFAULT = 500.0
 MAX_DEFAULT_LENGTH = 10000.0
-
-# What the controls can hold, in one place because a remembered state is
-# checked against the same bounds: a number the spin box would clamp and a
-# section computed from the number before clamping are two different things,
-# and the gap between them is a box that disagrees with the map. The count is
-# odd throughout -- a central bundle has a middle, and `Profilers` raises
-# without one.
-BUNDLE_RANGE = (1, 41)
-OFFSET_RANGE = (10.0, 20000.0)
-REACH_RANGE = (0.0, 50000.0)
 
 PANEL_MIN_PX = 130
 PANEL_WIDTH_PX = 430
@@ -1284,144 +1300,26 @@ def remembered():
     return QtCore.QSettings("gSurf", "sections")
 
 
-# The section itself, in the same store as the layout. One JSON string rather
-# than a key per number, for the reason `recent.py` gives about its own lists:
-# QSettings has no faithful round trip for a nested list, and reads a
-# one-element one back as a scalar.
-STATE_KEY = "state/last"
-
-
-def read_state(settings):
-    """What the last run wrote about the section, or nothing."""
-
-    if settings is None:
-        return {}
-
-    raw = settings.value(STATE_KEY)
-
-    if not isinstance(raw, str):
-        return {}
-
-    try:
-        state = json.loads(raw)
-    except ValueError:
-        return {}
-
-    return state if isinstance(state, dict) else {}
-
-
-def applicable(session, state):
+@contextmanager
+def _silent(box):
     """
-    The part of a remembered state that belongs to the session being opened.
+    A spin box set without its signal going out.
 
-    Two kinds of thing are in there and they travel differently.
+    For restoring several numbers at once. Each of these boxes recomputes the
+    bundle when it changes, so four numbers taken from a file would be four
+    bundles computed for one file -- of which only the last is the section
+    anybody asked to see. Restored as a group, then computed once.
 
-    How many profiles at what spacing, and how far a point measurement
-    reaches, are ways of working. They are not tied to anywhere and they come
-    back whatever is open -- somebody who works in bundles of thirteen at
-    250 m works that way in the next area too.
-
-    Where the trace was and how the map was framed are *places*: metres in a
-    projection. The same pair of numbers is somewhere else under a different
-    projection and nowhere at all under a DEM of another region, so those come
-    back only over the source they were written on, and are dropped rather
-    than guessed at -- a section restored off the DEM would come up empty with
-    nothing to say why, which is worse than coming up in the middle.
+    Blocked and put back rather than disconnected: `blockSignals(False)` is
+    wrong if the box arrived already blocked, which is exactly the mistake a
+    `try/finally` written by hand makes here.
     """
 
-    kept = {}
-    count, offset = state.get("profiles"), state.get("offset")
-
-    # Checked against what the controls hold rather than taken as written. This
-    # file is one a hand can reach, and a window is built on it before there is
-    # a running application to put an error in front of: an even count would
-    # come out of `Profilers` as an exception during construction, and an
-    # out-of-range spacing as a spin box quietly saying something the section
-    # was not computed from. Anything that fails falls back to the default,
-    # which is the one number known to work.
-    if isinstance(count, int) and count % 2 == 1 and _within(count, BUNDLE_RANGE):
-        kept["profiles"] = int(count)
-
-    if isinstance(offset, (int, float)) and _within(offset, OFFSET_RANGE):
-        kept["offset"] = float(offset)
-
-    # None is a value here and the one the box calls "whole trace", so it is
-    # kept as it comes; a zero is not, the box reading that as the whole trace
-    # too and `_on_reach_changed` never writing one.
-    reach = state.get("reach")
-
-    if reach is None and "reach" in state:
-        kept["reach"] = None
-    elif isinstance(reach, (int, float)) and REACH_RANGE[0] < reach <= REACH_RANGE[1]:
-        kept["reach"] = float(reach)
-
-    # Whether the legend is up is a habit like the rest of them: somebody
-    # reading sections wants the names, somebody preparing a figure does not,
-    # and neither has anything to do with which DEM is open.
-    if isinstance(state.get("legend"), bool):
-        kept["legend"] = state["legend"]
-
-    if state.get("source") != _source_key(session) or state.get("epsg") != session.epsg:
-        return kept
-
-    trace = _as_trace(state.get("trace"), session.bounds)
-    if trace is not None:
-        kept["trace"] = trace
-
-    extent = _as_extent(state.get("extent"))
-    if extent is not None:
-        kept["extent"] = extent
-
-    return kept
-
-
-def _within(value, limits):
-    return limits[0] <= value <= limits[1]
-
-
-def _source_key(session):
-    """What the coordinates in a state were measured on."""
-
-    return str(session.base_path) if session.base_path is not None else ""
-
-
-def _as_trace(value, bounds):
-    """Two ends on this DEM, or None for anything else."""
-
+    was = box.blockSignals(True)
     try:
-        (x0, y0), (x1, y1) = ((float(x), float(y)) for x, y in value)
-    except (TypeError, ValueError):
-        return None
-
-    left, bottom, right, top = bounds
-
-    for x, y in ((x0, y0), (x1, y1)):
-        if not (left <= x <= right and bottom <= y <= top):
-            return None
-
-    # A section with no length is what the tool refuses to compute anyway, and
-    # a press with no drag after it leaves exactly that behind.
-    if np.hypot(x1 - x0, y1 - y0) < 1.0:
-        return None
-
-    return [(x0, y0), (x1, y1)]
-
-
-def _as_extent(value):
-    """A framing that can be set on an axis, or None."""
-
-    try:
-        left, right, bottom, top = (float(v) for v in value)
-    except (TypeError, ValueError):
-        return None
-
-    if not np.isfinite([left, right, bottom, top]).all():
-        return None
-
-    if not (left < right and bottom < top):
-        return None
-
-    return [left, right, bottom, top]
+        yield box
+    finally:
+        box.blockSignals(was)
 
 
 class SatelliteWindow(QtWidgets.QWidget):
@@ -1768,7 +1666,9 @@ class ProfilesWindow(QtWidgets.QMainWindow):
     # -- the window group --------------------------------------------------
 
     def _build_menu(self):
-        """The way back to a window that was closed, and to one that is buried."""
+        """The section as a file, and the way back to a window that was closed."""
+
+        self._build_section_menu()
 
         menu = self.menuBar().addMenu("&Windows")
 
@@ -1813,6 +1713,190 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         front = QtGui.QAction("Bring all to &front", self)
         front.triggered.connect(self._raise_group)
         menu.addAction(front)
+
+    def _build_section_menu(self):
+        """
+        Keeping a section, as against continuing one.
+
+        The tool already carries the last section from one run to the next, and
+        that is not this: it is one slot, overwritten by the next line dragged.
+        A section arrived at over an afternoon is a result, and a result wants a
+        name and a directory. `Ctrl+S` and `Ctrl+O` because that is what a hand
+        does to keep something, and there is nothing else in this tool they
+        could mean.
+        """
+
+        menu = self.menuBar().addMenu("&Section")
+
+        self.save_section_action = QtGui.QAction("&Save section as...", self)
+        self.save_section_action.setShortcut("Ctrl+S")
+        self.save_section_action.setToolTip(
+            "Write the trace, the bundle and the reach to a file, so this "
+            "section can be come back to by name rather than dragged again."
+        )
+        self.save_section_action.triggered.connect(self._ask_to_save_section)
+        menu.addAction(self.save_section_action)
+
+        self.open_section_action = QtGui.QAction("&Open section...", self)
+        self.open_section_action.setShortcut("Ctrl+O")
+        self.open_section_action.setToolTip(
+            "Put a saved section back on the map. Coordinates written under "
+            "another projection are reprojected onto this one."
+        )
+        self.open_section_action.triggered.connect(self._ask_to_open_section)
+        menu.addAction(self.open_section_action)
+
+    # -- the section as a file ---------------------------------------------
+
+    def _ask_to_save_section(self):
+        """
+        The dialog, and nothing else -- `save_section` is what does it.
+
+        Split for the reason `write_curation` and `curation_text` are split: the
+        dialog is modal, and a check driving this window off screen would sit on
+        it until it was killed.
+        """
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save section as",
+            str(self.session.suggested_name(sections.SUFFIX, tag="section")),
+            f"gSurf section (*{sections.SUFFIX});;All files (*)",
+        )
+
+        if not path:
+            return
+
+        written = self.save_section(path)
+
+        self.statusBar().showMessage(f"section written to {written}")
+
+    def save_section(self, path):
+        """
+        The section as it stands, to a named file.
+
+        The same payload that goes into the conf on the way out, plus the
+        projection its metres are in -- which the conf can leave out and a file
+        cannot, since a file is opened somewhere else by definition.
+        """
+
+        return sections.write(path, self.current_state(), crs=self.session.crs)
+
+    def _ask_to_open_section(self):
+        """The dialog for the other direction, and the report that follows it."""
+
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Open section",
+            str(self.session.suggested_name(sections.SUFFIX).parent),
+            f"gSurf section (*{sections.SUFFIX});;All files (*)",
+        )
+
+        if not path:
+            return
+
+        try:
+            opened = self.open_section(path)
+        except SectionError as err:
+            # Refused whole rather than half-applied, and said in a box. The
+            # usual cause is the right section over the wrong DEM, which is a
+            # thing to fix in the launcher and not a thing to work around by
+            # moving somebody's trace onto ground it says nothing about.
+            QtWidgets.QMessageBox.warning(
+                self, "This section was not opened", f"{Path(path).name}\n\n{err}"
+            )
+            return
+
+        QtWidgets.QMessageBox.information(
+            self, "Section opened", f"{opened.summary()}\n\n{path}"
+        )
+
+    def open_section(self, path):
+        """
+        A saved section onto this map, as `Opened`, or `SectionError`.
+
+        The reading and the fitting are in `gsurf.sections`, beside the writing;
+        what is here is the applying, which is the half that has widgets in it.
+        """
+
+        opened = sections.open_onto(sections.read(path), self.session)
+
+        # What the file asks for that this window has nowhere to put. A reach is
+        # a judgement about measurements taken on traces, and a section can be
+        # opened with no traces at all -- a section of bare topography being a
+        # legitimate thing to want. `sections` cannot know that, having only the
+        # session; and taking the number in without applying it would be the
+        # quiet half-success everything else here is arranged to avoid.
+        if "reach" in opened.state and self.traces is None:
+            opened.notes.append(
+                "The reach in the file was not applied: this section is open "
+                "with no traces layer, so there is no measurement for it to "
+                "reach along."
+            )
+
+        self.take_on(opened.state)
+
+        return opened
+
+    def take_on(self, state):
+        """
+        Sets the whole window to a state, live, and recomputes once.
+
+        `_apply_state` cannot do this: it runs before the controls exist and
+        writes attributes, which is right at construction and would leave the
+        spin boxes lying at any other time. So the boxes are set here -- with
+        their signals blocked, because each of them recomputes a bundle and
+        four restored numbers would be four bundles for one file, the last of
+        them the only one anybody sees.
+
+        The count is read back out of the box rather than taken from the state
+        for the reason `_build_controls` reads it back: `OddSpinBox` is what
+        decides what an even number becomes, and the attribute the section is
+        computed from has to be the one the box is showing.
+        """
+
+        if "trace" in state:
+            self.trace = [tuple(float(v) for v in end) for end in state["trace"]]
+            self._redraw_trace()
+
+        if "profiles" in state:
+            with _silent(self.count_spin):
+                self.count_spin.setValue(int(state["profiles"]))
+
+            self.num_profiles = self.count_spin.value()
+
+            # The panel count changed, so the bundle's own canvas is the wrong
+            # shape: the same note `_on_count_changed` leaves.
+            self._bundle_reach = None
+
+        if "offset" in state:
+            with _silent(self.offset_spin):
+                self.offset_spin.setValue(float(state["offset"]))
+
+            self.offset = self.offset_spin.value()
+
+        if "reach" in state and self.traces is not None:
+            self.traces.set_half_span(state["reach"])
+
+            with _silent(self.reach_spin):
+                self.reach_spin.setValue(state["reach"] or 0.0)
+
+            if self.panel is not None:
+                self.panel.refresh()
+
+        # Through the action and not the attribute: the menu's tick is the
+        # authority on whether the legend is up, and setting the flag behind it
+        # would leave a box that disagrees with the window.
+        if "legend" in state:
+            self.legend_action.setChecked(bool(state["legend"]))
+
+        # Before the bundle and after the trace, the order `__init__` uses: this
+        # is a full canvas draw, and the animated artists are drawn into the
+        # background it leaves for the blitting to work over.
+        if "extent" in state:
+            self.map_view.restore_framing(state["extent"])
+
+        self.update_bundle()
 
     def _show_section_legend(self, shown):
         self.legend_beside_section = bool(shown)
@@ -1956,7 +2040,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         """The section as it stands, in the shape `read_state` hands back."""
 
         return {
-            "source": _source_key(self.session),
+            "source": source_key(self.session),
             "epsg": self.session.epsg,
             "trace": [[float(x), float(y)] for x, y in self.trace],
             "extent": self.map_view.framing,

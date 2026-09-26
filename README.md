@@ -70,6 +70,13 @@ rather than copying it:
   under it determine by themselves, and how much a fold axis turns between one
   window and the next, and about what axis. Neither imports Qt, so both can be
   driven from a script and checked against answers known by construction.
+- `gsurf/sections.py` — a section as a file: the two ends, the bundle and the
+  reach, written where the data is and opened again later, reprojected onto
+  whatever is open now. Also the two readers that check a stored section's
+  numbers, kept here because there are two doors into the tool — the conf it
+  writes on the way out and a file somebody names — and a bound enforced at one
+  of them only is not a bound. No Qt in it, so a saved section can be opened
+  from a script.
 - `gsurf/curation.py` — the boundary with
   [gstruct](https://gitlab.com/mauroalberti/gstruct), the text format the
   assertions are written in. The only module that imports it, so that
@@ -116,7 +123,7 @@ python checks/run.py            # off-screen, about forty-five seconds
 python checks/run.py --show     # let the windows appear
 ```
 
-Six hundred and eighty-four assertions over fifteen scripts, each also runnable on
+Seven hundred and seventeen assertions over sixteen scripts, each also runnable on
 its own. They drive real windows through synthesized mouse events, so Qt is put in
 its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
 45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
@@ -130,7 +137,10 @@ builds a DEM that *is* a plane of stated attitude and lays a V on it in plan,
 so the attitude that comes back off the trace is the one the ground was made
 with: 130.7/54.7 against 130/55, and `check_attitude_export.py` writes that same
 answer to a file and reads it back to find it still on the trace it came off,
-to 10⁻¹⁰ m. `check_interaction.py`
+to 10⁻¹⁰ m. `check_section_files.py` saves a section, reopens it, and asks for
+the bundle back line for line — then writes the same one out in three other
+projections to find the two ends landing within nanometres and the middle of the
+line moving by the 2 m the geometry says it must. `check_interaction.py`
 in particular was written to run against either side of a refactor, which is
 how the map was lifted out of the intersection tool without changing it — the
 same clicks, the same window offsets, the same point counts, digit for digit.
@@ -448,6 +458,45 @@ is a way of working and carries to whatever opens next, while a trace is metres
 in a projection and means somewhere else under another one — so places come back
 only over the source they were written on.
 
+**Continuing a section is not keeping one, and `Section > Save section as...` is
+the difference.** That store is one slot, overwritten by the next line dragged:
+it is how a morning resumes. A section arrived at over an afternoon is a result,
+and it wants a name, a directory beside the data, and whatever the rest of the
+work is versioned with — so the same payload goes out as a small indented JSON,
+diffable, one line per number. `Open section...` (Ctrl+O) puts it back.
+
+What is in it is the two ends, the count, the spacing and the reach — not the
+profiles. A section is recomputed from those in a quarter of a second, and
+storing the derived half would be storing the part that goes wrong the moment
+the DEM underneath is improved.
+
+**Opened, it is fitted to the ground now open rather than asserted onto it**, and
+that is where it parts company with the slot. The silent restore can afford to be
+strict: it drops a trace from another source and comes up in the middle of the
+DEM, and nobody is owed an explanation for a state they never asked for. A file
+was named, and the trace is the whole reason it was opened. So it lands on
+another DEM covering the same ground, since a trace is metres in a projection and
+not a property of a raster; coordinates written under another projection are
+reprojected onto this one; and a framing that cannot be carried — a rectangle in
+another projection is not one here — is replaced by one made from the trace,
+because a section opened outside the view looks exactly like a file that did
+nothing. Each of those is reported rather than done quietly.
+
+**What cannot be met is refused whole, with the numbers.** A section of ground
+this session is not open on comes back as the two extents side by side, which is
+what says the DEM is wrong rather than the file; the usual cause is the right
+section over the wrong DEM, and the fix is in the launcher. A count or a spacing
+no control could hold is a different matter — the file is partly wrong about a
+habit, and the trace is still what was asked for, so those are left as they are
+and said.
+
+Carrying a section across projections costs something, and it is measured rather
+than assumed: the two ends come over exactly, and the ground the straight line
+between them crosses does not. On a 10 km section written in degrees and opened
+on EPSG:25833 the middle moves 2 m — under the 5 m cell being sampled, so nothing
+is said. It goes as the square of the length, which is 17 m over 30 km and 69 m
+over 60, so the sentence appears just about where a section stops being one.
+
 **How far a measurement reaches is a judgement, and it is made here.** A plane
 fitted to a trace owns that trace; a compass reading taken at one outcrop owns a
 point, and how much of the fault it speaks for — fifty metres where it is a
@@ -616,6 +665,14 @@ as the 0.9 power on these lines, where independent digitising jitter would give
 0 — so there is no pen width to derive it from, and the code refuses to invent
 one. It matters more now than it did: the share of a bare sheet that comes back
 readable is a number that threshold sets.
+
+And a saved section is a file the launcher knows nothing about: you open the DEM
+and the layers first, as always, and the section afterwards from inside the tool.
+Handing one to the launcher as the thing to open — the DEM named in it, the
+layers with it, the section already on the map — is a slot and a dialog, and
+would want the file to be allowed to carry sources it cannot yet carry. Scripted
+rather than clicked, it is three lines against `gsurf.sections`, which is what
+having it outside Qt is for.
 
 ### Usage — trace editor
 

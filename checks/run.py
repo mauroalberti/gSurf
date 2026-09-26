@@ -41,6 +41,7 @@ CHECKS = (
     ("check_launcher.py", "the launcher: the question each tool asks, and the handover"),
     ("check_recent.py", "the answers, kept from one run to the next"),
     ("check_sections.py", "sections: one profile dragged, the bundle on release"),
+    ("check_section_files.py", "a section saved to a file, and opened somewhere else"),
 )
 
 
