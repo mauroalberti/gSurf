@@ -114,7 +114,18 @@ rebuilt around the same geogst profiler rather than ported.
 Alpha stage. The repository dates from 2012-04-08, was worked on through 2019,
 lay dormant for three years, was restarted 2022-11-28, and was rebuilt around
 the misah kernel in 2026. Development is on `master` here on GitLab, with the
-GitHub repository kept as a mirror and pushed by hand.
+GitHub repository kept as a mirror.
+
+The mirror is not pushed by hand: `origin` carries two push URLs, GitLab first
+and GitHub second, so one `git push` reaches both while fetching stays on
+GitLab alone. Worth knowing if you clone this and wonder why your own push goes
+one place — the URLs are in the clone's config, not in the tree — and worth
+knowing in the other direction too, because a push that fails on the second URL
+still succeeded on the first, exits non-zero about it, and leaves
+`origin/master` pointing at the commit anyway: afterwards `git status` reads
+clean whether or not the mirror got it. The `github` remote is kept alongside
+for that, `git fetch github` and a range against `github/master` being the only
+thing that answers it.
 
 ### Checks
 
