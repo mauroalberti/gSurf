@@ -119,15 +119,17 @@ GitHub repository kept as a mirror and pushed by hand.
 ### Checks
 
 ```bash
-python checks/run.py            # off-screen, about forty-five seconds
+python checks/run.py            # off-screen
 python checks/run.py --show     # let the windows appear
 ```
 
-Seven hundred and seventeen assertions over sixteen scripts, each also runnable on
-its own. They drive real windows through synthesized mouse events, so Qt is put in
-its off-screen mode unless you ask otherwise. `check_sections.py` is 27 of those
-45 seconds on its own, most of it opening a 234 Mpx DEM and sampling bundles off
-it.
+One script per area, each also runnable on its own, and each printing its
+assertions one to a line with the number that satisfied them — which is where to
+read what is covered, rather than from a total here that a single commit puts out
+of date. They drive real windows through synthesized mouse events, so Qt is put
+in its off-screen mode unless you ask otherwise. Most of the wall clock is
+`check_sections.py`, and most of that is opening a 234 Mpx DEM and sampling
+bundles off it.
 
 They are checks and not unit tests, in that most of them assert against
 something known from outside the code: a fold axis recovered from a synthetic
@@ -159,11 +161,13 @@ rasterio, PyQt6, matplotlib and pyproj. It also puts a `gsurf` command on the
 path, which is the difference between a program and a directory you have to be
 standing in.
 
-`misah` is on PyPI, at an alpha version — expect it to move, and it has: 0.2.0a2
-is out while this was run against 0.2.0a1. Developed and run on Python 3.13
-against numpy 2.5.2, rasterio 1.5.1, PyQt6 6.11.0, matplotlib 3.10.9 and pyproj
-3.7.2. The syntax itself stays within 3.9, which is checked and is all the floor
-claims: no 3.9 has been run.
+`misah` is on PyPI at an alpha version — expect it to move, and it has: what is
+installed here and what is current there have already fallen a release apart,
+which is what an alpha means and is why nothing here pins it. Developed and run
+on Python 3.13, against the numpy, rasterio, PyQt6, matplotlib and pyproj that
+were current in 2026-09 — a snapshot of what has actually been exercised, and
+not a floor. The floor is the syntax, which stays within 3.9 and is checked;
+no 3.9 has been run.
 
 Everything else is an extra, because the imports are where they are used rather
 than at the top of the file. Without geopandas the plane still starts, draws the
@@ -188,8 +192,8 @@ off the traces calls `best_fit_planes` from misah, which the base install
 already has.
 
 Neither geogst nor misah is pinned, and geogst is the one to know about: it is
-on PyPI at 2.3.1, while what gSurf is developed against is its working tree, in
-editable mode, on `dev`. pip does not re-resolve a requirement that is already
+on PyPI at a release, while what gSurf is developed against is its working tree,
+in editable mode, on `dev`. pip does not re-resolve a requirement that is already
 satisfied, so nothing above disturbs that; it is `pip install -U` that would
 replace it with a release, and that is a thing you ask for rather than one that
 happens to you. Where both are already in place, `pip install -e . --no-deps`
