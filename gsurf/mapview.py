@@ -146,6 +146,18 @@ class MapView(QtWidgets.QWidget):
     dragged = QtCore.pyqtSignal(float, float)
     released = QtCore.pyqtSignal()
 
+    # Where the cursor is with nothing held down, which is not a gesture: a tool
+    # can say what is under it without anything being picked or changed. Off
+    # while a navigation mode is on, for the reason `_on_press` refuses a pick
+    # there -- in pan mode the ground moves under the cursor, and what is under
+    # it is not a question anybody is asking.
+    #
+    # `hover_off` can arrive when nothing was ever hovered, and repeatedly: the
+    # state of whether there is an answer on screen belongs to whoever is
+    # answering, and a listener that has none already has nothing to do.
+    hovered = QtCore.pyqtSignal(float, float)
+    hover_off = QtCore.pyqtSignal()
+
     save_requested = QtCore.pyqtSignal()
     status = QtCore.pyqtSignal(str)
 
@@ -530,10 +542,21 @@ class MapView(QtWidgets.QWidget):
         self.pressed.emit(event.xdata, event.ydata)
 
     def _on_motion(self, event):
-        if not self._pressing or event.inaxes is not self.axes or event.xdata is None:
+        # One event, two meanings, told apart by whether a button is down. Held,
+        # it continues a gesture and a cursor that has wandered off the axes
+        # contributes nothing to it; free, it is a hover, and leaving the axes is
+        # the thing the listener has to be told.
+        if self._pressing:
+            if event.inaxes is self.axes and event.xdata is not None:
+                self.dragged.emit(event.xdata, event.ydata)
+
             return
 
-        self.dragged.emit(event.xdata, event.ydata)
+        if self.is_navigating() or event.inaxes is not self.axes or event.xdata is None:
+            self.hover_off.emit()
+            return
+
+        self.hovered.emit(event.xdata, event.ydata)
 
     def _on_release(self, event):
         if not self._pressing:

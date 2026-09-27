@@ -809,6 +809,98 @@ all: this tool provides its handles like the other three and, unlike them, never
 asked for the legend, so the window opened without one until somebody moved the
 placement combo.
 
+**Resting on a station dot says what the dot cannot.** A dot is drawn on the
+trace, at the progressive its anchor gives. The reading was taken wherever
+somebody stood, and `off` is how far apart those two are: over the 23
+measurements of `merid_faults` it runs from 0.0 to **69.7 m**, which is inside
+the width of the line at 1:25000 and a visible lie at 1:5000, with nothing in the
+picture to tell the two cases apart. Nor does a dot show that the curation has
+*refused* it — a rejected measurement stays drawn, because somebody did stand
+there, and the band in the panel was the only thing that said it does not hold,
+which is now a different window. The tooltip says both, along with the station,
+the plane, the progressive, the source and date, and the notes folded at 64
+characters so a file with a paragraph in one cannot open a tooltip wider than the
+map it is covering.
+
+**And a net beside it, for the thing the text cannot say.** The tooltip came
+first with an argument against the net attached to it: 23 measurements over 23
+distinct station codes, **one each**, no `siblings` from a relational import, so
+no population — and a net with a single pole on it says less than `270/60`
+written out. That is true about poles and false about nets. A pole is how a
+*population* draws a plane; a **great circle** is the plane, and a striation
+drawn on it sits somewhere along that arc, and where along it is the difference
+between a fault that moved down its dip and one that moved along its strike. No
+pair of numbers shows that. So the dock beside the map now holds the plane the
+cursor is resting on, drawn as a great circle and as its pole, with whatever
+lineations were read on it.
+
+There are none to draw. `merid_faults` contains **zero `lineation` records**, and
+three of its 23 attitudes mention striae in a note somebody typed in Italian:
+`lineazione N080°` at S20, `lineazione N075°` at S19, and at S4 `strie osservate:
+vedi foglio (pitch 1 30°, p. 2 80°)` — two generations of movement on one
+surface, with the numbers on a sheet of paper. A trend on its own would be
+enough, since a striation lies in the plane it was read on and the plunge
+follows: **18.3°** and **30.7°** for those two, by `geogst.Fault`. But the sense
+does not follow — `lineazione N080°` is a line and not a vector, and the same
+striae fit a rake of −39° and one of +141° — so the net draws a marker and never
+an arrow. Turning prose into records is curation and not a thing to guess at
+inside a drawing routine, so the net reads `Structure.lineations`, currently
+finds nothing, and will show them the day somebody writes them.
+
+What was right in the original argument is that a *trace* is no population
+either: the richest in the file carries four planes, and sweeping one end to end
+with `provenance_of` at 400 samples returns 400 planes that are **3 distinct**,
+because `attitude_at` is constant between the places where the winner changes. A
+net drawn from that would put 400 markers in 3 places, which is a picture lying
+about its own density, and density is the whole reason an equal-area net is
+equal-area. Where a population does exist is the neighbourhood: `giaciture_AOI`
+has 11,933 attitudes at a median of 4 within 500 m, and asking a circle of them
+whether they lie on a girdle is what the fold-axis tool is.
+
+Two things fell out of putting the widget to a second use. `StereonetView` has
+always set `N`, `E`, `S`, `W` round its edge and has **never drawn them** — not
+here and not in the fold tool. mplstereonet keeps the azimuth labels on a hidden
+polar axes underneath, positioned just outside the primitive circle; in a figure
+with room to spare that is outside the stereonet axes too, and in one sized to a
+widget the layout inflates the axes until its own opaque background paints over
+them. One line — `axes.patch.set_alpha(0.0)` — and a check that draws the net
+twice, once with the old opaque patch, and requires every label to come out
+darker without it, because a threshold would be a claim about this machine's
+fonts. And `geogst.Fault(135, 30)` could not be built at all: the signature says
+`slickenlines=None`, the class docstring says "zero, one or more", `__repr__` has
+a branch that prints `no slickenlines` — and the parser fell through `None` to an
+exception, so the branch was unreachable and a mapped fault with no striae read
+on it, which is 21 of these 23, was an error. Fixed, with the doctest that
+reaches the branch.
+
+Two things in how it is wired. The reach is **10 screen pixels** and not a
+distance on the ground: framed on one fault the map is 2.4 m to the pixel and
+framed on the region 238.7, so a fixed 400 m is a miss at the first and a hit at
+the second, and `check_editor` asserts the same pixel offset lands the same way
+at both framings. And one motion event now means two things — with a button down
+it continues a gesture, free it is a hover, and while a navigation mode is on it
+is neither, for the reason a click refuses to pick there: in pan mode the ground
+moves under the cursor. What is under it is worked out on every motion event, at
+0.032 ms when the answer stands and 0.063 when the text has to be rebuilt, so the
+tooltip is Qt's own and inherits the delay everything else on the desktop has.
+
+The net costs more than the tooltip and is guarded harder for it: filling it is
+three `set_data` calls and a blit, **1.8 ms**, against 0.0002 ms when the cursor
+is still on the dot it already answered. And the two answers have deliberately
+different lifetimes. The tooltip goes away when the cursor leaves the dot; the
+net does not, because reading a figure means looking away from the thing that
+asked for it, and one that emptied on the way would only ever be seen out of the
+corner of an eye. What does empty it is opening another trace — a plane beside
+the map belonging to the fault before this one, with nothing on screen saying so,
+is the one way this could lie. The dock's own title carries the station code for
+the same reason. It takes 276 px off the map at 2.6 in against the fold tool's
+3.6, which on a 1366-wide screen is free: the map's axes is capped by its height
+at 596 px either way. Below about 1000 px of window it is not free, and below
+that again matplotlib's constrained layout gives up entirely and collapses the
+map to 24 px — which is how the reach checks were found passing on nonsense, all
+dots being within 10 px of each other, and why `check_editor` now sizes the
+window and asserts the map has a data area before measuring any pixels in it.
+
 **What it shows that reading the file does not.** Precedence in this format is a
 computation over several lines at once — a refusal beats a measurement, a
 measurement within reach beats a fit, a fit beats a measurement further off — so

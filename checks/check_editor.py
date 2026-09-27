@@ -69,7 +69,11 @@ structure F002 "Beta" fid=2
 
 structure F003 "Gamma" fid=3
   kind fault
-  attitude @603000.00,4420000.00 plane 270/60 station=S2 src=field
+  span use @603000.00,4420000.00 @603000.00,4420100.00 rejected reason="bordo"
+  attitude @603000.00,4420000.00 plane 270/60 station=S2 src=field off=12.5 note="{note}"
+  lineation @603000.00,4420070.00 206.6 37.8 station=S2 note="prima generazione"
+  lineation @603000.00,4420001.00 333.4 37.8
+  lineation @603000.00,4420010.00 90.0 10.0
   path 2
     603000.00 4420000.00
     603000.00 4421000.00
@@ -95,10 +99,30 @@ def written(directory, name, text):
     return path
 
 
+# Gamma's note, out here because it is 67 characters and has to be: the tooltip
+# folds a note at `TIP_WRAP`, and a note shorter than that would leave the folding
+# untested. Notes in `merid_faults` run to 65, so this is the length real ones
+# reach and not an invented extreme.
+GAMMA_NOTE = "read on a slickenside and not on the plane itself, which is covered"
+
+# Gamma's three lineations, and which two of them belong to its station. All are
+# written on one plane, 270/60, and the numbers are not invented: the first two
+# are that plane's rake -45 and rake -135 computed by `geogst.Fault`, so they lie
+# on the great circle the net draws and a marker off it would be visible as the
+# error it is. The third does not, and does not belong to the station either.
+#
+# The one that matches is anchored 70 m from the plane it was read with, which is
+# the point of it: `off` in `merid_faults` runs to 69.7 m, so two readings made at
+# one outcrop can snap to progressives that far apart, and a rule based on
+# distance along the trace would miss the pair. The one at 1 m carries no station
+# code and is matched by distance, which is the weaker rule and the fallback.
+GAMMA_LINEATIONS = [(206.6, 37.8), (333.4, 37.8)]
+
+
 def source_text():
     alpha = "\n".join(f"    {X0 + n * 100.0:.2f} {Y0:.2f}" for n in range(11))
 
-    return SOURCE.format(alpha=alpha)
+    return SOURCE.format(alpha=alpha, note=GAMMA_NOTE)
 
 
 def comment_lines(text):
@@ -121,6 +145,9 @@ def main():
     from PyQt6 import QtCore, QtWidgets
 
     import gstruct
+    import mplstereonet
+    import numpy as np
+
     from gsurf.curation import (
         Document,
         nearest_structure,
@@ -607,9 +634,13 @@ def main():
         window.pick(603000.0, 4420200.0, anchor=True)
         window.pick(603000.0, 4420600.0, anchor=True)
 
+        # The line the template added, and not every `span use` in the block:
+        # Gamma carries one of its own from the file -- the refusal the hover has
+        # to report -- and the anchors being checked are the two this one left
+        # open.
         typed = [
             line for line in window.panel.text.toPlainText().splitlines()
-            if "span use" in line
+            if 'reason="check"' in line
         ]
 
         check("two picked anchors fill the two the template left open",
@@ -665,6 +696,279 @@ def main():
               and abs(marks[0][0] - gamma_at[0]) < 0.01
               and abs(marks[0][1] - gamma_at[1]) < 0.01,
               f"{marks} against {[gamma_at]}")
+
+        # -- what the cursor is resting on ---------------------------------
+
+        print("\n-- the hover --\n")
+
+        # Every probe below is in screen pixels, so the map has to have a data
+        # area for them to be pixels of. The net's dock takes 276 px of the
+        # window, and under about 1000 px of window the map's constrained layout
+        # gives up -- matplotlib says `axes sizes collapsed to zero` in a warning
+        # nothing reads -- and puts the whole map into 24 px. Every dot is then
+        # within 10 px of every other and the reach checks pass on nonsense, which
+        # is how this was found. Sized here, and asserted rather than assumed.
+        window.resize(1280, 900)
+        QtWidgets.QApplication.processEvents()
+        window.map_view.canvas.draw()
+
+        axes = window.map_view.axes
+
+        check("the map has a data area for a reach in pixels to mean anything",
+              axes.get_window_extent().width > 400.0,
+              f"{axes.get_window_extent().width:.1f} px wide")
+
+        kept_view = (axes.get_xlim(), axes.get_ylim())
+        dot = window._marked[0][0]
+
+        window._on_map_hover(*dot)
+        tip = window.map_view.canvas.toolTip().splitlines()
+
+        check("resting on a station dot names the station and the plane",
+              tip[:1] == ["S2 -- 270/60"], str(tip[:1]))
+
+        check("and says how far the reading was from the line it is drawn on",
+              any("12.5 m off the trace" in line for line in tip), str(tip))
+
+        # The one thing the dot cannot show about itself. It is drawn because
+        # somebody stood there, which stays true; it is not what holds, and until
+        # this the band in the panel was the only thing that said so -- and the
+        # panel is a different window now.
+        check("and that the curation overrules it here, which the dot does not",
+              any("overruled here -- rifiutata:bordo" in line for line in tip),
+              str(tip))
+
+        check("and folds the note rather than opening a tooltip wider than the map",
+              GAMMA_NOTE not in tip
+              and " ".join(tip[-2:]) == GAMMA_NOTE
+              and max(len(line) for line in tip) <= tool.TIP_WRAP,
+              f"longest line {max(len(line) for line in tip)}")
+
+        window._on_map_hover(dot[0] + 5000.0, dot[1])
+
+        check("and the cursor five kilometres away is resting on nothing",
+              window.map_view.canvas.toolTip() == "",
+              repr(window.map_view.canvas.toolTip()))
+
+        # A reach in metres would be a target a kilometre wide framed on the AOI
+        # and unhittable framed on one fault. Two framings three orders of
+        # magnitude apart, and the answer has to follow the pixels both times.
+        def metres_per_pixel():
+            inverse = axes.transData.inverted()
+            (x0, _), (x1, _) = inverse.transform([(0.0, 0.0), (1.0, 0.0)])
+
+            return abs(x1 - x0)
+
+        def reach_at(half_width):
+            axes.set_xlim(dot[0] - half_width, dot[0] + half_width)
+            axes.set_ylim(dot[1] - half_width, dot[1] + half_width)
+            window.map_view.canvas.draw()
+
+            scale = metres_per_pixel()
+
+            return (
+                scale,
+                window._station_near(dot[0] + (tool.HOVER_RADIUS_PX - 1) * scale, dot[1]),
+                window._station_near(dot[0] + (tool.HOVER_RADIUS_PX + 2) * scale, dot[1]),
+                window._station_near(dot[0] + 400.0, dot[1]),
+            )
+
+        close_in, far_out = reach_at(500.0), reach_at(50000.0)
+
+        check("the reach is in pixels: just inside it hits at either framing",
+              close_in[1] == 0 and far_out[1] == 0,
+              f"{close_in[1]} at {close_in[0]:.1f} m/px, "
+              f"{far_out[1]} at {far_out[0]:.1f} m/px")
+
+        check("and just outside it misses at either framing",
+              close_in[2] is None and far_out[2] is None,
+              f"{close_in[2]}, {far_out[2]}")
+
+        check("while a fixed 400 m is a miss zoomed in and a hit zoomed out",
+              close_in[3] is None and far_out[3] == 0,
+              f"{close_in[3]} at {close_in[0]:.1f} m/px, "
+              f"{far_out[3]} at {far_out[0]:.1f} m/px")
+
+        axes.set_xlim(*kept_view[0])
+        axes.set_ylim(*kept_view[1])
+        window.map_view.canvas.draw()
+
+        # Held on the dot across a change of structure. The tooltip is kept by
+        # index into the drawn dots, and index 0 of the trace just opened is not
+        # index 0 of the one before it -- so without the reset a cursor that had
+        # not moved would go on naming a station that is no longer on the map.
+        window._on_map_hover(*dot)
+        named = window.map_view.canvas.toolTip().splitlines()[:1]
+        window.select(0)
+        window._on_map_hover(*dot)
+
+        check("opening another trace drops the tooltip instead of keeping it",
+              named == ["S2 -- 270/60"] and window.map_view.canvas.toolTip() == "",
+              f"{named} then {window.map_view.canvas.toolTip()!r}")
+
+        window.select(2)
+
+        # One motion event, two meanings. The gesture had this event to itself
+        # until now, and a hover firing while a handle is being dragged would put
+        # a tooltip over the thing being moved.
+        class Motion:
+            def __init__(self, inaxes, x, y):
+                self.inaxes, self.xdata, self.ydata = inaxes, x, y
+
+        seen = Counter()
+        window.map_view.dragged.connect(lambda x, y: seen.update(["dragged"]))
+        window.map_view.hovered.connect(lambda x, y: seen.update(["hovered"]))
+        window.map_view.hover_off.connect(lambda: seen.update(["off"]))
+
+        window.map_view._pressing = True
+        window.map_view._on_motion(Motion(axes, *dot))
+        window.map_view._on_motion(Motion(None, None, None))
+        window.map_view._pressing = False
+
+        check("a moved cursor with the button down is a drag and not a hover",
+              seen["dragged"] == 1 and seen["hovered"] == 0,
+              f"{dict(seen)}")
+
+        window.map_view._on_motion(Motion(axes, *dot))
+        window.map_view._on_motion(Motion(None, None, None))
+
+        check("and free it is a hover, and leaving the axes says so",
+              seen["hovered"] == 1 and seen["off"] == 1, f"{dict(seen)}")
+
+        window.map_view.toolbar.mode = "pan/zoom"
+        window.map_view._on_motion(Motion(axes, *dot))
+        window.map_view.toolbar.mode = ""
+
+        check("and with a navigation mode on there is no hover to have",
+              seen["hovered"] == 1 and seen["off"] == 2, f"{dict(seen)}")
+
+        window._tip_on(None)
+
+        # -- the plane on the net ------------------------------------------
+        #
+        # The figure the tooltip cannot be. `270/60` written out is a plane you
+        # have to picture; the great circle is the picture, and the thing neither
+        # number shows is where a striation sits inside the plane -- down the dip
+        # or along the strike -- which is the whole reason a net is worth the
+        # 276 px it takes off the map.
+
+        print("\n-- the net --\n")
+
+        window.select(2)
+        window._on_map_hover(*dot)
+
+        check("resting on a dot puts that plane on the net as a great circle",
+              len(window.net.great_circle.get_xdata()) > 2,
+              f"{len(window.net.great_circle.get_xdata())} points on the circle")
+
+        check("and the plane is drawn as its pole as well as its great circle",
+              len(window.net.poles.get_xdata()) == 1,
+              f"{len(window.net.poles.get_xdata())} pole(s)")
+
+        check("and the dock says whose plane it is, the net having no label",
+              window.net_dock.windowTitle().startswith("S2 -- 270/60"),
+              window.net_dock.windowTitle())
+
+        # Two of Gamma's three lineations, by two different rules: one carries
+        # `station=S2` and is anchored 70 m away, one carries no station and is
+        # anchored 1 m away. The third is 10 m away with no station and is out.
+        drawn = sorted(zip(*window.net.lineation.get_data()))
+        wanted = sorted(
+            zip(*mplstereonet.line(
+                [p for _, p in GAMMA_LINEATIONS], [t for t, _ in GAMMA_LINEATIONS]
+            ))
+        )
+
+        check("the lineations read on that plane are on it too, and only those",
+              len(drawn) == 2
+              and all(
+                  abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9
+                  for a, b in zip(drawn, wanted)
+              ),
+              f"{len(drawn)} drawn, wanted {len(wanted)}")
+
+        check("a station code outranks distance along the trace, 70 m apart",
+              window._lineations_at(window._marked[0][1])[0] == GAMMA_LINEATIONS[0],
+              f"{window._lineations_at(window._marked[0][1])}")
+
+        # The net is a figure and reading one means looking away from the dot that
+        # asked for it. A net that emptied as the cursor left would only ever be
+        # seen out of the corner of an eye -- so `hover_off` does not touch it,
+        # which is the one place in this window where the tooltip and the net
+        # deliberately disagree about how long an answer lives.
+        window.map_view.hover_off.emit()
+
+        check("the cursor leaving the dot takes the tooltip and leaves the net",
+              window.map_view.canvas.toolTip() == ""
+              and len(window.net.great_circle.get_xdata()) > 2,
+              f"tip {window.map_view.canvas.toolTip()!r}, "
+              f"{len(window.net.great_circle.get_xdata())} points")
+
+        # But it must not outlast the trace. Beta carries no attitude at all, so
+        # there is no dot to move the net onto and nothing on screen would say the
+        # plane beside the map belongs to the fault before this one.
+        window.select(1)
+
+        check("opening another trace empties the net and says so in the title",
+              len(window.net.great_circle.get_xdata()) == 0
+              and window.net_dock.windowTitle() == tool.NET_EMPTY_TITLE,
+              f"{len(window.net.great_circle.get_xdata())} points, "
+              f"{window.net_dock.windowTitle()!r}")
+
+        # The four letters round the edge, proven on the pixels rather than on
+        # the text having been set -- it was set from the day the widget was
+        # written and was never drawn. mplstereonet keeps the azimuth labels on a
+        # hidden polar axes underneath, and a figure sized to a widget inflates
+        # the stereonet axes until its own background covers them.
+        #
+        # Calibrated against the bug rather than against a number: the same net
+        # is drawn twice, once with the opaque patch it used to have, and every
+        # label has to come out darker without it. A threshold would be a claim
+        # about this machine's fonts.
+        def ink_on_labels():
+            window.net.canvas.draw()
+            rgba = np.asarray(window.net.canvas.buffer_rgba())
+            height = rgba.shape[0]
+
+            return [
+                int(
+                    (
+                        rgba[
+                            int(height - label.get_window_extent().y1):
+                            int(height - label.get_window_extent().y0),
+                            int(label.get_window_extent().x0):
+                            int(label.get_window_extent().x1),
+                            :3,
+                        ].sum(axis=2) < 3 * 128
+                    ).sum()
+                )
+                for label in window.net.axes._polar.get_xticklabels()
+            ]
+
+        shown = ink_on_labels()
+        window.net.axes.patch.set_alpha(1.0)
+        hidden = ink_on_labels()
+        window.net.axes.patch.set_alpha(0.0)
+
+        check("the net says which way is north, which it never used to",
+              [label.get_text() for label in window.net.axes._polar.get_xticklabels()]
+              == ["N", "E", "S", "W"]
+              and all(now > was for now, was in zip(shown, hidden)),
+              f"{shown} drawn against {hidden} behind an opaque background")
+
+        # And the widget is shared with the fold tool, which puts a population on
+        # it. Neither use may leave its artists behind for the other to draw.
+        window.net.show_window([120.0, 130.0], [30.0, 40.0])
+
+        check("a population on the same widget clears the single plane",
+              len(window.net.poles.get_xdata()) == 2
+              and len(window.net.great_circle.get_xdata()) == 0
+              and len(window.net.lineation.get_xdata()) == 0,
+              f"{len(window.net.poles.get_xdata())} poles, "
+              f"{len(window.net.great_circle.get_xdata())} circle, "
+              f"{len(window.net.lineation.get_xdata())} lineations")
+
+        window.select(2)
 
         # -- where the view is ---------------------------------------------
 

@@ -33,26 +33,61 @@ import mplstereonet
 
 class StereonetView(QtWidgets.QWidget):
     """
-    Lower hemisphere, equal area, with the poles of one window on it.
+    Lower hemisphere, equal area, with either a population or one measurement.
 
     Equal area and not equal angle: the question being asked is whether a
     population spreads on a girdle or clusters, and only an equal-area net lets
     density be read off the picture without correcting for where on it you are
     looking.
+
+    **Two uses, and they are not the same picture.** `show_window` puts a
+    population on it -- poles, and the girdle and axis fitted to them -- which is
+    the fold tool's question. `show_attitude` puts a single plane on it as a
+    great circle with whatever lineations were read on that plane, which is the
+    editor's: at one measurement per station there is no density to look at, and
+    what there is to look at is where the striae sit within the plane. A net
+    showing one pole says less than the two numbers written out; a net showing
+    the plane and the line on it says something neither number does.
+
+    Each method clears the other's artists, so a widget handed to both cannot
+    show a fitted axis over a plane it was not fitted to.
     """
 
     ADMITTED = dict(axis="#d62728", girdle="#1f4fd8")
     REFUSED = dict(axis="#9a9a9a", girdle="#9a9a9a")
 
-    def __init__(self, parent=None):
+    # Where a single measurement draws with nothing said about it. Overridden per
+    # call, because the tool that asks for one has a palette in which the colour
+    # already means something.
+    PLANE_COLOR = "#333333"
+
+    # Square, and asked for in inches because that is what a Figure takes. This
+    # is also the width the widget asks a layout for, so a tool that puts the net
+    # beside something else is choosing how much of that something else it costs:
+    # in a dock, 3.6 in is 366 px off the map, and a single plane does not need
+    # 366 px to be read.
+    FIGSIZE = 3.6
+
+    def __init__(self, parent=None, figsize=None):
         super().__init__(parent)
 
-        self.figure = Figure(figsize=(3.6, 3.6), layout="constrained")
+        side = figsize or self.FIGSIZE
+        self.figure = Figure(figsize=(side, side), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.axes = self.figure.add_subplot(111, projection="equal_area_stereonet")
 
         self.axes.grid(True, color="#cccccc", linewidth=0.4)
         self.axes.set_azimuth_ticks(range(0, 360, 90), labels=["N", "E", "S", "W"])
+
+        # And this is what makes those four letters appear, which until now they
+        # never did -- on this net or on the fold tool's. mplstereonet keeps the
+        # azimuth labels on a second, hidden polar axes underneath, positioned
+        # just outside the primitive circle. In a figure with room to spare that
+        # is outside the stereonet axes too and they are drawn; in one sized to a
+        # widget, the layout inflates the axes until its own opaque background
+        # covers them, and they are painted over by the thing they label. A net
+        # with no north on it is a circle of lines, so: no background.
+        self.axes.patch.set_alpha(0.0)
 
         self.background = None
 
@@ -74,7 +109,29 @@ class StereonetView(QtWidgets.QWidget):
             animated=True, zorder=5,
         )
 
-        self._animated = (self.poles, self.girdle, self.axis)
+        # One measurement's plane, and the lineations read on it. Solid where the
+        # girdle is dashed, because one is a plane somebody put a compass on and
+        # the other is a surface fitted to a scatter, and a picture that draws
+        # them the same way invites the two to be read as the same kind of claim.
+        (self.great_circle,) = self.axes.plot(
+            [], [], linestyle="-", linewidth=1.6, animated=True, zorder=4
+        )
+
+        # A marker and not an arrow. An arrow on a slickenline is a statement
+        # about which block went which way, and a trend read off a striated
+        # surface is a line and not a vector: the same striae are consistent with
+        # a rake and with that rake turned through 180 degrees. Where the sense
+        # is genuinely known it is a separate fact and would need drawing as one.
+        (self.lineation,) = self.axes.plot(
+            [], [],
+            linestyle="none", marker="s", markersize=6.5,
+            markeredgecolor="black", markeredgewidth=0.6,
+            animated=True, zorder=6,
+        )
+
+        self._animated = (
+            self.poles, self.girdle, self.axis, self.great_circle, self.lineation
+        )
 
         self.canvas.mpl_connect("draw_event", self._on_draw)
 
@@ -114,6 +171,9 @@ class StereonetView(QtWidgets.QWidget):
         window moves onto the hinge, which is the reason for a live net at all.
         """
 
+        self.great_circle.set_data([], [])
+        self.lineation.set_data([], [])
+
         if len(dips):
             # mplstereonet takes a plane by its right-hand-rule strike.
             strikes = (np.asarray(dip_directions) - 90.0) % 360.0
@@ -137,6 +197,56 @@ class StereonetView(QtWidgets.QWidget):
         trend, plunge = result.axis
         self.axis.set_data(*mplstereonet.line(plunge, trend))
         self.axis.set_markerfacecolor(colors["axis"])
+
+        self.blit()
+
+    def show_attitude(self, dip_dir, dip, lineations=(), color=None):
+        """
+        Puts one measured plane on the net, with the lines read on it.
+
+        The plane as a great circle and as its pole, which are the same fact
+        drawn twice on purpose: the pole is where it would sit in a population
+        and is how this net is compared with a fold tool's, the great circle is
+        what a lineation has to lie on for the pair to be believable.
+
+        `lineations` are `(trend, plunge)`, plural because one striated surface
+        can carry more than one set -- two generations of movement on the same
+        plane is a thing the field notes in this project record. Passing none is
+        the ordinary case, not an empty result: the plane is the measurement and
+        the striae are a second one that mostly was not made.
+
+        `dip_dir` of `None` empties the net, so a caller with nothing selected
+        does not need a second method to say so.
+        """
+
+        self.poles.set_data([], [])
+        self.girdle.set_data([], [])
+        self.axis.set_data([], [])
+
+        if dip_dir is None or dip is None:
+            self.great_circle.set_data([], [])
+            self.lineation.set_data([], [])
+            self.blit()
+            return
+
+        strike = (dip_dir - 90.0) % 360.0
+        lons, lats = mplstereonet.plane(strike, dip)
+        self.great_circle.set_data(np.ravel(lons), np.ravel(lats))
+        self.great_circle.set_color(color or self.PLANE_COLOR)
+
+        self.poles.set_data(*mplstereonet.pole(strike, dip))
+        self.poles.set_markerfacecolor(color or self.PLANE_COLOR)
+
+        if lineations:
+            # One artist with N points, as the poles are: the same reason, which
+            # is that a second generation of striae must not cost a second Line2D
+            # on a widget that blits.
+            trends = [trend for trend, _ in lineations]
+            plunges = [plunge for _, plunge in lineations]
+            self.lineation.set_data(*mplstereonet.line(plunges, trends))
+            self.lineation.set_markerfacecolor(color or self.PLANE_COLOR)
+        else:
+            self.lineation.set_data([], [])
 
         self.blit()
 

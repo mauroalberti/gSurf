@@ -35,6 +35,36 @@ carrying something firmly and one carrying nothing faintly. Both go through
 its trace into view -- the one thing a highlight cannot do is say where to look,
 and on an AOI-wide framing a 1 km fault is three pixels of orange somewhere.
 
+**What a dot cannot say about itself.** A station dot is drawn on the trace, at
+the progressive the anchor gives; the reading was taken wherever somebody stood,
+and `off` is how far apart those two are. Over the 23 measurements of
+`merid_faults` it runs from 0.0 to 69.7 m -- inside the width of the line at
+1:25000 and a visible lie at 1:5000, with nothing to tell the two apart by
+looking. Nor does the dot show that the curation has *refused* it: a rejected
+measurement stays drawn, because somebody did stand there, and until now the band
+in the panel was the only thing that said it does not hold. Resting on the dot
+says both, which is why the hover exists and why what it says is text: `off` is a
+number and a refusal is a word, and neither is a picture.
+
+**And the one thing text cannot say.** This argument was first made as a reason
+not to draw a net at all -- one measurement per station, no population, and a
+single pole says less than `145/35` written out. The first half is right and the
+conclusion did not follow. A pole is a population's way of drawing a plane; a
+*great circle* is a plane, and a striation drawn on it sits somewhere along it,
+and where along it is the difference between a fault that moved down its dip and
+one that moved along its strike. No pair of numbers shows that, and the net shows
+it without arithmetic. So the dock beside the map holds both: the plane the
+cursor is resting on, and the lineations read on it.
+
+There are none. `merid_faults` has zero `lineation` records in it, and three of
+its 23 attitudes mention striae in an Italian note -- `lineazione N080°` at S20,
+`lineazione N075°` at S19, and at S4 two pitches whose values are on a paper
+sheet. A trend alone would be enough, a striation lying in the plane it was read
+on, so the plunge follows: 18.3 deg and 30.7 deg for those two. Turning prose
+into a record is curation, and it is not something to do from inside a drawing
+routine -- so the net asks `Structure.lineations` and currently draws nothing,
+and the day somebody writes one it appears.
+
 **What it does not rewrite.** Saving replaces the lines of the structure that
 was edited and leaves every other byte alone. Not fastidiousness -- measured:
 `curation.gstruct` through a load and a dump comes back without the ten lines of
@@ -61,6 +91,7 @@ so there is nothing worth hiding and nothing hidden.
 
 from __future__ import annotations
 
+import textwrap
 from collections import Counter
 
 import numpy as np
@@ -85,6 +116,7 @@ from gsurf.curation import (
     stretch,
 )
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
+from gsurf.stereonet import StereonetView
 from gsurf.windows import SatelliteWindow, WindowGroup
 
 # The file is the subject, so it is the one thing this cannot run without. The
@@ -164,6 +196,39 @@ FRAME_DELAY_MS = 140
 # at every zoom.
 PICK_RADIUS_PX = 14
 
+# And for the cursor to be resting on a station dot rather than near one. Tied to
+# the marker, which is 5 points across: a threshold smaller than what is drawn
+# would ask for an aim the dot does not reward, and a much larger one would claim
+# ground where there is visibly nothing. Separate from `PICK_RADIUS_PX` because
+# the two aim at different shapes -- a click is aimed at a line, which is long,
+# and this at a dot, which is neither long nor wide.
+HOVER_RADIUS_PX = 10
+
+# Where a note in a tooltip is folded. Notes here run to 65 characters and a
+# tooltip does not wrap plain text by itself, so a file with a paragraph in one
+# would open a tooltip wider than the map it is covering.
+TIP_WRAP = 64
+
+# How near, along the trace, an unlabelled lineation has to be anchored to count
+# as read at the same place as a plane. Anchors in these files are written to a
+# hundredth of a metre, so this is not a tolerance for rounding: it is the width
+# of one outcrop as somebody standing on it would place two readings. A lineation
+# that carries `station=` is matched by that instead, and is not subject to this.
+SAME_OUTCROP_M = 2.0
+
+# What the net is called with nothing on it. A title and not a label inside the
+# figure, because an empty equal-area net is a circle with a grid in it and reads
+# as a widget that has not loaded rather than as one waiting to be pointed at.
+NET_EMPTY_TITLE = "Station -- rest on a green dot"
+
+# How wide the net starts, and how big its figure is. Narrower than the fold
+# tool's 3.6 in, because there the net is the tool and here it is beside the map:
+# the map's own axes is capped by its height at 596 px on this desktop, so a dock
+# up to about 275 px is free and one at 366 is not. It stays resizable -- this is
+# where it opens, not where it has to stay.
+NET_FIGSIZE_IN = 2.6
+NET_DOCK_PX = 270
+
 MAX_GAP_RANGE = (0.0, 20000.0)
 
 # The three lines a curation is made of, with `*` where an anchor goes. They are
@@ -232,6 +297,21 @@ def carries(structure):
     """
 
     return bool(structure.attitudes or structure.fits)
+
+
+def _as_number(written):
+    """
+    A length an attribute claims to be, or nothing.
+
+    Attributes are text and the format does not type them, so a file is free to
+    put a word, an empty string or a range where a distance goes -- and a tooltip
+    is the last place that should be the thing which raises.
+    """
+
+    try:
+        return float(written)
+    except (TypeError, ValueError):
+        return None
 
 
 def holds_along(structure, max_gap=DEFAULT_MAX_GAP, samples=HOLDS_SAMPLES):
@@ -1307,6 +1387,18 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._frame_timer.setSingleShot(True)
         self._frame_timer.timeout.connect(lambda: self.frame_now())
 
+        # The station dots that are drawn, as `(where on the map, the record)`,
+        # and which of them the tooltip is currently about. The artist holds
+        # coordinates and nothing else, so the records they were made from have
+        # to be kept alongside or there is no way back from a dot to a station.
+        self._marked = []
+        self._tipped = None
+
+        # And which of them the net is showing, which is not the same question:
+        # the tooltip follows the cursor and the net stays where it was put. See
+        # `_on_map_hover`.
+        self._netted = None
+
         self._build_ui(legend)
         self._draw_base_map()
 
@@ -1370,7 +1462,35 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view = MapView(self.session, legend=legend)
         self.map_view.legend_handles_provider = self._legend_handles
         self.map_view.pressed.connect(self._on_map_pressed)
+        self.map_view.hovered.connect(self._on_map_hover)
+        self.map_view.hover_off.connect(lambda: self._tip_on(None))
         self.map_view.status.connect(self.say)
+
+        # A dock and not a second satellite window, which is the same choice the
+        # fold tool made and for the reason `gsurf.windows` gives: this is small,
+        # it is looked at beside the map rather than instead of it, and it wants
+        # to be draggable back into the side. It is also the one place in this
+        # window where something appears without being asked for, so it comes up
+        # with the window rather than hidden behind a menu nobody would open
+        # looking for it.
+        self.net = StereonetView(figsize=NET_FIGSIZE_IN)
+
+        self.net_dock = QtWidgets.QDockWidget(NET_EMPTY_TITLE, self)
+        self.net_dock.setObjectName("station_net")
+        self.net_dock.setWidget(self.net)
+        self.net_dock.setAllowedAreas(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(
+            QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.net_dock
+        )
+
+        # Said out loud rather than left to the canvas's size hint, which is the
+        # figure and would make the dock as wide as the net wants to be drawn.
+        self.resizeDocks(
+            [self.net_dock], [NET_DOCK_PX], QtCore.Qt.Orientation.Horizontal
+        )
 
         self.panel = EditorPanel(self.document)
         self.panel.selected.connect(self.select)
@@ -1755,16 +1875,28 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.refused.set_data(xs, ys)
 
     def _mark_attitudes(self, structure):
-        places = [
-            point_on(structure.path, attitude.s)
-            for attitude in structure.attitudes
-            if attitude.s is not None
+        marked = [
+            attitude for attitude in structure.attitudes if attitude.s is not None
         ]
-        drawn = self.on_map(places)
+        drawn = self.on_map([point_on(structure.path, a.s) for a in marked])
 
         # The same reversed pair as in `select`, and the same consequence: the
         # green dot marking where a plane was measured was never on the fault.
         self.marks.set_data([x for x, _ in drawn], [y for _, y in drawn])
+
+        # Kept for the hover, and dropped first: the tooltip is held by index
+        # into this list, and index 0 of the trace just selected is not index 0
+        # of the one before it. Without the reset a cursor that had not moved
+        # would go on showing the station of a dot that is no longer there.
+        self._tip_on(None)
+
+        # And the net with it, this being the change it is cleared by. A net is
+        # meant to outlast the cursor leaving its dot, which is the whole reason
+        # `hover_off` does not touch it -- but it must not outlast the trace it
+        # belongs to, or the window would show one fault with another's plane
+        # beside it and nothing on screen saying so.
+        self._clear_net()
+        self._marked = list(zip(drawn, marked))
 
     def _on_applied(self, index):
         """A block that parsed: the map has to agree with it again."""
@@ -1827,6 +1959,238 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
 
         return True
+
+    # -- what the cursor is resting on --------------------------------------
+
+    def _on_map_hover(self, x, y):
+        """
+        A cursor resting on a station dot, or on nothing.
+
+        Two answers with two lifetimes, which is why they are two calls. The
+        tooltip is about where the cursor is and goes away with it -- that is
+        what `hover_off` is connected to. The net is a figure, and reading a
+        figure means looking away from the dot that asked for it: one that
+        emptied as the cursor left would only ever be seen out of the corner of
+        an eye. So the net is filled by a hover and cleared by a change of
+        trace, and in between it keeps saying whose it is in its own title.
+        """
+
+        which = self._station_near(x, y)
+
+        self._tip_on(which)
+
+        if which is not None:
+            self._net_on(which)
+
+    def _station_near(self, x, y):
+        """
+        Which drawn station dot the cursor is on, as an index, or nothing.
+
+        In display pixels, through the axes' own transform, because the dots are
+        five points across whatever the view is showing: a reach in metres would
+        be a target a kilometre wide framed on the whole AOI and unhittable
+        framed on one fault.
+
+        The nearest of the ones in reach and not the first. The two anchors on
+        F0273 are 26 m apart -- one dot at most scales, two that overlap just
+        before they separate -- and which of them is meant is the nearer one.
+        """
+
+        if not self._marked:
+            return None
+
+        transform = self.map_view.axes.transData
+        here = transform.transform((x, y))
+        offsets = transform.transform([point for point, _ in self._marked]) - here
+        squared = (offsets * offsets).sum(axis=1)
+        nearest = int(np.argmin(squared))
+
+        if squared[nearest] > HOVER_RADIUS_PX**2:
+            return None
+
+        return nearest
+
+    def _tip_on(self, which):
+        """
+        Puts the tooltip on one station dot, or takes it off.
+
+        Guarded on which dot and not on where the cursor is, because this runs on
+        every motion event the canvas sees: crossing a dot is two changes and the
+        hundreds of pixels either side of it are none, so the text is built when
+        the answer changes rather than when the mouse moves. Which makes a motion
+        event 0.032 ms when the answer stands and 0.063 when it does not -- the
+        guard is not what makes this affordable, it is what keeps a tooltip from
+        being rebuilt sixty times a second while the cursor sits still.
+
+        Qt's own tooltip, so it appears after the delay everything else on this
+        desktop appears after and goes away without being told to. What that
+        costs is that a tooltip already on screen does not re-read its text, so
+        moving between two dots close enough to be under one tooltip can show the
+        first one's -- which is why they are 10 pixels apart at most and why this
+        is the place it would be noticed.
+        """
+
+        if which == self._tipped:
+            return
+
+        self._tipped = which
+        self.map_view.canvas.setToolTip(
+            "" if which is None else self._station_tip(self._marked[which][1])
+        )
+
+    def _net_on(self, which):
+        """
+        Puts one station's plane on the net, with the lines read on it.
+
+        The great circle is what the two numbers in the tooltip already say and
+        the net says differently: `145/35` is a plane you have to picture, and a
+        picture is what this is for. What it is really for is the second fact --
+        where a striation sits within the plane -- because a trend and a dip
+        direction written side by side do not show whether the movement was down
+        the dip or along the strike, and the net does, at a glance, without
+        arithmetic.
+
+        Guarded like the tooltip, and for a stronger reason: filling this is a
+        `set_data` on three artists and a blit, which is a thousand times a motion
+        event's own cost. `None` is not a value this takes -- clearing is
+        `_clear_net`, called when the trace changes and not when the cursor moves.
+        """
+
+        if which == self._netted:
+            return
+
+        self._netted = which
+        attitude = self._marked[which][1]
+        plane = attitude.plane
+
+        if plane is None:
+            self._clear_net()
+            return
+
+        station = attitude.attrs.get("station") or "no station code"
+        lineations = self._lineations_at(attitude)
+
+        self.net_dock.setWindowTitle(
+            f"{station} -- {plane}"
+            + (f", {len(lineations)} lineation(s)" if lineations else "")
+        )
+        self.net.show_attitude(
+            plane.dip_dir,
+            plane.dip,
+            lineations,
+            color=PROVENANCE_TINT["misurata"],
+        )
+
+    def _clear_net(self):
+        """Nothing on the net, and a title that says what would put it there."""
+
+        self._netted = None
+        self.net_dock.setWindowTitle(NET_EMPTY_TITLE)
+        self.net.show_attitude(None, None)
+
+    def _lineations_at(self, attitude):
+        """
+        The lineations read at the same place as one plane, as `(trend, plunge)`.
+
+        By station code where the lineation carries one, and by distance along the
+        trace only where it does not. That order is not a preference: `off` runs to
+        69.7 m in `merid_faults`, so two readings made standing in one spot can
+        snap to progressives seventy metres apart, and a rule that went by
+        distance first would fail on exactly the outcrops the tooltip exists to
+        warn about. `SAME_OUTCROP_M` is what is left for a lineation that says
+        nothing about where it was read.
+
+        Plural on purpose. `merid_faults` has a station whose note reads "strie
+        osservate: vedi foglio (pitch 1 30 deg, p. 2 80 deg)": two sets of striae
+        on one surface, which is two movements and the reason this returns a list
+        rather than the one lineation a station usually has. It currently returns
+        an empty list for all 23 of them, there being no `lineation` record in the
+        file at all -- the striae that were read are prose inside `note=`, and
+        turning prose into a record is curation and not something to guess at
+        while drawing.
+        """
+
+        structure = self.document.dataset.structures[self.index]
+        station = attitude.attrs.get("station")
+        found = []
+
+        for lineation in structure.lineations:
+            if lineation.trend is None or lineation.plunge is None:
+                continue
+
+            labelled = lineation.attrs.get("station")
+
+            if labelled is not None:
+                near = station is not None and labelled == station
+            else:
+                near = (
+                    lineation.s is not None
+                    and attitude.s is not None
+                    and abs(lineation.s - attitude.s) <= SAME_OUTCROP_M
+                )
+
+            if near:
+                found.append((lineation.trend, lineation.plunge))
+
+        return found
+
+    def _station_tip(self, attitude):
+        """
+        What a station dot is, in the order somebody pointing at it wants it.
+
+        The answer first -- which station, what plane -- then where along the
+        trace, and then the one thing the dot cannot say about itself. `off` is
+        how far the reading was from the line it has been snapped onto, and over
+        the 23 measurements of `merid_faults` it runs from 0.0 to 69.7 m. Seventy
+        metres is inside the width of the line at 1:25000 and a visible lie at
+        1:5000; the dot looks the same either way, and the number is not in the
+        block either -- it is an attribute nobody reads unless it is put in front
+        of them.
+
+        Then a refusal, where the curation has one. A rejected measurement stays
+        drawn, because somebody did stand there and that does not stop being
+        true, but it is not what holds -- and until now the band in the panel was
+        the only thing that said so, which is a different window.
+        """
+
+        attrs = attitude.attrs
+        station = attrs.get("station") or "no station code"
+        structure = self.document.dataset.structures[self.index]
+
+        lines = [
+            station if attitude.plane is None else f"{station} -- {attitude.plane}",
+            f"{attitude.s:.0f} m along {structure.ident}",
+        ]
+
+        off = _as_number(attrs.get("off"))
+
+        if off is not None:
+            lines.append(
+                "read on the trace"
+                if off == 0.0
+                else f"read {off:.1f} m off the trace, and snapped onto it"
+            )
+
+        # `attitude_at` at the anchor's own progressive: no measurement can be
+        # nearer to it than it is to itself, so the only answer that is not this
+        # one is a refusal.
+        _, said = structure.attitude_at(attitude.s, self.panel.max_gap)
+
+        if said.startswith("rifiutata"):
+            lines.append(f"overruled here -- {said}")
+
+        stamp = " ".join(
+            part for part in (attrs.get("src", ""), attrs.get("date", "")) if part
+        )
+
+        if stamp:
+            lines.append(stamp)
+
+        for key in ("note", "site_note"):
+            if attrs.get(key):
+                lines.append(textwrap.fill(attrs[key], TIP_WRAP))
+
+        return "\n".join(lines)
 
     # -- the map -----------------------------------------------------------
 
