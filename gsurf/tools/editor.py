@@ -120,6 +120,7 @@ from gsurf.curation import (
     provenance_of,
     stretch,
 )
+from gsurf.fits import as_line, dem_refusal, fits_along, gate_for
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.stereonet import StereonetView
 from gsurf.windows import SatelliteWindow, WindowGroup
@@ -938,11 +939,30 @@ class EditorPanel(QtWidgets.QWidget):
     # map that jumped to the thing you had just pointed at.
     framing_asked = QtCore.pyqtSignal(int)
 
-    def __init__(self, document, parent=None):
+    # News from in here, for the bar the window owns. The window's own `say`
+    # writes the status bar and the echo under the panel together, so this is
+    # connected to that rather than to a label of its own -- what a fit came to
+    # is read from the map as often as from the box.
+    said = QtCore.pyqtSignal(str)
+
+    def __init__(self, document, dem=None, crs=None, parent=None):
         super().__init__(parent)
 
         self.document = document
         self.index = None
+
+        # The topography, and whether it may be sampled for these traces at all.
+        # The refusal is a fact about the pair and not about the click, so it is
+        # settled once here and shown as the disabled button's reason -- a button
+        # that looks available and answers with a message box every time would be
+        # offering something this session cannot do.
+        self.dem = dem
+        self.dem_said = None if dem is None else dem_refusal(dem, crs)
+
+        # The gate, measured off every path in the file the first time a fit is
+        # asked for, and the sentence about it said once. See `_gate`.
+        self._gate_measured = None
+        self._gate_said = False
 
         self.table = StructureTable()
         self.table.setMinimumHeight(TABLE_FLOOR_PX)
@@ -1032,6 +1052,34 @@ class EditorPanel(QtWidgets.QWidget):
             )
             adder.clicked.connect(lambda _, line=template: self.add_line(line))
             buttons.addWidget(adder)
+
+        # The fourth button, which is not a fourth template: the three above write
+        # a line for somebody to finish and this one writes lines that are already
+        # finished. In the same row because what comes out of it is the same kind
+        # of thing -- lines in the box, kept by Apply and by nothing else.
+        self.fit_button = QtWidgets.QPushButton("fit off the DEM")
+        self.fit_button.clicked.connect(lambda: self.fit_off_dem())
+
+        if self.dem is None:
+            self.fit_button.setEnabled(False)
+            self.fit_button.setToolTip(
+                "No DEM in this session, and a plane read off the topography "
+                "needs one. The slot is optional because the traces draw without "
+                "it; this is the one thing here that does not."
+            )
+        elif self.dem_said:
+            self.fit_button.setEnabled(False)
+            self.fit_button.setToolTip(self.dem_said)
+        else:
+            self.fit_button.setToolTip(
+                "Sweep a window along this trace and write a `fit` for every "
+                "stretch whose plane the topography determines -- the import's "
+                "own producer, on one trace at a time. A stretch too straight to "
+                "carry a plane gets nothing, which is an answer. The lines go in "
+                "the box: nothing is kept until Apply."
+            )
+
+        buttons.addWidget(self.fit_button)
 
         buttons.addStretch(1)
         buttons.addWidget(self.apply_button)
@@ -1305,6 +1353,119 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setPlainText("\n".join(lines))
         self._aim_at_anchor(sum(len(line) + 1 for line in lines[:at]))
 
+    def add_written(self, written):
+        """
+        Lines that are already finished, above the path, with nothing aimed at.
+
+        `add_line`'s sibling rather than `add_line` itself, and the difference is
+        the `*`. That one selects the next one so a shift-click on the map fills
+        it in; a computed fit can carry a `*` of its own, which is the format's
+        word for an end of the path and the one token on the line that is not a
+        coordinate. Aiming at it would offer to overwrite it, and the next pick
+        anywhere on the map would land there.
+        """
+
+        if self.index is None or not written:
+            return
+
+        lines = self.text.toPlainText().splitlines()
+        at = self._path_line(lines)
+
+        self.text.setPlainText(
+            "\n".join(lines[:at] + list(written) + lines[at:])
+        )
+        self._park_cursor()
+
+    # -- the topography, read along this trace ------------------------------
+
+    def _gate(self):
+        """
+        The gate these traces are read through, as `(gate, the sigma it measured)`.
+
+        Off every path in the file and never the one being fitted, which is
+        `fits.gate_for`'s own rule: a floor measured on one trace would move from
+        trace to trace, and then two verdicts in this file would not be answers to
+        the same question.
+
+        Measured when the first fit is asked for rather than at opening, because a
+        session that never fits should not pay for it -- and kept, because it does
+        not depend on which trace is selected.
+        """
+
+        if self._gate_measured is None:
+            self._gate_measured = gate_for(
+                [structure.path for structure in self.document.dataset.structures]
+            )
+
+        return self._gate_measured
+
+    def fit_off_dem(self):
+        """
+        The topography read along the selected trace, as `fit` lines in the box.
+
+        Returns the `fits.Reading`, so that what happened can be asked about
+        rather than read out of a label.
+
+        **Into the box and not into the document**, which is the rule the three
+        template buttons already follow: nothing reaches the model until it has
+        been through the parser, and Apply is where that happens. Here it buys
+        something more than consistency -- a fit is an assertion about a plane,
+        these arrived without anybody looking at them, and the block can be read
+        and reverted before it is kept.
+
+        **And no dialog**, which is the other half of the same choice. One trace
+        is about ten milliseconds, so there is nothing to put a progress bar in
+        front of; and a modal box is a thing the headless checks would sit down
+        in front of forever, which is why the section panel keeps its own fitting
+        and its own message box in two methods.
+        """
+
+        if self.index is None or self.dem is None or self.dem_said:
+            return None
+
+        structure = self.document.dataset.structures[self.index]
+
+        gate, sigma = self._gate()
+        reading = fits_along(structure, self.dem, gate)
+
+        self.add_written([as_line(fit) for fit in reading.fits])
+
+        told = [f"{structure.ident}: {reading.describe()}"]
+
+        if reading.fits:
+            told.append("Apply to keep")
+
+        # The precedence, said rather than settled. `attitude_at` takes the
+        # *first* fit that covers a progressive, and these lines go where
+        # `add_written` puts them, which is after the fits the block already had.
+        # So on a file that came out of the import -- where every trace that could
+        # be fitted carries one already -- a fit computed here answers nowhere
+        # until somebody moves it up. Which line is winning at which metre is
+        # exactly what the band above draws, so this is visible; leaving it
+        # unsaid as well is what would make it a trap.
+        carried = len(structure.fits)
+
+        if reading.fits and carried:
+            told.append(
+                f"it already carries {carried} fit(s), and the first one "
+                f"covering a metre is what answers there"
+            )
+
+        if not self._gate_said:
+            self._gate_said = True
+            told.append(
+                f"gate: lever {gate.min_lever:.1f} m "
+                + (
+                    f"(3x the {sigma:.1f} m measured off these traces)"
+                    if sigma is not None
+                    else "(the default: these traces do not measure a pen)"
+                )
+            )
+
+        self.said.emit("; ".join(told))
+
+        return reading
+
     def _park_cursor(self):
         """Puts the cursor where a new line goes, rather than at the top."""
 
@@ -1441,6 +1602,23 @@ class EditorWindow(QtWidgets.QMainWindow):
             Transformer.from_crs(ours, theirs, always_xy=True),
         )
 
+    def _path_crs(self):
+        """
+        What the paths are actually in: the file's projection, or the session's.
+
+        The same fallback `_transformers` makes and `build` checked for degrees
+        under -- a file with no `crs` line is read as the session's, that being
+        the only thing left to do with the coordinates. Named here because the
+        DEM is refused against this and not against the declared line: a file
+        that declares nothing would otherwise refuse every DEM there is.
+        """
+
+        from pyproj import CRS
+
+        declared = self.document.dataset.crs
+
+        return CRS.from_user_input(declared) if declared else self.session.crs
+
     def on_map(self, path):
         """A path in the file's projection, as the map's coordinates."""
 
@@ -1490,10 +1668,13 @@ class EditorWindow(QtWidgets.QMainWindow):
             NET_EMPTY_TITLE, self.net, NET_WINDOW_PX, parent=self
         )
 
-        self.panel = EditorPanel(self.document)
+        self.panel = EditorPanel(
+            self.document, dem=self.session.dem, crs=self._path_crs()
+        )
         self.panel.selected.connect(self.select)
         self.panel.applied.connect(self._on_applied)
         self.panel.framing_asked.connect(self.frame_on)
+        self.panel.said.connect(self.say)
 
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(

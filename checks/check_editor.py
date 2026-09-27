@@ -87,6 +87,103 @@ structure F004 "Delta" fid=4
 """
 
 
+# The DEM the fit is read off: one plane and nothing else, so what a best fit
+# through a trace draped on it comes back as is known from the arithmetic rather
+# than from any of this code. `check_imports` builds the same raster for the same
+# reason and each check builds its own fixtures, which is the arrangement here --
+# a check that can only run with another check's help is not a script.
+RELIEF_DIP, RELIEF_DIP_DIR = 30.0, 90.0
+CELL = 5.0
+
+# Where the V turns, and so the only stretch of it that can carry an attitude.
+APEX_S = (1200.0 ** 2 + 600.0 ** 2) ** 0.5
+
+
+def plane_dem(directory, name="plane.tif", crs="EPSG:25833"):
+    """A DEM dipping 30 degrees due east, over the ground the traces are on."""
+
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    cols, rows = int(2700 / CELL), int(1600 / CELL)
+
+    # Cell centres, so a sample anywhere inside a cell is off by at most half a
+    # cell of gradient rather than by a systematic half-cell shift.
+    x = X0 + (np.arange(cols) + 0.5) * CELL
+    z = 2000.0 - np.tan(np.radians(RELIEF_DIP)) * (x - X0)
+
+    where = Path(directory) / name
+
+    with rasterio.open(
+        where, "w", driver="GTiff", width=cols, height=rows, count=1,
+        dtype="float32", crs=crs,
+        transform=from_origin(X0, Y0 + 1400.0, CELL, CELL),
+    ) as out:
+        out.write(np.repeat(z[None, :], rows, axis=0).astype("float32"), 1)
+
+    return where
+
+
+def densified(points, step=20.0):
+    """A vertex every `step` along the corners, which is what digitising gives."""
+
+    out = []
+
+    for (ax, ay), (bx, by) in zip(points, points[1:]):
+        count = max(2, int(((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5 / step))
+        out.extend(
+            (ax + t * (bx - ax), ay + t * (by - ay))
+            for t in (n / count for n in range(count))
+        )
+
+    out.append(points[-1])
+
+    return out
+
+
+def fitted_source():
+    """
+    Four traces on that plane, one for each thing the button has to do.
+
+    VEE turns once, so exactly the stretch around the bend carries a plane and
+    the rest carries none -- which is what makes it the test that a fit is
+    written over the stretch that held. ZIG turns everywhere, so its fit runs to
+    an end of the path and is written `*`, which is the token nothing may aim at.
+    EAST is dead straight and has to come back with nothing at all. TAKEN is a V
+    that already carries a fit off a table, for the precedence the panel reports
+    and does not settle.
+    """
+
+    corners = {
+        "VEE": [(X0 + 100.0, Y0), (X0 + 1300.0, Y0 + 600.0), (X0 + 2500.0, Y0)],
+        "ZIG": [(X0 + 100.0, Y0 + 700.0)] + [
+            (X0 + 200.0 + tooth * 200.0, Y0 + 700.0 + 100.0 * (tooth % 2))
+            for tooth in range(6)
+        ],
+        "EAST": [(X0 + 200.0, Y0 + 1200.0), (X0 + 1800.0, Y0 + 1200.0)],
+        "TAKEN": [(X0 + 100.0, Y0 + 300.0), (X0 + 1300.0, Y0 + 900.0),
+                  (X0 + 2500.0, Y0 + 300.0)],
+    }
+
+    out = ["gstruct 0.2", "crs EPSG:25833", ""]
+
+    for ident, points in corners.items():
+        path = densified(points)
+
+        out.append(f'structure {ident} ""')
+        out.append("  kind fault")
+
+        if ident == "TAKEN":
+            out.append("  fit plane * * 100/40 from=table src=gsurf")
+
+        out.append(f"  path {len(path)}")
+        out.extend(f"    {x:.2f} {y:.2f}" for x, y in path)
+        out.append("")
+
+    return "\n".join(out)
+
+
 def check(label, condition, detail=""):
     print(f"{'PASS' if condition else 'FAIL'}  {label}{'   ' + detail if detail else ''}")
     if not condition:
@@ -1277,6 +1374,211 @@ def main():
 
             check("and the ten lines saying why it says what it says stay put",
                   comment_lines(written_back) == comment_lines(kept))
+
+        # -- the topography, read along one trace --------------------------
+
+        print("\n-- the fit off the DEM --\n")
+
+        from gsurf import traces as traces_module
+        from gsurf.fits import FROM_DEM, PLANE_DECIMALS, as_line
+
+        # The session this check has been driving all along has no DEM, the slot
+        # being optional here, and that is the first of the three answers the
+        # button can give before it is pressed.
+        check("with no DEM the button is off, and its reason is the DEM",
+              window.panel.dem is None
+              and not window.panel.fit_button.isEnabled()
+              and "DEM" in window.panel.fit_button.toolTip(),
+              window.panel.fit_button.toolTip()[:58])
+
+        relief = plane_dem(tmp)
+        elsewhere = plane_dem(tmp, "utm32.tif", crs="EPSG:25832")
+
+        traced = written(tmp, "fitted.gstruct", fitted_source())
+        traced_spec = dict(path=str(traced), role="traces")
+
+        # The second: a DEM that cannot be sampled for these traces at all. The
+        # trace would be sampled in the DEM's grid and the anchors written in the
+        # file's, so the dip direction that came out would be measured from one
+        # north and written against another -- which is not something a
+        # reprojection on the way in would fix.
+        crossed = tool.build(
+            Session.open(dem_path=str(elsewhere), frame_layers=[traced_spec]),
+            {"traces": traced_spec},
+        )
+
+        check("a DEM in another projection turns it off too, naming both",
+              crossed is not None
+              and not crossed.panel.fit_button.isEnabled()
+              and "25832" in (crossed.panel.dem_said or "")
+              and "25833" in (crossed.panel.dem_said or ""),
+              (crossed.panel.dem_said or "nothing said")[:58])
+
+        crossed.close()
+
+        session = Session.open(dem_path=str(relief), frame_layers=[traced_spec])
+        fitting = tool.build(session, {"traces": traced_spec})
+        panel = fitting.panel
+
+        check("and a DEM these traces can be read against turns it on",
+              panel.fit_button.isEnabled() and panel.dem_said is None)
+
+        rows = {
+            structure.ident: n
+            for n, structure in enumerate(fitting.document.dataset.structures)
+        }
+
+        # The floor, end to end, and the reason this file is the case that found
+        # it: every vertex in the format is written to two decimals, so these
+        # densified traces report their own storage -- four millimetres -- as the
+        # roughness of the hand that drew them. Three times that is a lever floor
+        # of a centimetre, which admits every window of every trace.
+        gate, sigma = panel._gate()
+
+        check("the gate keeps its own floor: a file's storage is not a pen",
+              sigma is None and gate == traces_module.TraceGate(),
+              f"lever {gate.min_lever:.1f} m, measured sigma "
+              + ("none" if sigma is None else f"{sigma * 1000.0:.1f} mm"))
+
+        panel.show_index(rows["VEE"])
+
+        before = panel.text.toPlainText()
+        reading = panel.fit_off_dem()
+        added = [
+            line for line in panel.text.toPlainText().splitlines()
+            if line not in before.splitlines()
+        ]
+
+        check("the V is read, and what comes of it lands in the box and nowhere else",
+              reading is not None and len(reading.fits) == 1
+              and len(added) == 1
+              and added[0].strip().startswith("fit plane")
+              and fitting.document.text_of(rows["VEE"]) == before,
+              f"{len(reading.fits)} fit(s), {len(added)} line(s) written")
+
+        fit = reading.fits[0]
+
+        # The DEM is one plane and the trace lies on it, so this is the
+        # arithmetic that built the raster. Two degrees of slack for the DEM's
+        # own cell quantisation, which is 1.4 m of height over 5 m of ground.
+        check("and the plane written is the one the DEM was built from",
+              abs(fit.plane.dip - RELIEF_DIP) <= 2.0
+              and abs(fit.plane.dip_dir - RELIEF_DIP_DIR) <= 2.0,
+              f"{fit.plane.dip_dir:.1f}/{fit.plane.dip:.1f} against "
+              f"{RELIEF_DIP_DIR:.0f}/{RELIEF_DIP:.0f}")
+
+        # The whole of `as_line`'s contract in one assertion: the anchors, the
+        # attributes and their quoting, and the decimals. Read back rather than
+        # matched against a string, because what has to hold is that the line
+        # says what the fit says -- not that it is spelled a particular way.
+        reread = gstruct.loads(
+            'gstruct 0.2\ncrs EPSG:25833\n\nstructure X ""\n'
+            + added[0] + "\n  path 2\n"
+            + f"    {X0:.2f} {Y0:.2f}\n    {X0 + 1000.0:.2f} {Y0:.2f}\n"
+        ).structures[0].fits[0]
+
+        check("the written line reads back as the fit that was written",
+              reread.plane.dip_dir == round(fit.plane.dip_dir, PLANE_DECIMALS)
+              and reread.plane.dip == round(fit.plane.dip, PLANE_DECIMALS)
+              and reread.attrs == fit.attrs
+              and reread.start == (None if fit.start is None
+                                   else tuple(round(v, 2) for v in fit.start)),
+              f"{reread.plane} with {len(reread.attrs)} attribute(s)")
+
+        # And why the line is built in `fits` rather than taken from `dumps`: the
+        # format's own writer prints whole degrees, and a plane computed over a
+        # swept window is a computed number.
+        rounded = gstruct.Plane(140.5, 31.2)
+
+        check("which `dumps` could not have done, printing whole degrees",
+              str(rounded) == "140/31"
+              and "140.5/31.2" in as_line(gstruct.Fit(plane=rounded)),
+              f"`{rounded}` against `{as_line(gstruct.Fit(plane=rounded)).strip()}`")
+
+        check("and Apply takes it, which is the only way it reaches the model",
+              panel.apply_block()
+              and len(fitting.document.dataset.structures[rows["VEE"]].fits) == 1,
+              fitting.document.text_of(rows["VEE"]).splitlines()[2][:58])
+
+        held = fitting.document.dataset.structures[rows["VEE"]].fits[0]
+
+        check("on the stretch that turned, and not on the trace it is on",
+              held.s0 < APEX_S < held.s1
+              and (held.s1 - held.s0) < 2.0 * APEX_S / 10.0,
+              f"{held.s0:.0f}..{held.s1:.0f} m, apex at {APEX_S:.0f}")
+
+        # `add_written` and not `add_line`, and the `*` is the whole difference:
+        # it is the format's word for an end of the path, and `add_line` selects
+        # the next one so that a shift-click on the map fills it in. Aiming at
+        # this one would offer to overwrite the only token on the line that is
+        # not a coordinate, and the next pick anywhere would land there.
+        panel.show_index(rows["ZIG"])
+        panel.fit_off_dem()
+
+        reaching = [
+            line for line in panel.text.toPlainText().splitlines()
+            if line.strip().startswith("fit plane")
+        ]
+
+        check("a fit running to the end of its path writes `*`, and nothing aims at it",
+              len(reaching) == 1 and " * " in reaching[0]
+              and not panel.text.textCursor().hasSelection(),
+              reaching[0].strip()[:58] if reaching else "no fit")
+
+        panel.apply_block()
+
+        # The load-bearing negative, here as well as in the import: a plane
+        # through a straight trace is arbitrary rather than imprecise, so nothing
+        # is written -- and the panel says what was walked instead of saying
+        # nothing, because an empty answer and a refused one look the same.
+        panel.show_index(rows["EAST"])
+
+        before = panel.text.toPlainText()
+        nothing = panel.fit_off_dem()
+
+        check("a dead straight trace writes no line at all, and says what it walked",
+              not nothing.fits and nothing.silent
+              and panel.text.toPlainText() == before
+              and "nothing held" in nothing.describe(),
+              nothing.describe()[:66])
+
+        # Precedence, reported and not settled -- `attitude_at` takes the *first*
+        # fit covering a progressive, and these lines go after the ones the block
+        # already had. Asserted as what it does rather than as what it should do,
+        # so that changing it has to change this line too.
+        said = []
+        panel.said.connect(said.append)
+
+        panel.show_index(rows["TAKEN"])
+        panel.fit_off_dem()
+        panel.apply_block()
+
+        now = fitting.document.dataset.structures[rows["TAKEN"]].fits
+
+        check("a computed fit is written after the ones the block already carried",
+              len(now) == 2 and now[0].attrs.get("from") == "table"
+              and now[-1].attrs.get("from") == FROM_DEM,
+              ", ".join(one.attrs.get("from", "?") for one in now))
+
+        check("so the panel says which of them will answer, rather than leaving it",
+              any("already carries" in one for one in said)
+              and any("first" in one for one in said),
+              (said[-1] if said else "nothing said")[:76])
+
+        # And the file, which is the invariant every other assertion here rests
+        # on: the lines of the structures that were edited, and not one byte more.
+        was = traced.read_text(encoding="utf-8")
+        fitting.save()
+        now_text = traced.read_text(encoding="utf-8")
+
+        changed = changed_lines(was, now_text)
+
+        check("saving writes the three fits and leaves every other byte alone",
+              len(changed) == 3
+              and all(one.startswith("+  fit plane") for one in changed),
+              f"{len(changed)} line(s) changed")
+
+        fitting.close()
 
         # -- what it will not open ----------------------------------------
 
