@@ -365,6 +365,131 @@ def main():
         check("the box holds the block exactly as the document has it",
               window.panel.text.toPlainText() == window.document.text_of(0))
 
+        # -- two windows, and what keeps them one tool ---------------------
+        #
+        # The map is the tool and the panel is a window of its own, which is the
+        # section tool's arrangement and now the same code: `gsurf.windows`. Two
+        # things about it are worth holding down and neither shows in the window.
+        # The panel is parented to the map, which has Qt destroy it with the tool
+        # and -- the part that does not show at all -- keeps closing it from
+        # counting as the last window closed: while a tool runs the launcher is
+        # hidden underneath, so an unparented panel would take the application
+        # down instead of handing it back. And closing it hides it, because a
+        # table of the whole file costs a fill and a window shut by accident
+        # should not.
+
+        print("\n-- two windows --\n")
+
+        panel_window = window.panel_window
+
+        check("the map and the panel are two windows",
+              sorted(window.group.windows) == ["map", "panel"],
+              ", ".join(sorted(window.group.windows)))
+
+        check("the panel is a window in its own right, not a pane of the map",
+              panel_window.isWindow() and window.centralWidget() is not window.panel)
+
+        check("and it is parented to the map, so closing it cannot quit the app",
+              panel_window.parent() is window)
+
+        check("showing the map brought it up with it", panel_window.isVisible())
+
+        panel_action = window.window_actions["panel"]
+
+        # Closed the way the window manager closes it, not hidden behind its back.
+        panel_window.close()
+
+        check("closing it hides it and leaves the table standing",
+              not panel_window.isVisible() and window.panel.table.rowCount() == 4)
+
+        check("and the menu stops claiming a window that is not there",
+              not panel_action.isChecked())
+
+        panel_action.trigger()
+
+        check("the menu puts it back",
+              panel_window.isVisible() and panel_action.isChecked())
+
+        # Both shortcuts used to be the buttons' own, and a button's shortcut
+        # reaches only the window the button is in -- which was the only window
+        # there was. Ctrl+S over the map is the case that would have gone quiet:
+        # clicking anchors along a trace and then writing the file is one motion.
+        def shortcuts_of(widget):
+            return {
+                action.shortcut().toString()
+                for action in widget.actions()
+                if not action.shortcut().isEmpty()
+            }
+
+        check("Save and Apply answer from either window",
+              shortcuts_of(window) == shortcuts_of(panel_window)
+              == {"Ctrl+S", "Ctrl+Return"},
+              " and ".join(sorted(shortcuts_of(window))))
+
+        check("and the buttons carry none of their own, so neither is ambiguous",
+              window.save_button.shortcut().isEmpty()
+              and window.panel.apply_button.shortcut().isEmpty())
+
+        window.say("a line of news")
+
+        check("what the tool says is said in both windows",
+              window.statusBar().currentMessage() == window.echo.text()
+              == window.echo.toolTip() == "a line of news")
+
+        # The guard that keeps a real desktop's arrangement out of this run:
+        # without it a panel last left as a strip would come back as one here.
+        check("off-screen there is no layout to inherit",
+              window.group.settings() is None
+              and window.group.restore_geometry() is False)
+
+        # What a first run makes of a screen, on two screens this run does not
+        # have. The laptop this was written on is 1366x741 of usable area, which
+        # the group's own rule -- satellites down the right edge, 1600 and up --
+        # calls too small to place anything on: correct for a tool with three
+        # windows and wrong for one with two, where 840 of map beside 520 of
+        # panel is the arrangement the splitter used to make. A map maximised
+        # under a floating panel would have been worse than what this replaces.
+        was_area = window.main_screen_area
+        was_map, was_panel = window.geometry(), panel_window.geometry()
+
+        def placed_on(width, height):
+            """The two geometries a screen of this size leads to."""
+
+            window.main_screen_area = lambda: QtCore.QRect(0, 0, width, height)
+            window.tiled = False
+            window.group.place_unremembered()
+
+            return window.tiled, window.geometry(), panel_window.geometry()
+
+        tiled, on_map, on_panel = placed_on(1366, 741)
+
+        check("on one laptop screen the two are laid side by side",
+              tiled and on_map.width() == 840 and on_panel.width() == 520,
+              f"{on_map.width()} of map, {on_panel.width()} of panel")
+
+        check("filling it across, with the panel against the right edge",
+              on_map.left() == 0
+              and on_panel.left() == on_map.right() + 1 + tool.TILE_GAP_PX
+              and on_panel.right() == 1365,
+              f"map to {on_map.right()}, panel from {on_panel.left()}")
+
+        check("and neither of them taller than the desktop they are on",
+              on_map.height() == on_panel.height() == 741 - tool.FRAME_ALLOWANCE_PX,
+              f"{on_map.height()} px of 741")
+
+        narrow, _, _ = placed_on(1024, 720)
+
+        check("on a screen too narrow for both, the map is not cut to fit one",
+              not narrow, "left to fit_to_screen, and the panel over it")
+
+        # Put back, both of them: everything below draws on this map, and an
+        # extent is read off a canvas whose aspect is the window's. A probe that
+        # leaves the window a different shape is a probe that decides what the
+        # framing checks are measuring.
+        window.main_screen_area = was_area
+        window.setGeometry(was_map)
+        panel_window.setGeometry(was_panel)
+
         # -- finding the one to open ---------------------------------------
 
         print("\n-- the table --\n")

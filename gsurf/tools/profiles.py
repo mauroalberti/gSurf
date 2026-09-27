@@ -60,7 +60,6 @@ ground this session is not open on. The format and both readers are in
 from __future__ import annotations
 
 import json
-import os
 from contextlib import contextmanager
 from pathlib import Path
 from time import perf_counter
@@ -89,6 +88,7 @@ from gsurf.sections import (
     source_key,
 )
 from gsurf.vectors import VectorSource, single_parts
+from gsurf.windows import SatelliteWindow, WindowGroup, settings_for
 
 # The DEM is the section: without a topographic surface there is no profile to
 # draw anything under, which is what puts it in the required half where the
@@ -134,9 +134,10 @@ SECTION_LEGEND_NOTES = 6
 SECTION_WINDOW_PX = (900 + SECTION_LEGEND_PX, 520)
 TRACES_WINDOW_PX = (PANEL_WIDTH_PX, 620)
 
-# Below this there is no arrangement of three windows that does not cover the
-# map, and the window manager's own placement is a better guess than ours.
-ROOM_TO_PLACE_PX = 1600
+# What this tool's windows and answers are kept under. One name per tool: an
+# arrangement of three windows has nothing to say to a tool with two, and the
+# geometry keys inside are shared out by the window's own name.
+SETTINGS_NAME = "sections"
 
 # Room above and below what the DEM holds. The axis is settled when the view is
 # built and must not move afterwards, so it is given the whole elevation range
@@ -1284,20 +1285,14 @@ def describe_scope(report):
 
 def remembered():
     """
-    Where the windows were left last time, if there is a desktop they were left on.
+    This tool's settings: where its windows were left, and what it was set to.
 
-    Off-screen there is no window manager, no screen to be placed against and
-    no session to continue -- and a layout restored there is one real run's
-    arrangement pushed into a run that measures pixels. `checks/run.py` works
-    in exactly that mode, and a section window last left as a strip would make
-    its ink counts meaningless. So off-screen the windows come up at their own
-    size and nothing is written back.
+    Two things are kept under the one name, which is why this is not only the
+    window group's business -- the arrangement, and the state `save_state`
+    writes. Nothing off-screen, for the reason `settings_for` gives.
     """
 
-    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-        return None
-
-    return QtCore.QSettings("gSurf", "sections")
+    return settings_for(SETTINGS_NAME)
 
 
 @contextmanager
@@ -1320,56 +1315,6 @@ def _silent(box):
         yield box
     finally:
         box.blockSignals(was)
-
-
-class SatelliteWindow(QtWidgets.QWidget):
-    """
-    A panel that used to be a dock, given a window of its own.
-
-    Parented to the map and flagged `Window`. Parented for two reasons that do
-    not show: Qt destroys it along with the tool, so there is no lifetime to
-    keep track of; and a window that has a parent does not count towards
-    `quitOnLastWindowClosed` -- which matters, because while a tool runs the
-    launcher is hidden underneath it, and without the parent closing this one
-    would be the last window closed and take the application with it.
-
-    Flagged a window rather than left the `Qt::Tool` a floating dock becomes: a
-    tool window on X11 stays over its parent and out of the taskbar, and the
-    point of taking the section out of the dock was to be able to put it on the
-    other screen and leave it there.
-
-    Closing hides. What is inside is expensive -- the bundle's panels are
-    rebuilt only when the section's length moves enough to matter -- and a
-    window shut by accident should not cost that. The way back is the Windows
-    menu, and the menu follows the window rather than the other way round, so a
-    close from the title bar unticks its own box.
-    """
-
-    visibility_changed = QtCore.pyqtSignal(bool)
-
-    def __init__(self, title, content, size, parent=None):
-        super().__init__(parent)
-
-        self.setWindowFlag(QtCore.Qt.WindowType.Window, True)
-        self.setWindowTitle(title)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(content)
-
-        self.resize(*size)
-
-    def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-
-    def hideEvent(self, event):
-        super().hideEvent(event)
-        self.visibility_changed.emit(False)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.visibility_changed.emit(True)
 
 
 class OddSpinBox(QtWidgets.QSpinBox):
@@ -1462,7 +1407,6 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         self.single = None
         self.bundle = None
         self._bundle_reach = None
-        self._satellites_up = False
 
         # On, because a section whose colours are not explained anywhere is
         # what the legend was added for; off is for the run where the section
@@ -1574,13 +1518,16 @@ class ProfilesWindow(QtWidgets.QMainWindow):
             )
 
         # Keyed, because geometry is saved and restored under these names and a
-        # tool opened without traces has two windows rather than three. Not
-        # `windows`, a letter away from `self.window` -- which is the DEM crop
-        # the sampling reads, and nothing to do with any of this.
-        self.window_group = {"map": self, "section": self.section_window}
+        # tool opened without traces has two windows rather than three.
+        satellites = {"section": self.section_window}
 
         if self.traces_window is not None:
-            self.window_group["traces"] = self.traces_window
+            satellites["traces"] = self.traces_window
+
+        # `group` and not `windows`, which is a letter away from `self.window` --
+        # the DEM crop the sampling reads, and nothing to do with any of this.
+        self.group = WindowGroup(self, SETTINGS_NAME, satellites)
+        self.window_group = self.group.windows
 
         self._build_controls()
         self._build_menu()
@@ -1672,26 +1619,9 @@ class ProfilesWindow(QtWidgets.QMainWindow):
 
         menu = self.menuBar().addMenu("&Windows")
 
-        for label, window in (
-            ("&Section", self.section_window),
-            ("&Traces", self.traces_window),
-        ):
-            if window is None:
-                continue
-
-            action = QtGui.QAction(label, self)
-            action.setCheckable(True)
-            action.setChecked(True)
-            action.triggered.connect(
-                lambda shown, w=window: self._show_satellite(w, shown)
-            )
-
-            # The window is the authority on whether it is up: closed from its
-            # own title bar it has to untick this box itself, or the menu would
-            # claim a window that is not there.
-            window.visibility_changed.connect(action.setChecked)
-
-            menu.addAction(action)
+        self.window_actions = self.group.actions_into(
+            menu, {"section": "&Section", "traces": "&Traces"}
+        )
 
         menu.addSeparator()
 
@@ -1711,7 +1641,7 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         menu.addSeparator()
 
         front = QtGui.QAction("Bring all to &front", self)
-        front.triggered.connect(self._raise_group)
+        front.triggered.connect(self.group.raise_all)
         menu.addAction(front)
 
     def _build_section_menu(self):
@@ -1907,107 +1837,28 @@ class ProfilesWindow(QtWidgets.QMainWindow):
         if self.legend_beside_section and self.geoprofiles is not None:
             self._refresh_section_legend(self.geoprofiles)
 
-    def _show_satellite(self, window, shown):
-        window.setVisible(shown)
-
-        if shown:
-            # Shown is not the same as seen: a window put back from the menu
-            # can come up behind the map it was asked for from.
-            window.raise_()
-            window.activateWindow()
-
-    def _raise_group(self):
-        for window in self.window_group.values():
-            if window.isVisible():
-                window.raise_()
-
     def showEvent(self, event):
         """
         The satellites come up with the map -- the first time, and only then.
 
-        After that their being on screen is the user's business: a section
-        window closed on purpose must not come back because the map happened to
-        be un-minimised. That this hangs off `showEvent` rather than off `build`
-        is what lets a `ProfilesWindow` constructed directly -- which is how
+        That this hangs off `showEvent` rather than off `build` is what lets a
+        `ProfilesWindow` constructed directly -- which is how
         `checks/check_sections.py` builds one -- get its whole group by calling
-        `show()`, with nothing to remember to do.
+        `show()`, with nothing to remember to do. The once is the group's, and
+        the reason for it is there.
         """
 
         super().showEvent(event)
 
-        if self._satellites_up:
-            return
-
-        self._satellites_up = True
-
-        for window in self.window_group.values():
-            if window is not self:
-                window.show()
+        self.group.show_satellites()
 
     def restore_geometry(self):
-        """
-        Puts the group back where it was left, and says whether the map was.
+        """Puts the group back where it was left, and says whether the map was."""
 
-        The map's own answer is the one the caller needs: `fit_to_screen` sizes
-        a window that has nothing remembered about it, and calling it over a
-        restored geometry would undo the restoring. The satellites have no such
-        competition and are simply put back.
-        """
-
-        settings = remembered()
-
-        if settings is None:
-            self._place_unremembered()
-            return False
-
-        restored = set()
-
-        for name, window in self.window_group.items():
-            saved = settings.value(f"geometry/{name}")
-
-            if isinstance(saved, QtCore.QByteArray) and window.restoreGeometry(saved):
-                restored.add(name)
-
-        # Whatever was not remembered -- a first run, a tool opened with traces
-        # for the first time -- still has to be put somewhere.
-        if not restored.issuperset(set(self.window_group) - {"map"}):
-            self._place_unremembered(skip=restored)
-
-        return "map" in restored
-
-    def _place_unremembered(self, skip=()):
-        """
-        Where a satellite goes with nothing remembered about it.
-
-        Down the right edge of the screen, and only if the screen has the room
-        for it: on one 1920-wide desktop with the map maximised there is no
-        arrangement that does not cover it, and the window manager's own
-        placement is a better guess than ours. This runs once in the life of an
-        installation -- after it, there is something remembered.
-        """
-
-        available = self.screen().availableGeometry()
-
-        if available.width() < ROOM_TO_PLACE_PX:
-            return
-
-        top = available.top() + 40
-
-        for name, window in self.window_group.items():
-            if name == "map" or name in skip:
-                continue
-
-            window.move(available.right() - window.width() - 20, top)
-            top += window.height() + 40
+        return self.group.restore_geometry()
 
     def save_geometry(self):
-        settings = remembered()
-
-        if settings is None:
-            return
-
-        for name, window in self.window_group.items():
-            settings.setValue(f"geometry/{name}", window.saveGeometry())
+        self.group.save_geometry()
 
     # -- the section, from one run to the next -----------------------------
 

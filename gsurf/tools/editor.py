@@ -18,9 +18,17 @@ place; the band at the top of the panel asks it everywhere. On F0055 of
 over for the last 354, with the dip stepping from 31 to 35 where they meet. That
 is one line of the file beating another, and neither line says so.
 
+**Two windows.** The map is the tool and the panel is a window beside it, which
+used to be one frame split down the middle. A splitter cannot be dragged across
+a screen boundary, so the map could not be made bigger without making the table
+smaller and neither could be moved -- and the arrangement this tool is for is a
+monitor of map with the file open next to it. The panel is parented to the map
+and the group is `gsurf.windows`, the section tool's; what that costs here is
+two shortcuts and a status bar, and `_build_shortcuts` and `say` are those.
+
 **Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
 plane; the other 348 are mapped contacts nobody has read one off yet. So the
-first question this window has to answer is which forty-five, and it answers it
+first question this tool has to answer is which forty-five, and it answers it
 twice over: the table sorts on what is written, and the map draws a trace
 carrying something firmly and one carrying nothing faintly. Both go through
 `carries`, so the two can never disagree. A row picked in the table then brings
@@ -77,6 +85,7 @@ from gsurf.curation import (
     stretch,
 )
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
+from gsurf.windows import SatelliteWindow, WindowGroup
 
 # The file is the subject, so it is the one thing this cannot run without. The
 # DEM is optional and the tool is usable without it -- the traces are geometry
@@ -174,6 +183,32 @@ TEMPLATES = (
 )
 
 PANEL_WIDTH_PX = 520
+
+# What the panel comes up as, the first time and nothing being remembered. Taller
+# than the 880 the whole tool used to ask for, because it is no longer sharing a
+# frame with the map: the table wants rows and the band and the box want height,
+# and both of those used to be cut to whatever was left beside a canvas.
+PANEL_WINDOW_PX = (PANEL_WIDTH_PX, 940)
+
+# What the map comes up as where the two do not fit side by side, and the least
+# map worth putting a panel next to. Below that floor the map would be narrower
+# than the panel, which is the wrong way round for a tool whose subject is where
+# a fault runs, so the map takes the screen and the panel comes up over it.
+MAP_WINDOW_PX = (1080, 880)
+MAP_FLOOR_PX = 700
+
+# What is left between them, and what is left for the map window's own frame.
+# The gap is a gap; the allowance is a guess and has to be -- right after
+# `setGeometry` the title bar does not exist yet, the window manager not having
+# reparented the window, so its thickness cannot be measured before the window
+# has to be placed. 40 px is the same allowance `WindowGroup.place_unremembered`
+# already makes, and erring high costs a strip of desktop rather than the bottom
+# of a window.
+TILE_GAP_PX = 6
+FRAME_ALLOWANCE_PX = 40
+
+# What this tool's windows are kept under. `sections` is the other one.
+SETTINGS_NAME = "editor"
 
 # How much of the panel the table opens with, and the least it can be dragged
 # to. The opening size is about eight rows, which is enough of a list to sort and
@@ -883,7 +918,11 @@ class EditorPanel(QtWidgets.QWidget):
         self.problem.setVisible(False)
 
         self.apply_button = QtWidgets.QPushButton("Apply")
-        self.apply_button.setShortcut("Ctrl+Return")
+
+        # No shortcut of its own: the window owns both of this tool's shortcuts
+        # and hands them to each of its two windows, which is what makes them
+        # work from the map as well. A second Ctrl+Return here would be an
+        # ambiguous one -- see `EditorWindow._build_shortcuts`.
         self.apply_button.setToolTip(
             "Read the block back through the parser and put it in the document "
             "(Ctrl+Return). Nothing reaches the file until Save."
@@ -1257,6 +1296,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         # file's projection and stays there; this is the other side of that.
         self._drawn = [self.on_map(st.path) for st in document.dataset.structures]
 
+        # Whether the two windows were laid side by side for want of anything
+        # remembered about them, which is what `build` reads to know that the
+        # map has already been given a size.
+        self.tiled = False
+
         # Which trace the framing is on its way to, and the timer it waits on.
         self._framing = None
         self._frame_timer = QtCore.QTimer(self)
@@ -1269,7 +1313,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.select(0)
 
         self._retitle()
-        self.statusBar().showMessage(self._opening())
+        self.say(self._opening())
 
     # -- the two projections ----------------------------------------------
 
@@ -1326,7 +1370,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view = MapView(self.session, legend=legend)
         self.map_view.legend_handles_provider = self._legend_handles
         self.map_view.pressed.connect(self._on_map_pressed)
-        self.map_view.status.connect(self.statusBar().showMessage)
+        self.map_view.status.connect(self.say)
 
         self.panel = EditorPanel(self.document)
         self.panel.selected.connect(self.select)
@@ -1334,10 +1378,9 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.panel.framing_asked.connect(self.frame_on)
 
         self.save_button = QtWidgets.QPushButton("Save")
-        self.save_button.setShortcut("Ctrl+S")
         self.save_button.setToolTip(
             "Write the file, replacing the lines of the structures that were "
-            "edited and leaving every other byte of it alone."
+            "edited and leaving every other byte of it alone (Ctrl+S)."
         )
         self.save_button.clicked.connect(self.save)
 
@@ -1349,26 +1392,171 @@ class EditorWindow(QtWidgets.QMainWindow):
         writing.addWidget(self.save_as_button)
         writing.addStretch(1)
 
+        # The status bar's words again, beside the panel. The two windows can be
+        # on two screens, and which of them the news belongs on depends on the
+        # news: the map reports what a click found, the panel what Apply and Save
+        # did, and each is read from the other window often enough to matter.
+        # `say` writes both -- one call, no state between them, so there is
+        # nothing in the echo that can drift out of step with the bar.
+        self.echo = QtWidgets.QLabel()
+        self.echo.setStyleSheet("color: #555555; font-size: 11px;")
+        self.echo.setMinimumHeight(16)
+
         side = QtWidgets.QWidget()
         side_layout = QtWidgets.QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.addWidget(self.panel, stretch=1)
         side_layout.addLayout(writing)
+        side_layout.addWidget(self.echo)
         side.setMinimumWidth(PANEL_WIDTH_PX)
 
-        map_side = QtWidgets.QWidget()
-        map_layout = QtWidgets.QHBoxLayout(map_side)
+        # The map is the window and the panel is beside it, which is not the same
+        # arrangement as before: the two were one frame split down the middle, so
+        # the map could not be made bigger without making the table smaller, and
+        # neither could go on the other screen. What the split cost is not room
+        # but reach -- a second monitor is the map at the size the DEM deserves
+        # and the file open next to it, and a splitter cannot be dragged across a
+        # screen boundary.
+        self.panel_window = SatelliteWindow(
+            self._panel_title(), side, PANEL_WINDOW_PX, parent=self
+        )
+
+        self.group = WindowGroup(
+            self,
+            SETTINGS_NAME,
+            {"panel": self.panel_window},
+            placer=self._place_unremembered,
+        )
+
+        central = QtWidgets.QWidget()
+        map_layout = QtWidgets.QHBoxLayout(central)
         map_layout.setContentsMargins(0, 0, 0, 0)
         map_layout.addWidget(self.map_view, stretch=1)
         map_layout.addWidget(LegendControls(self.map_view, placement=legend))
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        split.addWidget(map_side)
-        split.addWidget(side)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        self.setCentralWidget(central)
 
-        self.setCentralWidget(split)
+        self._build_menu()
+        self._build_shortcuts()
+
+    def _build_menu(self):
+        """The way back to the panel, once it has been closed."""
+
+        menu = self.menuBar().addMenu("&Windows")
+
+        self.window_actions = self.group.actions_into(menu, {"panel": "&Structures"})
+
+        menu.addSeparator()
+
+        front = QtGui.QAction("Bring all to &front", self)
+        front.triggered.connect(self.group.raise_all)
+        menu.addAction(front)
+
+    def _build_shortcuts(self):
+        """
+        Save and Apply from either window, which takes saying so.
+
+        Both were shortcuts on their buttons, and a button's shortcut reaches
+        only the window the button is in -- which used to be the only window
+        there was. Left alone, Ctrl+S would have worked over the panel and done
+        nothing over the map, where half the work is: clicking anchors along a
+        trace and then writing the file is one motion, and it goes through the
+        map.
+
+        Given to both windows, rather than made `ApplicationShortcut` -- which
+        reaches every window of the application, including another tool's. The
+        section tool binds Ctrl+S to saving a section, and two tools open at once
+        would have had one ambiguous shortcut between them and Qt firing neither.
+        """
+
+        for label, shortcut, slot in (
+            ("Save", "Ctrl+S", self.save),
+            ("Apply", "Ctrl+Return", self.panel.apply_block),
+        ):
+            action = QtGui.QAction(label, self)
+            action.setShortcut(shortcut)
+            action.triggered.connect(slot)
+
+            self.addAction(action)
+            self.panel_window.addAction(action)
+
+    def _panel_title(self):
+        mark = "*" if self.document.dirty else ""
+
+        return f"gSurf - structures - {self.document.path.name}{mark}"
+
+    def say(self, message):
+        """One line of news, on the map's bar and in the panel's echo."""
+
+        self.statusBar().showMessage(message)
+
+        # Set as the tooltip too, because the label is one line in a 520-pixel
+        # panel and the longer messages here run past that. Clipped text with
+        # nothing behind it would be a sentence the panel silently shortens.
+        self.echo.setText(message)
+        self.echo.setToolTip(message)
+
+    def showEvent(self, event):
+        """The panel comes up with the map, the first time and only then."""
+
+        super().showEvent(event)
+
+        self.group.show_satellites()
+
+    def _place_unremembered(self, skip=()):
+        """
+        Map and panel side by side, filling the screen, the first time ever.
+
+        The group's own answer -- satellites down the right edge, and only on a
+        desktop 1600 wide -- is for a tool with three windows, where nothing
+        fits and the window manager's guess is as good as any. Here there are
+        two, and they do fit where that rule says they do not: on the 1366x741
+        of usable area this is written on, 840 of map beside 520 of panel is the
+        splitter's own arrangement made out of two windows. Which is the one
+        thing this change must not be worse than -- taking a pane out of a frame
+        should buy a second monitor, not cost a first one.
+
+        It places the map as well, which is why `build` asks whether this ran
+        before falling back to `fit_to_screen`: a map maximised over a panel
+        placed beside it would be the arrangement this exists to avoid.
+
+        Once. The first drag onto another screen is remembered, and after that
+        there is something remembered and this never runs again.
+        """
+
+        available = self.main_screen_area()
+        width = available.width() - PANEL_WIDTH_PX - TILE_GAP_PX
+
+        if width < MAP_FLOOR_PX:
+            self.tiled = False
+            return
+
+        height = available.height() - FRAME_ALLOWANCE_PX
+
+        if "panel" not in skip:
+            self.panel_window.setGeometry(
+                available.right() - PANEL_WIDTH_PX + 1,
+                available.top(),
+                PANEL_WIDTH_PX,
+                height,
+            )
+
+        if "map" not in skip:
+            self.setGeometry(available.left(), available.top(), width, height)
+
+        self.tiled = True
+
+    def main_screen_area(self):
+        """
+        The desktop the two windows are placed against.
+
+        A method rather than the one call it is, so that a check can stand a
+        narrow screen in front of it: the placement has two branches and a run
+        can only ever be on one screen, which off-screen is 800x800 -- narrow
+        enough that the branch a real laptop takes would never be exercised.
+        """
+
+        return self.screen().availableGeometry()
 
     def _draw_base_map(self):
         self.map_view.draw_base_map()
@@ -1591,7 +1779,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self.select(index)
         self._retitle()
-        self.statusBar().showMessage(
+        self.say(
             f"{self.document.dataset.structures[index].ident} applied; "
             f"the file is written by Save"
         )
@@ -1626,14 +1814,14 @@ class EditorWindow(QtWidgets.QMainWindow):
         extent = framing_for(self._drawn[index])
 
         if extent is None:
-            self.statusBar().showMessage(f"{structure.ident} has no path to frame on")
+            self.say(f"{structure.ident} has no path to frame on")
             return False
 
         self.map_view.restore_framing(extent)
 
         # The way back said out loud, because this is the one thing in the window
         # that moves the map without the hand having moved it.
-        self.statusBar().showMessage(
+        self.say(
             f"framed on {structure.ident}, {structure.length:.0f} m "
             f"-- the back arrow returns to where you were"
         )
@@ -1665,13 +1853,13 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         if anchor:
             if self.index is None:
-                self.statusBar().showMessage("nothing selected to anchor on")
+                self.say("nothing selected to anchor on")
                 return
 
             structure = self.document.dataset.structures[self.index]
 
             if len(structure.path) < 2:
-                self.statusBar().showMessage(
+                self.say(
                     f"{structure.ident} has no path to anchor on"
                 )
                 return
@@ -1685,7 +1873,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             self.picked.set_data([drawn[0]], [drawn[1]])
             self.map_view.blit()
 
-            self.statusBar().showMessage(
+            self.say(
                 f"@{snapped[0]:.2f},{snapped[1]:.2f} -- {structure.ident} at "
                 f"{s:.0f} m, {distance:.0f} m from where you clicked"
             )
@@ -1694,7 +1882,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         found = nearest_structure(self.document.dataset, *here, within=reach)
 
         if found is None:
-            self.statusBar().showMessage("no trace within reach of the click")
+            self.say("no trace within reach of the click")
             return
 
         index, s, _ = found
@@ -1715,7 +1903,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         structure = self.document.dataset.structures[index]
         plane, said = structure.attitude_at(s, self.panel.max_gap)
 
-        self.statusBar().showMessage(
+        self.say(
             f"{structure.ident} at {s:.0f} m of {structure.length:.0f} -- {said}"
             + ("" if plane is None else f", {plane}")
         )
@@ -1727,14 +1915,26 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self.setWindowTitle(f"gSurf - trace editor - {self.document.path.name}{mark}")
 
+        # The panel carries the file's name and the star as well, because Save is
+        # in the panel and so is the typing: a window that holds unwritten work
+        # should say so on its own frame, not only on the map's.
+        self.panel_window.setWindowTitle(self._panel_title())
+
     def save(self):
         """Writes the document to the file it came from."""
 
         return self._write(None)
 
     def save_as(self):
+        # Over the panel and not over the map: Qt puts a dialog on the screen its
+        # parent is on, and both of these are about the file -- which is what the
+        # panel window is. Asked for from the map by Ctrl+S, the answer still
+        # belongs beside the buttons that otherwise ask it.
         name, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save the file as", str(self.document.path), "gstruct (*.gstruct)"
+            self.panel_window,
+            "Save the file as",
+            str(self.document.path),
+            "gstruct (*.gstruct)",
         )
 
         return self._write(name) if name else False
@@ -1743,11 +1943,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         try:
             written = self.document.save(target)
         except OSError as err:
-            QtWidgets.QMessageBox.critical(self, "Not written", str(err))
+            QtWidgets.QMessageBox.critical(self.panel_window, "Not written", str(err))
             return False
 
         self._retitle()
-        self.statusBar().showMessage(f"written to {written}")
+        self.say(f"written to {written}")
 
         return True
 
@@ -1790,6 +1990,11 @@ class EditorWindow(QtWidgets.QMainWindow):
             if answer == QtWidgets.QMessageBox.StandardButton.Save and not self.save():
                 event.ignore()
                 return
+
+        # After the question and not before it: a close that was cancelled is not
+        # an arrangement anybody finished working in, and writing the geometry
+        # there would save the windows as they stood in front of a dialog.
+        self.group.save_geometry()
 
         super().closeEvent(event)
 
@@ -1841,6 +2046,13 @@ def build(session, chosen, legend="beside"):
 
     window = EditorWindow(session, document, legend=legend)
 
-    fit_to_screen(window, 1340, 880)
+    # The panel follows from the map's own `showEvent`, so whichever of these two
+    # shows it brings the group up with it. `tiled` is the third case: nothing
+    # remembered, but a screen the two fit across, so the map has a size already
+    # and `fit_to_screen` would undo it -- see `_place_unremembered`.
+    if window.group.restore_geometry() or window.tiled:
+        window.show()
+    else:
+        fit_to_screen(window, *MAP_WINDOW_PX)
 
     return window

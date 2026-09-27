@@ -59,6 +59,11 @@ rather than copying it:
   navigation, the blitting surface a tool draws its own artists on, and a
   legend whose entries are switches rather than captions — click one and what
   it names comes off the map.
+- `gsurf/windows.py` — a tool is one entry in the taskbar and several windows
+  on the screen: the map, and the panels given windows of their own so they can
+  go on another monitor. What the two tools that do this share is where the
+  windows were left, who brings them back, and the parent that keeps closing one
+  from taking the application down.
 - `gsurf/dem.py`, `gsurf/vectors.py`, `gsurf/convergence.py` — the DEM read by
   windows, the backdrop layers, and grid north against true north.
 - `gsurf/attitudes.py`, `gsurf/folds.py`, `gsurf/stereonet.py` — located
@@ -458,7 +463,9 @@ for sampling the topography, and the sampler does its own.
 records are top-level windows in their own right, so the section can be given a
 screen and the size a section wants rather than the strip a dock leaves it. They
 are parented to the map, which is what has Qt destroy them with the tool, and
-`Windows` on the map's menu bar brings back one that was closed. Beside the
+`Windows` on the map's menu bar brings back one that was closed. That
+arrangement is `gsurf/windows.py` now rather than this tool's own — the trace
+editor is the second to want it. Beside the
 panels stands a legend naming the units the bundle actually goes through, in the
 colours it draws them in — the same key as the map's, which is the point of
 handing the project's palette to the profiler — then the line categories it
@@ -723,6 +730,41 @@ be written `@16.27,39.92`, which is **472 m** from the point that was picked.
 Since the whole argument for snapping an anchor to the trace is that fifty
 metres of error would say something false about where somebody stood, writing
 four hundred is not a rounding, and half a tool that works is not worth opening.
+
+**The map is one window and the file is another.** They were one frame split
+down the middle, which meant the map could not be made bigger without making the
+table smaller and neither could be moved: a splitter cannot be dragged across a
+screen boundary. What the split cost was not room but reach — a second monitor
+is the map at the size a 5 m DEM deserves with the file open beside it. So the
+panel is a window of its own, the same `gsurf/windows.py` the section tool uses,
+parented to the map so that Qt destroys it with the tool and closing it cannot
+take the application down with the launcher hidden underneath. Closing it hides
+it; `Windows > Structures` on the map's menu brings it back, and the menu
+follows the window rather than the other way round, so a close from the title
+bar unticks its own box. Where the two were left is remembered per window.
+
+With nothing remembered they are laid side by side across the screen, which is
+the splitter's own arrangement made out of two windows: taking a pane out of a
+frame should buy a second monitor, not cost a first one. The section tool's rule
+— satellites down the right edge, and only on a desktop 1600 wide — is for three
+windows that fit nowhere, and on the 1366×741 of usable area this is written on
+it would have left a maximised map with a panel floating over it, half of it
+under the bottom edge. Two windows do fit there: 840 of map beside 520 of panel.
+What cannot be got right is the frame — right after `setGeometry` the title bar
+does not exist yet, the window manager not having reparented the window, so its
+thickness is allowed for at 40 px rather than measured, and erring high costs a
+strip of desktop instead of the bottom of a window.
+
+Two things had to be said out loud that a single window had not needed. Both
+shortcuts were their buttons' own, and a button's shortcut reaches only the
+window the button is in — so `Ctrl+S` would have worked over the panel and done
+nothing over the map, where half the work is: clicking anchors along a trace and
+then writing the file is one motion. They are now the window's actions, given to
+both windows rather than made application-wide, which would have collided with
+the section tool's own `Ctrl+S` the moment two tools were open. And the status
+bar is echoed under the panel, because which window the news belongs on depends
+on the news — the map reports what a click found, the panel what `Apply` and
+`Save` did — and both are read from the other window often enough to matter.
 
 **Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
 plane; the other 348 are mapped contacts nobody has read one off yet. So the
