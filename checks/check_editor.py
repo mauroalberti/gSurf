@@ -30,6 +30,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 REPO = Path(os.environ.get("GSURF_REPO", Path(__file__).resolve().parent.parent))
@@ -117,7 +118,7 @@ def changed_lines(before, after):
 
 
 def main():
-    from PyQt6 import QtWidgets
+    from PyQt6 import QtCore, QtWidgets
 
     import gstruct
     from gsurf.curation import (
@@ -364,20 +365,106 @@ def main():
         check("the box holds the block exactly as the document has it",
               window.panel.text.toPlainText() == window.document.text_of(0))
 
-        check("every structure is offered, not only the ones carrying a plane",
-              window.panel.chooser.count() == 4,
-              f"{window.panel.chooser.count()} offered")
+        # -- finding the one to open ---------------------------------------
+
+        print("\n-- the table --\n")
+
+        table = window.panel.table
+
+        check("every structure is a row, not only the ones carrying a plane",
+              table.rowCount() == 4, f"{table.rowCount()} row(s)")
+
+        # Qt starts a header's sort indicator on section 0 *descending*, so a
+        # table that enables sorting and fills comes out reversed and says
+        # nothing about it. This is the assertion that the indicator was set.
+        idents = [table.item(row, 0).text() for row in range(4)]
+
+        check("and the rows are in ident order, which Qt does not do by itself",
+              idents == ["F001", "F002", "F003", "F004"], str(idents))
+
+        check("`carries` is a plane having been read, not a span having been said",
+              tool.carries(alpha) and not tool.carries(_delta)
+              and len(_delta.spans) == 1,
+              f"delta: {len(_delta.spans)} span(s), "
+              f"{len(_delta.attitudes)} attitude(s)")
 
         window.panel.carrying.setChecked(True)
 
         # Delta drops out: a mapped contact nobody has read a plane off yet,
         # which is 348 of the 393 traces of the real fault layer. It is still
         # editable -- the filter shortens the list, it does not lock anything.
-        check("and the filter leaves the ones something was read on",
-              window.panel.chooser.count() == 3,
-              f"{window.panel.chooser.count()} carrying a plane")
+        shown = [row for row in range(4) if not table.isRowHidden(row)]
+
+        check("the filter leaves the ones something was read on, and counts them",
+              len(shown) == 3 and window.panel.shown.text() == "3 of 4",
+              window.panel.shown.text())
+
+        # The combo this replaced was rebuilt on every filter change and had to
+        # notice when what was open had dropped out of it. A hidden row is still
+        # the open row, so there is nothing to notice and nothing to get wrong.
+        check("and it hides rather than removes, so what is open stays open",
+              table.rowCount() == 4 and window.panel.index == 0
+              and table.index_of(table.currentRow()) == 0,
+              f"index {window.panel.index}")
 
         window.panel.carrying.setChecked(False)
+
+        # Lengths as numbers and not as text. 400, 500, 1000, 1000 sorts to
+        # "1000", "1000", "400", "500" the other way -- which is the order that
+        # hides the long faults at the top of the sort meant to find them.
+        table.sortItems(1, QtCore.Qt.SortOrder.AscendingOrder)
+        lengths = [int(table.item(row, 1).text()) for row in range(4)]
+
+        check("a length column sorts as numbers", lengths == sorted(lengths),
+              str(lengths))
+
+        check("and the structure being worked on survives the sort",
+              table.index_of(table.currentRow()) == window.panel.index == 0,
+              f"row {table.currentRow()} -> "
+              f"{table.index_of(table.currentRow())}")
+
+        table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)
+
+        # What the table says in one word, against the same computation done in
+        # metres of run rather than in samples. Two different arithmetics that
+        # have to agree about which class covers most of the trace.
+        kind, fraction = tool.holds_along(alpha, max_gap=250.0)
+        widths = Counter()
+
+        for s0, s1, said_kind, _ in tool.runs_of(
+            provenance_of(alpha, samples=tool.HOLDS_SAMPLES, max_gap=250.0)
+        ):
+            widths[said_kind] += s1 - s0
+
+        check("the table's one word is the class covering most of the trace",
+              kind == widths.most_common(1)[0][0],
+              f"{kind} {fraction:.0%}, against "
+              f"{widths.most_common(1)[0][0]} by metre")
+
+        check("and a fit off a straight trace holds nothing along any of it",
+              tool.holds_along(beta, max_gap=250.0) == ("assente", 1.0),
+              str(tool.holds_along(beta, max_gap=250.0)))
+
+        # -- and on the map ------------------------------------------------
+
+        check("the map draws the ones carrying a plane apart from the ones not",
+              len(window.traces[True].get_segments()) == 3
+              and len(window.traces[False].get_segments()) == 1,
+              f"{len(window.traces[True].get_segments())} carrying, "
+              f"{len(window.traces[False].get_segments())} bare")
+
+        # This tool asked for its legend handles and never asked for the legend,
+        # so the four it built were made on a rebuild that never came: the window
+        # opened with no legend until somebody moved the placement combo. Two
+        # weights on the map are worth nothing without the entry naming them.
+        entries = (
+            [] if window.map_view.legend is None
+            else [text.get_text() for text in window.map_view.legend.get_texts()]
+        )
+
+        check("and the legend is built, and says which weight is which",
+              "carrying a plane" in entries and "mapped, nothing read" in entries,
+              str(entries))
 
         # A click on the northward trace, half way up it.
         window.pick(603000.0, 4420500.0)
@@ -427,6 +514,112 @@ def main():
         check("the map has the rejected stretch to draw now",
               len(window.refused.get_xdata()) > 0,
               f"{len(window.refused.get_xdata())} point(s)")
+
+        # Where the highlight is, and not only that there is one. Both of these
+        # read `[y for y, _ in drawn]` from the day the tool was written -- which
+        # binds the *first* of the pair, whatever the name -- so the selected
+        # trace and the dots marking the measurements were drawn at
+        # (easting, easting): off the map, on a diagonal no extent here covers.
+        # Selecting a trace worked perfectly and showed nothing, and a count of
+        # points was true the whole time.
+        highlight = list(
+            zip(window.highlight.get_xdata(), window.highlight.get_ydata())
+        )
+        trace = window.document.dataset.structures[window.index].path
+
+        check("and the highlight is drawn along the trace, not beside it",
+              [(round(x, 2), round(y, 2)) for x, y in highlight]
+              == [(round(x, 2), round(y, 2)) for x, y in trace],
+              f"{highlight[:1]} against {trace[:1]}")
+
+        marks = list(zip(window.marks.get_xdata(), window.marks.get_ydata()))
+        gamma_at = point_on(trace, gamma.attitudes[0].s)
+
+        check("and the measured dot sits where the plane was measured",
+              len(marks) == 1
+              and abs(marks[0][0] - gamma_at[0]) < 0.01
+              and abs(marks[0][1] - gamma_at[1]) < 0.01,
+              f"{marks} against {[gamma_at]}")
+
+        # -- where the view is ---------------------------------------------
+
+        print("\n-- the framing --\n")
+
+        # Gamma runs 1000 m due north from (603000, 4420000), so the margin comes
+        # to 250 m: a quarter of the longer side, which for a trace with no width
+        # is the only side there is.
+        framed = tool.framing_for(gamma.path)
+
+        check("a framing has the trace inside it with room around it",
+              framed == [602750.0, 603250.0, 4419750.0, 4421250.0], str(framed))
+
+        # The floor, which is what a polyline adds to `sections.framing_for`. The
+        # shortest fault in `merid_faults` is 12 m against a median of 1048, and a
+        # window fitted to that one says nothing about where you are.
+        short = tool.framing_for([(0.0, 0.0), (12.0, 0.0)])
+
+        check("and a very short one gets ground around it, not a close-up",
+              abs((short[1] - short[0]) - tool.FRAME_MIN_SPAN_M) < 1e-6,
+              f"{short[1] - short[0]:.0f} m across")
+
+        whole = window.map_view.framing
+
+        # What a click on the map must not do. You are already looking at what you
+        # clicked, and a view that jumped to it would be taking the ground around
+        # it away as the reward for having found it.
+        window.pick(X0 + 300.0, Y0)
+
+        check("a click on the map selects without moving the view",
+              window.index == 0 and window.map_view.framing == whole
+              and not window._frame_timer.isActive(),
+              f"index {window.index}")
+
+        def pick_row(index):
+            """What a click on a row of the table does, without a mouse."""
+
+            table.setCurrentCell(table._row_of(index), 0)
+
+        pick_row(2)
+
+        check("picking a row selects it and asks for the view to follow",
+              window.index == 2 and window._framing == 2
+              and window._frame_timer.isActive(),
+              f"index {window.index}, framing on {window._framing}")
+
+        # Asked for and not done: arrow-keying down the table is a row a
+        # keystroke, and each framing is a full redraw plus a hillshade reread.
+        check("and asking is not doing, so a run of them costs one move",
+              window.map_view.framing == whole)
+
+        window.frame_now()
+        moved = window.map_view.framing
+
+        check("and when it moves, the trace is in the view and the view is smaller",
+              moved[0] < 603000.0 < moved[1]
+              and moved[2] < 4420000.0 and 4421000.0 < moved[3]
+              and (moved[1] - moved[0]) < (whole[1] - whole[0]),
+              f"{(moved[1] - moved[0]) / 1000.0:.1f} km across, "
+              f"was {(whole[1] - whole[0]) / 1000.0:.1f}")
+
+        # The way back. `restore_framing` pushes onto the navigation stack over
+        # the home the base map anchored, so the bar's back arrow is the way out
+        # of a framing this made -- the same as out of a zoom made by hand.
+        window.map_view.toolbar.back()
+
+        check("the bar's back arrow is the way out of a framing",
+              [round(v) for v in window.map_view.framing]
+              == [round(v) for v in whole],
+              str([round(v) for v in window.map_view.framing]))
+
+        window.panel.frame_wanted.setChecked(False)
+        pick_row(0)
+
+        check("and with the box unticked a row picked leaves the view alone",
+              window.index == 0 and not window._frame_timer.isActive(),
+              f"index {window.index}, framing on {window._framing}")
+
+        window.panel.frame_wanted.setChecked(True)
+        window.select(2)
 
         # -- and the one gesture that could throw work away ----------------
 

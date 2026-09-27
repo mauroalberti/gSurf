@@ -1267,9 +1267,9 @@ def main():
         session = Session.open(frame_layers=[spec])
         window = editor.build(session, {"traces": spec})
 
-        check("the editor opens it, with every structure on the chooser",
-              window is not None and window.panel.chooser.count() == 7,
-              f"{window.panel.chooser.count()} items" if window else "no window")
+        check("the editor opens it, with every structure a row of the table",
+              window is not None and window.panel.table.rowCount() == 7,
+              f"{window.panel.table.rowCount()} row(s)" if window else "no window")
 
         if window is not None:
             window.select(0)

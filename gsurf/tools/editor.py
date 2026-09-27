@@ -18,6 +18,15 @@ place; the band at the top of the panel asks it everywhere. On F0055 of
 over for the last 354, with the dip stepping from 31 to 35 where they meet. That
 is one line of the file beating another, and neither line says so.
 
+**Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
+plane; the other 348 are mapped contacts nobody has read one off yet. So the
+first question this window has to answer is which forty-five, and it answers it
+twice over: the table sorts on what is written, and the map draws a trace
+carrying something firmly and one carrying nothing faintly. Both go through
+`carries`, so the two can never disagree. A row picked in the table then brings
+its trace into view -- the one thing a highlight cannot do is say where to look,
+and on an AOI-wide framing a 1 km fault is three pixels of orange somewhere.
+
 **What it does not rewrite.** Saving replaces the lines of the structure that
 was edited and leaves every other byte alone. Not fastidiousness -- measured:
 `curation.gstruct` through a load and a dump comes back without the ten lines of
@@ -43,6 +52,8 @@ so there is nothing worth hiding and nothing hidden.
 """
 
 from __future__ import annotations
+
+from collections import Counter
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -111,6 +122,34 @@ SPAN_TINT = "#6a7f95"
 # where it changes exactly is in the file, as the anchor somebody wrote.
 SAMPLES = 400
 
+# And what the table's one-word summary of the same computation is sampled at.
+# Far coarser, because it is 393 sweeps and not one: at this rate the whole
+# column is 39 ms, against 250 at the band's own rate. What it buys is a
+# fraction good to a percent and a half, which is the precision of a word.
+HOLDS_SAMPLES = 64
+
+# How a trace is drawn, by whether anything has been read off it. The difference
+# is weight and darkness rather than hue, because every hue on this map already
+# means something -- orange is the selection, red a refusal, green a measurement
+# -- and a trace carrying only a compass reading is not a fit and must not be
+# painted as one. It also puts the 348 that carry nothing where they belong:
+# still on the map, no longer competing for the eye.
+CARRYING_STYLE = dict(colors="#1a1a1a", linewidths=1.5)
+BARE_STYLE = dict(colors="#8a8a8a", linewidths=0.7)
+
+# Room around a trace a made framing leaves, and the smallest window it will
+# make. Both are in the docstring of `framing_for`, which is where the numbers
+# they are measured against are.
+FRAME_MARGIN = 0.25
+FRAME_MIN_SPAN_M = 1200.0
+
+# How long the framing waits before it moves. Arrow-keying down the table is one
+# selection per keystroke, and each framing is a full redraw plus a hillshade
+# reread -- tens to hundreds of milliseconds, paid for a view nobody looked at.
+# Deferred like this a run of them costs one move, which is the same bargain
+# `MapView.schedule_shade_refresh` strikes and for the same reason.
+FRAME_DELAY_MS = 140
+
 # How near the cursor has to come, in screen pixels, for a click to have been
 # aimed at a trace. In pixels and not in metres so that it means the same thing
 # at every zoom.
@@ -136,8 +175,81 @@ TEMPLATES = (
 
 PANEL_WIDTH_PX = 520
 
+# How much of the panel the table opens with, and the least it can be dragged
+# to. The opening size is about eight rows, which is enough of a list to sort and
+# read; the floor is four, which is enough to see that sorting did something.
+TABLE_OPENING_PX = 240
+TABLE_FLOOR_PX = 140
+
 # Above this fraction of the trace, a bar has room for its own word in it.
 LABEL_FRACTION = 0.14
+
+
+def carries(structure):
+    """
+    Whether anything has been read off this trace: a measurement, or a fit.
+
+    The one predicate the table's filter, the table's sorting and the map's two
+    weights all go through, so that what the list calls carrying and what the map
+    draws firmly are the same forty-five faults. A span is not counted: every one
+    of the 393 has one, most of them saying `certainty` or `exposure`, and none
+    of that is a plane.
+    """
+
+    return bool(structure.attitudes or structure.fits)
+
+
+def holds_along(structure, max_gap=DEFAULT_MAX_GAP, samples=HOLDS_SAMPLES):
+    """
+    The provenance covering most of the trace, as `(kind, fraction of it)`.
+
+    `provenance_of` reduced to one word, which is what fits in a cell. It is a
+    summary and reads as one: a fault measured over its first three hundred
+    metres and fitted over the remaining three thousand says `fit`, because that
+    is what most of it is. Where the answer changes is the band, and this column
+    is how you find the trace worth opening the band on.
+
+    `(None, 0.0)` where there is no ruler to sample along -- a structure with one
+    vertex, or none.
+    """
+
+    sampled = provenance_of(structure, samples=samples, max_gap=max_gap)
+
+    if not sampled:
+        return None, 0.0
+
+    kind, count = Counter(kind for _, _, _, kind in sampled).most_common(1)[0]
+
+    return kind, count / len(sampled)
+
+
+def framing_for(path, margin=FRAME_MARGIN, floor=FRAME_MIN_SPAN_M):
+    """
+    A view with one trace across the middle of it, as `extent` is ordered.
+
+    The margin comes off the longer side and not off each one: a fault running
+    due north has no width to take a fraction of, and a fraction of nothing is
+    nothing. That is the reasoning `sections.framing_for` is built on; this is
+    the same thing for a polyline rather than a two-point trace, and the floor is
+    what the polyline adds to it.
+
+    The floor is there because these lengths run over three orders of magnitude.
+    The shortest fault in `merid_faults` is 12 m against a median of 1048 and a
+    longest of 29641, and a window fitted to that short one is a screenful of
+    hillshade with nothing in it to say where you are standing.
+    """
+
+    if not path:
+        return None
+
+    xs = [x for x, _ in path]
+    ys = [y for _, y in path]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+
+    span = max(x1 - x0, y1 - y0)
+    room = max(margin * span, (floor - span) / 2.0, 0.0)
+
+    return [x0 - room, x1 + room, y0 - room, y1 + room]
 
 
 def runs_of(sampled):
@@ -163,6 +275,281 @@ def runs_of(sampled):
         runs.append([s, s, kind, said])
 
     return [tuple(run) for run in runs]
+
+
+class StructureTable(QtWidgets.QTableWidget):
+    """
+    Every structure in the file as a row: what is written on it, and what holds.
+
+    This replaces a combo box that could be typed into, and that was all it could
+    do. What was missing is the two things a list is for. Sorting: the faults
+    carrying a plane are 45 of 393, and the way to them is a click on the `att`
+    header, not a scroll. And a selection the map shares -- picking a row here and
+    clicking a trace there are now one gesture, reported twice.
+
+    Rows are never removed, only hidden, which is why the filter can no longer
+    take away the structure being worked on. The combo was rebuilt on every
+    filter change and had to notice when what was open had dropped out of it; a
+    hidden row is still the open row, and there is nothing to notice.
+
+    The sorting is what makes a row's position worth nothing, so the structure's
+    index in the document travels in the ident cell rather than being the row
+    number. `index_of` and `_row_of` are the two directions of that, and every
+    write goes through `_hold_open` because a sort moves the current row out from
+    under whatever the panel has on screen.
+    """
+
+    COLUMNS = ("ident", "m", "att", "fit", "span", "holds")
+
+    chosen = QtCore.pyqtSignal(int)
+    framing_asked = QtCore.pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(0, len(self.COLUMNS), parent)
+
+        self._filling = False
+        self._open = None
+
+        self.setHorizontalHeaderLabels(self.COLUMNS)
+        self.verticalHeader().setVisible(False)
+        self.setAlternatingRowColors(True)
+        self.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.setSortingEnabled(True)
+        self.setToolTip(
+            "Click a header to sort: `att` and `fit` are what has been read off "
+            "the trace, `span` what has been said about it, `holds` the class "
+            "covering most of it. Double-click a row to bring its trace into "
+            "view."
+        )
+
+        # `Interactive` and widths fitted once per fill, rather than
+        # `ResizeToContents` -- which is what the section panel's table uses and
+        # what this one used first. Measured on the 393x6 cells of `merid_faults`,
+        # inside this window rather than on a table by itself: rewriting them
+        # costs 7.9 ms with this mode and 25.7 *seconds* with the header fitting
+        # to contents, because that mode reflows every column on every cell
+        # written. A table on its own does not show it -- with no laid-out
+        # viewport the reflow never runs -- which is why the number above is from
+        # the real window.
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
+
+        # Said rather than left to Qt, which starts a header's indicator on
+        # section 0 *descending* -- measured, not assumed. Enabling the sorting
+        # then sorts by that, and a table filled in file order came out reversed:
+        # F0395 on the first row, F0000 on the last, and nothing on screen saying
+        # so. Ident ascending is the order the file is written in for anything the
+        # import produced, which is what a reader opening it expects to see.
+        header.setSortIndicator(0, QtCore.Qt.SortOrder.AscendingOrder)
+
+        self.currentCellChanged.connect(self._on_current)
+        self.doubleClicked.connect(
+            lambda index: self.framing_asked.emit(self.index_of(index.row()))
+        )
+
+    # -- rows and indices --------------------------------------------------
+
+    def index_of(self, row):
+        """Which structure the row stands for, or None off the end."""
+
+        item = self.item(row, 0)
+
+        return None if item is None else item.data(QtCore.Qt.ItemDataRole.UserRole)
+
+    def _row_of(self, index):
+        """
+        Which row a structure is on now, or -1.
+
+        A scan and not a dictionary: 393 rows is microseconds, and a dictionary
+        would have to be rebuilt on every sort by somebody who remembered to.
+        """
+
+        for row in range(self.rowCount()):
+            if self.index_of(row) == index:
+                return row
+
+        return -1
+
+    def point_at(self, index):
+        """
+        Puts the current row on a structure without saying anybody asked.
+
+        The counterpart of the map holding its highlight: when the panel refuses
+        to leave a block that was typed and not applied, this is what puts the
+        table back on the one still on screen.
+        """
+
+        self._open = index
+        row = self._row_of(index)
+
+        if row < 0 or row == self.currentRow():
+            return
+
+        self._filling = True
+        self.setCurrentCell(row, 0)
+        self._filling = False
+
+        self.scrollToItem(
+            self.item(row, 0), QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible
+        )
+
+    def _on_current(self, row, _column, previous, _previous_column):
+        if self._filling or row < 0 or row == previous:
+            return
+
+        index = self.index_of(row)
+
+        if index is not None:
+            self.chosen.emit(index)
+
+    # -- filling -----------------------------------------------------------
+
+    def fill(self, structures, max_gap=DEFAULT_MAX_GAP):
+        """Every structure as a row, in the order the file has them."""
+
+        with self._hold_open():
+            self.setRowCount(len(structures))
+
+            for index, structure in enumerate(structures):
+                self._write_row(index, index, structure, max_gap)
+
+        # Once, here, and not on the incremental writers: a column that resized
+        # every time a row was rewritten would shift under the hand, and the
+        # widths a whole file fits in are the right ones for one row of it.
+        self.resizeColumnsToContents()
+
+    def update_row(self, index, structure, max_gap=DEFAULT_MAX_GAP):
+        """One row again, for a block that has just been applied."""
+
+        row = self._row_of(index)
+
+        if row < 0:
+            return
+
+        with self._hold_open():
+            self._write_row(row, index, structure, max_gap)
+
+    def refresh_holds(self, structures, max_gap=DEFAULT_MAX_GAP):
+        """
+        The `holds` column again, for a reach that has just changed.
+
+        Only that column: the reach decides what holds and says nothing about
+        what is written, so the tallies beside it are not in question.
+        """
+
+        with self._hold_open():
+            for row in range(self.rowCount()):
+                index = self.index_of(row)
+
+                if index is not None:
+                    self._holds(row, structures[index], max_gap)
+
+    def set_filter(self, wanted, carrying_only, structures):
+        """Hides the rows that do not match, and says how many are left."""
+
+        wanted = (wanted or "").strip().lower()
+        shown = 0
+
+        for row in range(self.rowCount()):
+            index = self.index_of(row)
+            structure = None if index is None else structures[index]
+
+            hidden = structure is None or (
+                (carrying_only and not carries(structure))
+                or bool(wanted and wanted not in (structure.ident or "").lower())
+            )
+
+            self.setRowHidden(row, hidden)
+            shown += not hidden
+
+        return shown
+
+    # -- one row -----------------------------------------------------------
+
+    def _hold_open(self):
+        """
+        Writes cells with the sorting off, and puts the current row back after.
+
+        Both halves are needed. Writing into a sorted table reorders it as you
+        write, so a fill would be laying rows down on ground that moves; and
+        turning the sorting back on sorts, which moves the current row out from
+        under whatever the panel has on screen -- the table would end up pointing
+        at a different structure from the one whose text is in the box.
+        """
+
+        table = self
+
+        class Held:
+            def __enter__(self):
+                table._filling = True
+                table.setSortingEnabled(False)
+
+            def __exit__(self, *_):
+                table.setSortingEnabled(True)
+                table._filling = False
+
+                if table._open is not None:
+                    table.point_at(table._open)
+
+        return Held()
+
+    def _write_row(self, row, index, structure, max_gap):
+        ident = QtWidgets.QTableWidgetItem(structure.ident or "")
+        ident.setData(QtCore.Qt.ItemDataRole.UserRole, index)
+        self.setItem(row, 0, ident)
+
+        self._number(row, 1, round(structure.length))
+        self._number(row, 2, len(structure.attitudes))
+        self._number(row, 3, len(structure.fits))
+        self._number(row, 4, len(structure.spans))
+        self._holds(row, structure, max_gap)
+
+    def _number(self, row, column, value):
+        """
+        A count or a length, sorted as the number it is.
+
+        Set as text it would sort as text, and a column reading 9, 84, 1048 would
+        come out 1048, 84, 9 -- which is the order that hides the long faults at
+        the top of the very sort meant to find them.
+        """
+
+        item = QtWidgets.QTableWidgetItem()
+        item.setData(QtCore.Qt.ItemDataRole.DisplayRole, int(value))
+        item.setTextAlignment(
+            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
+
+        self.setItem(row, column, item)
+
+    def _holds(self, row, structure, max_gap):
+        """
+        What holds over most of the trace, tinted as the band tints it.
+
+        The same colours and the same white-on-dark rule as `ProvenanceView._band`,
+        so that the column and the picture under it are read as the one thing they
+        are, and a row of `assente` grey is a trace with nothing on it at a glance.
+        """
+
+        kind, fraction = holds_along(structure, max_gap)
+        item = QtWidgets.QTableWidgetItem(
+            "" if kind is None else f"{kind} {fraction:.0%}"
+        )
+
+        if kind is not None:
+            item.setBackground(QtGui.QColor(PROVENANCE_TINT.get(kind, "#cccccc")))
+            item.setForeground(
+                QtGui.QColor("#6a6a6a" if kind == "assente" else "white")
+            )
+
+        self.setItem(row, 5, item)
 
 
 class ProvenanceView(QtWidgets.QWidget):
@@ -422,24 +809,32 @@ class EditorPanel(QtWidgets.QWidget):
     selected = QtCore.pyqtSignal(int)
     applied = QtCore.pyqtSignal(int)
 
+    # Asked of the window, which is the only thing here that knows what a view
+    # is. Separate from `selected` because the two are not the same question: a
+    # click on the map selects without moving the view, and it would be a poor
+    # map that jumped to the thing you had just pointed at.
+    framing_asked = QtCore.pyqtSignal(int)
+
     def __init__(self, document, parent=None):
         super().__init__(parent)
 
         self.document = document
         self.index = None
-        self._filling = False
 
-        self.chooser = QtWidgets.QComboBox()
-        self.chooser.setEditable(True)
-        self.chooser.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self.chooser.completer().setCompletionMode(
-            QtWidgets.QCompleter.CompletionMode.PopupCompletion
+        self.table = StructureTable()
+        self.table.setMinimumHeight(TABLE_FLOOR_PX)
+        self.table.chosen.connect(self._chosen)
+        self.table.framing_asked.connect(self._asked_framing)
+
+        self.filter = QtWidgets.QLineEdit()
+        self.filter.setPlaceholderText("find an ident")
+        self.filter.setClearButtonEnabled(True)
+        self.filter.setToolTip(
+            "Narrows the table to the idents containing what is typed. It hides "
+            "rows rather than removing them, so the structure being worked on "
+            "stays the one being worked on."
         )
-        self.chooser.setToolTip(
-            "Type an ident to find it. The tally is what the structure carries: "
-            "attitudes, fits, spans."
-        )
-        self.chooser.currentIndexChanged.connect(self._chosen)
+        self.filter.textChanged.connect(lambda _: self._apply_filter())
 
         self.carrying = QtWidgets.QCheckBox("only the ones carrying a plane")
         self.carrying.setToolTip(
@@ -447,7 +842,18 @@ class EditorPanel(QtWidgets.QWidget):
             "The rest are mapped contacts nobody has read a plane off yet, and "
             "they are still editable -- this only shortens the list."
         )
-        self.carrying.toggled.connect(lambda _: self._fill_chooser())
+        self.carrying.toggled.connect(lambda _: self._apply_filter())
+
+        self.shown = QtWidgets.QLabel()
+        self.shown.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.frame_wanted = QtWidgets.QCheckBox("frame it")
+        self.frame_wanted.setChecked(True)
+        self.frame_wanted.setToolTip(
+            "Bring the trace into view when it is picked from the table. A click "
+            "on the map never moves the view -- you are already looking at what "
+            "you clicked. A double-click on a row frames it whatever this says."
+        )
 
         self.gap_spin = QtWidgets.QDoubleSpinBox()
         self.gap_spin.setRange(*MAX_GAP_RANGE)
@@ -459,7 +865,7 @@ class EditorPanel(QtWidgets.QWidget):
             "same judgement the section panel's reach makes, from the other "
             "end: past this the fit under it takes over."
         )
-        self.gap_spin.valueChanged.connect(lambda _: self._redraw_view())
+        self.gap_spin.valueChanged.connect(lambda _: self._reach_changed())
 
         self.view = ProvenanceView()
 
@@ -505,85 +911,119 @@ class EditorPanel(QtWidgets.QWidget):
         buttons.addWidget(self.revert_button)
 
         heading = QtWidgets.QHBoxLayout()
-        heading.addWidget(self.chooser, stretch=1)
+        heading.addWidget(self.filter, stretch=1)
         heading.addWidget(self.carrying)
+        heading.addWidget(self.frame_wanted)
 
         gap = QtWidgets.QHBoxLayout()
         gap.addWidget(QtWidgets.QLabel("a measurement answers for"))
         gap.addWidget(self.gap_spin)
         gap.addStretch(1)
+        gap.addWidget(self.shown)
+
+        finding = QtWidgets.QWidget()
+        finding_layout = QtWidgets.QVBoxLayout(finding)
+        finding_layout.setContentsMargins(0, 0, 0, 0)
+        finding_layout.setSpacing(4)
+        finding_layout.addLayout(heading)
+        finding_layout.addWidget(self.table, stretch=1)
+
+        working = QtWidgets.QWidget()
+        working_layout = QtWidgets.QVBoxLayout(working)
+        working_layout.setContentsMargins(0, 0, 0, 0)
+        working_layout.addLayout(gap)
+        working_layout.addWidget(self.view, stretch=3)
+        working_layout.addWidget(self.text, stretch=2)
+        working_layout.addWidget(self.problem)
+        working_layout.addLayout(buttons)
+
+        # In a splitter because the two halves are wanted at different times and
+        # the panel is not tall enough for both at their best: hunting for the
+        # trace worth opening wants rows, and working on the one that is open
+        # wants the band and the box. Neither is allowed to collapse to nothing --
+        # a table dragged shut has no way back that looks like one.
+        #
+        # Opened at sizes rather than at stretch factors, which is what this had
+        # first: a stretch factor divides what is left over after the size hints
+        # are met, and a table's hint asks for almost nothing -- the panel came up
+        # with 70 pixels of table in it, which is one row, which is a list you
+        # cannot read to find anything.
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        split.addWidget(finding)
+        split.addWidget(working)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 3)
+        split.setChildrenCollapsible(False)
+        split.setSizes([TABLE_OPENING_PX, 3 * TABLE_OPENING_PX])
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.addLayout(heading)
-        layout.addLayout(gap)
-        layout.addWidget(self.view, stretch=3)
-        layout.addWidget(self.text, stretch=2)
-        layout.addWidget(self.problem)
-        layout.addLayout(buttons)
+        layout.addWidget(split)
 
-        self._fill_chooser()
+        self.table.fill(self.document.dataset.structures, self.max_gap)
+        self._apply_filter()
+
+        if self.document.dataset.structures:
+            # Pointed at rather than chosen: the window emits nothing yet -- it
+            # has not connected to this panel -- and it opens the first structure
+            # itself once it has a map to draw it on.
+            self.show_index(0)
 
     # -- the list ----------------------------------------------------------
 
-    def _tally(self, structure):
-        """What a structure carries, short enough to sit in a combo entry."""
+    def _apply_filter(self):
+        """
+        Narrows the table, and says how much of the file is on show.
 
-        counts = (
-            (len(structure.attitudes), "att"),
-            (len(structure.fits), "fit"),
-            (len(structure.spans), "span"),
+        The count is the point of the label: `45 of 393` is the sentence the
+        `carrying` box exists to produce, and without it the box looks like it
+        has thrown most of the file away.
+        """
+
+        structures = self.document.dataset.structures
+        shown = self.table.set_filter(
+            self.filter.text(), self.carrying.isChecked(), structures
         )
-        said = ", ".join(f"{n} {word}" for n, word in counts if n)
 
-        return f"{structure.ident}   {said}" if said else structure.ident
+        self.shown.setText(f"{shown} of {len(structures)}")
 
-    def _fill_chooser(self):
-        held = self.index
-
-        self._filling = True
-        self.chooser.clear()
-
-        for index, structure in enumerate(self.document.dataset.structures):
-            if self.carrying.isChecked() and not (structure.attitudes or structure.fits):
-                continue
-
-            self.chooser.addItem(self._tally(structure), index)
-
-        at = self.chooser.findData(held)
-        self.chooser.setCurrentIndex(max(at, 0))
-        self._filling = False
-
-        # Only where the filter has taken away what was open. Rebuilding the
-        # list is not a reason to change which structure is being worked on, and
-        # the row it sits on moving is not a change of structure.
-        if at < 0 and self.chooser.count():
-            self._chosen(0)
-
-    def _chosen(self, _row):
-        if self._filling:
-            return
-
-        index = self.chooser.currentData()
-
-        if index is None:
-            return
+    def _chosen(self, index):
+        """A row picked in the table, which the panel may refuse to leave."""
 
         if not self.show_index(index):
-            self._point_combo_at(self.index)
+            self.table.point_at(self.index)
             return
 
         self.selected.emit(index)
 
-    def _point_combo_at(self, index):
-        """Puts the combo back on whatever is actually on screen."""
+        if self.frame_wanted.isChecked():
+            self.framing_asked.emit(index)
 
-        at = self.chooser.findData(index)
+    def _asked_framing(self, index):
+        """
+        A double-click, which frames whatever the box says.
 
-        if at >= 0 and at != self.chooser.currentIndex():
-            self._filling = True
-            self.chooser.setCurrentIndex(at)
-            self._filling = False
+        Only on the row that is already open, which after a double-click is
+        always this one: the first of the two clicks has been through `_chosen`
+        already. A refusal there leaves `index` where it was, and this then does
+        nothing -- which is right, because the trace worth looking at is still
+        the one whose text is in the box.
+        """
+
+        if index == self.index:
+            self.framing_asked.emit(index)
+
+    def _reach_changed(self):
+        """
+        The dial: the picture, and the one column that reads from the same number.
+
+        Not the tallies beside it. How far a measurement answers for decides what
+        holds and says nothing about what is written, and a dial that rewrote the
+        counts would be claiming otherwise.
+        """
+
+        self._redraw_view()
+        self.table.refresh_holds(self.document.dataset.structures, self.max_gap)
 
     # -- one structure -----------------------------------------------------
 
@@ -595,7 +1035,7 @@ class EditorPanel(QtWidgets.QWidget):
         asked to: a block typed and not applied lives only in the box, and a
         click on another trace would have redrawn over it. So leaving is a
         question, and the caller has to be able to hear no -- the map holds its
-        highlight where it was, and the combo goes back to the row it was on.
+        highlight where it was, and the table goes back to the row it was on.
         """
 
         if index == self.index:
@@ -606,7 +1046,7 @@ class EditorPanel(QtWidgets.QWidget):
 
         self.index = index
 
-        self._point_combo_at(index)
+        self.table.point_at(index)
         self._redraw()
 
         return True
@@ -694,6 +1134,15 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setPlainText(self.document.text_of(self.index))
         self._park_cursor()
         self._redraw_view()
+
+        # The row as well: an applied block can have added the first attitude to
+        # a trace, which changes its tally, what holds along it, and whether the
+        # `carrying` filter keeps it -- and the filter is re-run for that last
+        # one, or a trace would stay hidden from a list it now belongs in.
+        self.table.update_row(
+            self.index, self.document.dataset.structures[self.index], self.max_gap
+        )
+        self._apply_filter()
 
         self.applied.emit(self.index)
 
@@ -808,6 +1257,12 @@ class EditorWindow(QtWidgets.QMainWindow):
         # file's projection and stays there; this is the other side of that.
         self._drawn = [self.on_map(st.path) for st in document.dataset.structures]
 
+        # Which trace the framing is on its way to, and the timer it waits on.
+        self._framing = None
+        self._frame_timer = QtCore.QTimer(self)
+        self._frame_timer.setSingleShot(True)
+        self._frame_timer.timeout.connect(lambda: self.frame_now())
+
         self._build_ui(legend)
         self._draw_base_map()
 
@@ -876,6 +1331,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.panel = EditorPanel(self.document)
         self.panel.selected.connect(self.select)
         self.panel.applied.connect(self._on_applied)
+        self.panel.framing_asked.connect(self.frame_on)
 
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setShortcut("Ctrl+S")
@@ -919,13 +1375,25 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         axes = self.map_view.axes
 
-        # A collection and not 393 lines: they never change, so they belong in
-        # the background the blitting is cut from, and one artist is one draw.
-        self.traces = LineCollection(
-            [path for path in self._drawn if len(path) > 1],
-            colors="#555555", linewidths=0.8, zorder=3,
-        )
-        axes.add_collection(self.traces)
+        # Two collections and not 393 lines: they change only when a block is
+        # applied, so they belong in the background the blitting is cut from, and
+        # one artist is one draw.
+        #
+        # Two rather than one because which forty-five carry a plane is the
+        # question the window opens on, and a map that cannot answer it leaves the
+        # table to answer it alone -- you would be able to list them and not to
+        # aim at one. The carrying ones go on top, so that where the two cross it
+        # is the one with something written on it that stays whole.
+        self.traces = {
+            carrying: axes.add_collection(
+                LineCollection(
+                    self._segments(carrying),
+                    zorder=3.5 if carrying else 3.0,
+                    **(CARRYING_STYLE if carrying else BARE_STYLE),
+                )
+            )
+            for carrying in (False, True)
+        }
 
         self.highlight = self.map_view.add_animated(
             axes.add_line(Line2D([], [], color="#ff7f0e", lw=2.6, zorder=6))
@@ -952,11 +1420,62 @@ class EditorWindow(QtWidgets.QMainWindow):
             )
         )
 
+        # Built here and not left to the placement combo, which is what used to
+        # happen: the other three tools ask for the legend once the map is drawn
+        # and this one never did, so its four entries were made on every rebuild
+        # and there was no rebuild -- `legend_handles` answered and nothing
+        # called it. The window opened with no legend at all until somebody moved
+        # the combo, and a colour nobody can look up is a colour that says nothing.
+        self.map_view.refresh_legend()
         self.map_view.anchor_home()
 
-    def _legend_handles(self):
+    def _segments(self, carrying):
+        """The drawn paths of the traces on one side of `carries`."""
+
         return [
-            Line2D([], [], color="#555555", lw=0.8, label="traces in the file"),
+            path
+            for path, structure in zip(self._drawn, self.document.dataset.structures)
+            if len(path) > 1 and carries(structure) is carrying
+        ]
+
+    def _reset_traces(self):
+        """
+        Hands both collections their geometry again.
+
+        Both, and not the one that was edited: applying a block can add the first
+        attitude to a trace, and the trace then belongs to the other collection.
+        A pale line that has just been given a plane has to stop being pale, or
+        the map is answering last minute's question.
+        """
+
+        for carrying, collection in self.traces.items():
+            collection.set_segments(self._segments(carrying))
+
+    def _legend_handles(self):
+        # The two weights are switchable, and taking the pale one off is the
+        # third way to the same place the table's filter and its sorting lead:
+        # 348 contacts off the map, and what is left is the forty-five with
+        # something written on them. The steering artists below are not -- a
+        # highlight switched off would leave a selection with nothing to show it.
+        return [
+            self.map_view.switchable(
+                Line2D(
+                    [], [],
+                    color=CARRYING_STYLE["colors"],
+                    lw=CARRYING_STYLE["linewidths"],
+                    label="carrying a plane",
+                ),
+                self.traces[True],
+            ),
+            self.map_view.switchable(
+                Line2D(
+                    [], [],
+                    color=BARE_STYLE["colors"],
+                    lw=BARE_STYLE["linewidths"],
+                    label="mapped, nothing read",
+                ),
+                self.traces[False],
+            ),
             Line2D([], [], color="#ff7f0e", lw=2.6, label="selected"),
             Line2D(
                 [], [], color=PROVENANCE_TINT["rifiutata"], lw=3.4,
@@ -972,6 +1491,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         dataset = self.document.dataset
         said = (
             f"{len(dataset.structures)} structure(s), "
+            f"{sum(1 for s in dataset.structures if carries(s))} carrying a plane: "
             f"{sum(len(s.attitudes) for s in dataset.structures)} attitude(s), "
             f"{sum(len(s.fits) for s in dataset.structures)} fit(s)"
         )
@@ -986,7 +1506,10 @@ class EditorWindow(QtWidgets.QMainWindow):
         if not dataset.crs:
             said += "; no CRS declared, read as the session's"
 
-        return f"{said}. Click a trace to select it, shift-click to pick an anchor."
+        return (
+            f"{said}. Click a trace to select it, shift-click to pick an anchor; "
+            f"or pick a row in the table, which brings its trace into view."
+        )
 
     # -- selection ---------------------------------------------------------
 
@@ -1009,7 +1532,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         structure = self.document.dataset.structures[index]
         drawn = self._drawn[index]
 
-        self.highlight.set_data([x for x, _ in drawn], [y for y, _ in drawn])
+        # `[y for _, y in ...]`, and it read `[y for y, _ in ...]` from the day
+        # this was written: the name bound is the first of the pair whatever it
+        # is called, so the highlight was drawn at (easting, easting) -- off the
+        # map, on a diagonal no extent here ever covers. Selecting a trace worked
+        # and showed nothing, which is not a thing the eye reads as a bug in the
+        # drawing. `check_editor` now asserts the highlight is on the trace.
+        self.highlight.set_data([x for x, _ in drawn], [y for _, y in drawn])
 
         self._mark_refusals(structure)
         self._mark_attitudes(structure)
@@ -1045,17 +1574,19 @@ class EditorWindow(QtWidgets.QMainWindow):
         ]
         drawn = self.on_map(places)
 
-        self.marks.set_data([x for x, _ in drawn], [y for y, _ in drawn])
+        # The same reversed pair as in `select`, and the same consequence: the
+        # green dot marking where a plane was measured was never on the fault.
+        self.marks.set_data([x for x, _ in drawn], [y for _, y in drawn])
 
     def _on_applied(self, index):
         """A block that parsed: the map has to agree with it again."""
 
         self._drawn[index] = self.on_map(self.document.dataset.structures[index].path)
 
-        # The static collection holds a copy of the geometry, so a path edited
-        # in the box has to be handed to it again -- and then a full draw, which
+        # The static collections hold a copy of the geometry, so a path edited
+        # in the box has to be handed over again -- and then a full draw, which
         # is what recaptures the background the rest is blitted over.
-        self.traces.set_segments([path for path in self._drawn if len(path) > 1])
+        self._reset_traces()
         self.map_view.canvas.draw()
 
         self.select(index)
@@ -1064,6 +1595,50 @@ class EditorWindow(QtWidgets.QMainWindow):
             f"{self.document.dataset.structures[index].ident} applied; "
             f"the file is written by Save"
         )
+
+    # -- where the view is -------------------------------------------------
+
+    def frame_on(self, index):
+        """
+        Asks for the view to move onto one trace, in a moment.
+
+        Deferred rather than done, because a run of selections is one gesture:
+        holding the down arrow in the table is a row a keystroke, and each of
+        these is a full redraw and a hillshade reread for a view nobody stopped
+        to look at.
+        """
+
+        self._framing = index
+        self._frame_timer.start(FRAME_DELAY_MS)
+
+    def frame_now(self, index=None):
+        """Moves the view onto a trace, and says where it went."""
+
+        self._frame_timer.stop()
+
+        if index is None:
+            index, self._framing = self._framing, None
+
+        if index is None:
+            return False
+
+        structure = self.document.dataset.structures[index]
+        extent = framing_for(self._drawn[index])
+
+        if extent is None:
+            self.statusBar().showMessage(f"{structure.ident} has no path to frame on")
+            return False
+
+        self.map_view.restore_framing(extent)
+
+        # The way back said out loud, because this is the one thing in the window
+        # that moves the map without the hand having moved it.
+        self.statusBar().showMessage(
+            f"framed on {structure.ident}, {structure.length:.0f} m "
+            f"-- the back arrow returns to where you were"
+        )
+
+        return True
 
     # -- the map -----------------------------------------------------------
 

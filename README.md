@@ -724,6 +724,49 @@ Since the whole argument for snapping an anchor to the trace is that fifty
 metres of error would say something false about where somebody stood, writing
 four hundred is not a rounding, and half a tool that works is not worth opening.
 
+**Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
+plane; the other 348 are mapped contacts nobody has read one off yet. So the
+first question the window has to answer is which forty-five, and it answers it
+twice. The table lists every structure with what is written on it — `att`, `fit`
+and `span` as counts, the length in metres, and one word for what holds over
+most of the trace, tinted as the band tints it — and the columns sort, so the
+way to the forty-five is a click on a header rather than a scroll. The map draws
+a trace carrying something firmly and one carrying nothing faintly, which is the
+same question answered where you have to aim at it. Both go through one
+predicate, `carries`, so the two cannot disagree; and the legend entry for the
+pale weight switches it off, which takes the 348 off the map altogether.
+
+Picking a row brings its trace into view, and that is the half that was missing.
+Selecting from a list used to highlight a fault somewhere on an 80 km framing,
+and the median fault here is 1048 m — three pixels of orange you would have to
+find before you could look at it. A click on the *map* never moves the view: you
+are already looking at what you clicked. The framing is deferred by 140 ms, so
+arrow-keying down the table costs one move rather than one a row, and the bar's
+back arrow is the way out of it — the same as out of a zoom made by hand.
+
+Two measurements decided how that was built. The `holds` column is
+`provenance_of` run over every structure, which at 64 samples is 39 ms for the
+whole file — cheap enough to redo when the reach dial turns, which is the number
+it depends on. And the table's header is `Interactive` with its widths fitted
+once per fill, rather than `ResizeToContents`: rewriting the 393 rows costs
+7.9 ms that way and **25.7 seconds** the other, because the fitting mode reflows
+every column on every cell written. That one only appears in the real window — a
+table on its own has no laid-out viewport, so the reflow never runs and the same
+refill comes back in 29 ms — which is why a synthetic reproduction of it blamed
+the wrong thing twice before the measurement was taken where the cost is.
+
+Checking that turned up a highlight that had never worked. `select` read
+`[y for y, _ in drawn]`, which binds the *first* of the pair whatever the name
+is, so the selected trace and the green dots marking the measurements were drawn
+at (easting, easting) — off the map, on a diagonal no extent here covers.
+Clicking a trace selected it correctly, reported it correctly in the status bar,
+and showed nothing. `check_editor.py` now asserts that the highlight lies along
+the trace and that the dot is where the plane was measured, rather than that
+there is some number of points. The same run found the legend was never built at
+all: this tool provides its handles like the other three and, unlike them, never
+asked for the legend, so the window opened without one until somebody moved the
+placement combo.
+
 **What it shows that reading the file does not.** Precedence in this format is a
 computation over several lines at once — a refusal beats a measurement, a
 measurement within reach beats a fit, a fit beats a measurement further off — so
