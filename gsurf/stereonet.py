@@ -47,7 +47,9 @@ class StereonetView(QtWidgets.QWidget):
     editor's: at one measurement per station there is no density to look at, and
     what there is to look at is where the striae sit within the plane. A net
     showing one pole says less than the two numbers written out; a net showing
-    the plane and the line on it says something neither number does.
+    the plane and the line on it says something neither number does. So the
+    poles are `show_window`'s artist and only its -- the single-measurement
+    picture has no pole on it at all.
 
     Each method clears the other's artists, so a widget handed to both cannot
     show a fitted axis over a plane it was not fitted to.
@@ -61,11 +63,12 @@ class StereonetView(QtWidgets.QWidget):
     # already means something.
     PLANE_COLOR = "#333333"
 
-    # Square, and asked for in inches because that is what a Figure takes. This
-    # is also the width the widget asks a layout for, so a tool that puts the net
-    # beside something else is choosing how much of that something else it costs:
-    # in a dock, 3.6 in is 366 px off the map, and a single plane does not need
-    # 366 px to be read.
+    # Square, and asked for in inches because that is what a Figure takes. Where
+    # the net starts and not where it stays -- the primitive circle follows the
+    # widget, measured at 268 px across in a 276 px one and 412 in a 420. What
+    # the figure size does decide is the width the widget asks a layout for, so
+    # a tool that docks the net beside something else is choosing how much of
+    # that something else it costs: 3.6 in is 366 px off a map.
     FIGSIZE = 3.6
 
     def __init__(self, parent=None, figsize=None):
@@ -204,10 +207,14 @@ class StereonetView(QtWidgets.QWidget):
         """
         Puts one measured plane on the net, with the lines read on it.
 
-        The plane as a great circle and as its pole, which are the same fact
-        drawn twice on purpose: the pole is where it would sit in a population
-        and is how this net is compared with a fold tool's, the great circle is
-        what a lineation has to lie on for the pair to be believable.
+        The plane as a great circle, and as nothing else. Its pole was drawn
+        here too at first, on the argument that a pole is how this net would be
+        compared with a fold tool's -- but that is a reason to draw a pole where
+        there is a population, and with one plane on the net it costs more than
+        it says. What this picture is read for is where the striae sit within
+        the plane, the markers inside the primitive circle are the striae, and a
+        pole is a mark inside that circle which is not one. The plane is drawn
+        in full; its pole adds no fact and one thing to tell apart.
 
         `lineations` are `(trend, plunge)`, plural because one striated surface
         can carry more than one set -- two generations of movement on the same
@@ -233,9 +240,6 @@ class StereonetView(QtWidgets.QWidget):
         lons, lats = mplstereonet.plane(strike, dip)
         self.great_circle.set_data(np.ravel(lons), np.ravel(lats))
         self.great_circle.set_color(color or self.PLANE_COLOR)
-
-        self.poles.set_data(*mplstereonet.pole(strike, dip))
-        self.poles.set_markerfacecolor(color or self.PLANE_COLOR)
 
         if lineations:
             # One artist with N points, as the poles are: the same reason, which

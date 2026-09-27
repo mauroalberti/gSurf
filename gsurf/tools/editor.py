@@ -18,13 +18,16 @@ place; the band at the top of the panel asks it everywhere. On F0055 of
 over for the last 354, with the dip stepping from 31 to 35 where they meet. That
 is one line of the file beating another, and neither line says so.
 
-**Two windows.** The map is the tool and the panel is a window beside it, which
-used to be one frame split down the middle. A splitter cannot be dragged across
-a screen boundary, so the map could not be made bigger without making the table
-smaller and neither could be moved -- and the arrangement this tool is for is a
-monitor of map with the file open next to it. The panel is parented to the map
-and the group is `gsurf.windows`, the section tool's; what that costs here is
-two shortcuts and a status bar, and `_build_shortcuts` and `say` are those.
+**Three windows.** The map is the tool; the panel and the net are windows beside
+it. The panel used to be one frame split down the middle with the map, and a
+splitter cannot be dragged across a screen boundary, so the map could not be
+made bigger without making the table smaller and neither could be moved -- while
+the arrangement this tool is for is a monitor of map with the file open next to
+it. The net was a dock and is a window for the same reason read off a different
+measurement: a dock is as wide as the map can spare, which was 276 px, and 276
+px of widget is a stereonet 268 px across. All three are parented to the map and
+the group is `gsurf.windows`, the section tool's; what that costs here is two
+shortcuts and a status bar, and `_build_shortcuts` and `say` are those.
 
 **Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
 plane; the other 348 are mapped contacts nobody has read one off yet. So the
@@ -53,8 +56,10 @@ conclusion did not follow. A pole is a population's way of drawing a plane; a
 *great circle* is a plane, and a striation drawn on it sits somewhere along it,
 and where along it is the difference between a fault that moved down its dip and
 one that moved along its strike. No pair of numbers shows that, and the net shows
-it without arithmetic. So the dock beside the map holds both: the plane the
-cursor is resting on, and the lineations read on it.
+it without arithmetic. So the window beside the map holds both: the plane the
+cursor is resting on, and the lineations read on it. Only those -- the pole was
+drawn there at first and is not, because with one plane on the net the markers
+inside the circle are the striae, and a pole is a mark inside it that is not one.
 
 There are none. `merid_faults` has zero `lineation` records in it, and three of
 its 23 attitudes mention striae in an Italian note -- `lineazione N080°` at S20,
@@ -216,18 +221,21 @@ TIP_WRAP = 64
 # that carries `station=` is matched by that instead, and is not subject to this.
 SAME_OUTCROP_M = 2.0
 
-# What the net is called with nothing on it. A title and not a label inside the
-# figure, because an empty equal-area net is a circle with a grid in it and reads
-# as a widget that has not loaded rather than as one waiting to be pointed at.
-NET_EMPTY_TITLE = "Station -- rest on a green dot"
+# What the net's window is called, and what it says with nothing on it. A title
+# and not a label inside the figure, because an empty equal-area net is a circle
+# with a grid in it and reads as a widget that has not loaded rather than as one
+# waiting to be pointed at.
+NET_TITLE = "gSurf - stereonet"
+NET_EMPTY_TITLE = f"{NET_TITLE} - rest on a green dot"
 
-# How wide the net starts, and how big its figure is. Narrower than the fold
-# tool's 3.6 in, because there the net is the tool and here it is beside the map:
-# the map's own axes is capped by its height at 596 px on this desktop, so a dock
-# up to about 275 px is free and one at 366 is not. It stays resizable -- this is
-# where it opens, not where it has to stay.
-NET_FIGSIZE_IN = 2.6
-NET_DOCK_PX = 270
+# How big the net opens. Its own window, so the map is no longer paying for it,
+# and that is the whole of the difference: as a dock it had to stop at 276 px,
+# because past that it came off the map's axes, and 276 px of widget is a
+# primitive circle 268 px across. 420 px is 412. The circle follows the widget
+# from there -- the figure size says where it starts, the window says where it
+# stays, and unlike a floating dock's, that is remembered.
+NET_FIGSIZE_IN = 3.6
+NET_WINDOW_PX = (420, 440)
 
 MAX_GAP_RANGE = (0.0, 20000.0)
 
@@ -1000,7 +1008,7 @@ class EditorPanel(QtWidgets.QWidget):
         self.apply_button = QtWidgets.QPushButton("Apply")
 
         # No shortcut of its own: the window owns both of this tool's shortcuts
-        # and hands them to each of its two windows, which is what makes them
+        # and hands them to every window of the group, which is what makes them
         # work from the map as well. A second Ctrl+Return here would be an
         # ambiguous one -- see `EditorWindow._build_shortcuts`.
         self.apply_button.setToolTip(
@@ -1376,7 +1384,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         # file's projection and stays there; this is the other side of that.
         self._drawn = [self.on_map(st.path) for st in document.dataset.structures]
 
-        # Whether the two windows were laid side by side for want of anything
+        # Whether map and panel were laid side by side for want of anything
         # remembered about them, which is what `build` reads to know that the
         # map has already been given a size.
         self.tiled = False
@@ -1466,30 +1474,20 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view.hover_off.connect(lambda: self._tip_on(None))
         self.map_view.status.connect(self.say)
 
-        # A dock and not a second satellite window, which is the same choice the
-        # fold tool made and for the reason `gsurf.windows` gives: this is small,
-        # it is looked at beside the map rather than instead of it, and it wants
-        # to be draggable back into the side. It is also the one place in this
-        # window where something appears without being asked for, so it comes up
-        # with the window rather than hidden behind a menu nobody would open
-        # looking for it.
+        # A third window, and not the dock it was first built as. The fold tool's
+        # argument for a dock -- small, looked at beside the map, draggable back
+        # into the side -- holds there and came apart here on two counts, and
+        # both of them are about how big the picture is allowed to be. A dock is
+        # as wide as the map can spare, which was 276 px and a circle 268 px
+        # across; and the one way out of that, floating it, is a Qt::Tool window
+        # whose geometry this tool does not save, so a net dragged out and made
+        # readable would have to be made readable again every run. In the group
+        # it is saved with the map and the panel, it goes on the second monitor
+        # the rest of this tool is built around, and the circle is as big as the
+        # window -- 412 px at the size it opens.
         self.net = StereonetView(figsize=NET_FIGSIZE_IN)
-
-        self.net_dock = QtWidgets.QDockWidget(NET_EMPTY_TITLE, self)
-        self.net_dock.setObjectName("station_net")
-        self.net_dock.setWidget(self.net)
-        self.net_dock.setAllowedAreas(
-            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
-            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        self.addDockWidget(
-            QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.net_dock
-        )
-
-        # Said out loud rather than left to the canvas's size hint, which is the
-        # figure and would make the dock as wide as the net wants to be drawn.
-        self.resizeDocks(
-            [self.net_dock], [NET_DOCK_PX], QtCore.Qt.Orientation.Horizontal
+        self.net_window = SatelliteWindow(
+            NET_EMPTY_TITLE, self.net, NET_WINDOW_PX, parent=self
         )
 
         self.panel = EditorPanel(self.document)
@@ -1512,8 +1510,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         writing.addWidget(self.save_as_button)
         writing.addStretch(1)
 
-        # The status bar's words again, beside the panel. The two windows can be
-        # on two screens, and which of them the news belongs on depends on the
+        # The status bar's words again, beside the panel. The windows can be on
+        # two screens, and which of them the news belongs on depends on the
         # news: the map reports what a click found, the panel what Apply and Save
         # did, and each is read from the other window often enough to matter.
         # `say` writes both -- one call, no state between them, so there is
@@ -1544,7 +1542,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.group = WindowGroup(
             self,
             SETTINGS_NAME,
-            {"panel": self.panel_window},
+            {"panel": self.panel_window, "net": self.net_window},
             placer=self._place_unremembered,
         )
 
@@ -1560,11 +1558,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._build_shortcuts()
 
     def _build_menu(self):
-        """The way back to the panel, once it has been closed."""
+        """The way back to the panel and the net, once they have been closed."""
 
         menu = self.menuBar().addMenu("&Windows")
 
-        self.window_actions = self.group.actions_into(menu, {"panel": "&Structures"})
+        self.window_actions = self.group.actions_into(
+            menu, {"panel": "&Structures", "net": "Stereo&net"}
+        )
 
         menu.addSeparator()
 
@@ -1583,10 +1583,16 @@ class EditorWindow(QtWidgets.QMainWindow):
         trace and then writing the file is one motion, and it goes through the
         map.
 
-        Given to both windows, rather than made `ApplicationShortcut` -- which
-        reaches every window of the application, including another tool's. The
-        section tool binds Ctrl+S to saving a section, and two tools open at once
-        would have had one ambiguous shortcut between them and Qt firing neither.
+        Given to every window of the group, rather than made
+        `ApplicationShortcut` -- which reaches every window of the application,
+        including another tool's. The section tool binds Ctrl+S to saving a
+        section, and two tools open at once would have had one ambiguous
+        shortcut between them and Qt firing neither.
+
+        Every window, including the one nothing is typed into: the net is a
+        canvas and clicking it gives it the keyboard, so leaving it out would
+        make Ctrl+S depend on which window was last clicked -- which is worse
+        than no shortcut, because it fails silently and only sometimes.
         """
 
         for label, shortcut, slot in (
@@ -1598,7 +1604,9 @@ class EditorWindow(QtWidgets.QMainWindow):
             action.triggered.connect(slot)
 
             self.addAction(action)
-            self.panel_window.addAction(action)
+
+            for satellite in self.group.satellites.values():
+                satellite.addAction(action)
 
     def _panel_title(self):
         mark = "*" if self.document.dirty else ""
@@ -1628,13 +1636,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         Map and panel side by side, filling the screen, the first time ever.
 
         The group's own answer -- satellites down the right edge, and only on a
-        desktop 1600 wide -- is for a tool with three windows, where nothing
-        fits and the window manager's guess is as good as any. Here there are
-        two, and they do fit where that rule says they do not: on the 1366x741
-        of usable area this is written on, 840 of map beside 520 of panel is the
-        splitter's own arrangement made out of two windows. Which is the one
-        thing this change must not be worse than -- taking a pane out of a frame
-        should buy a second monitor, not cost a first one.
+        desktop 1600 wide -- is for a tool whose windows do not fit, where the
+        window manager's guess is as good as any. Two of these three do fit
+        where that rule says they do not: on the 1366x741 of usable area this is
+        written on, 840 of map beside 520 of panel is the splitter's own
+        arrangement made out of two windows. Which is the one thing this change
+        must not be worse than -- taking a pane out of a frame should buy a
+        second monitor, not cost a first one.
 
         It places the map as well, which is why `build` asks whether this ran
         before falling back to `fit_to_screen`: a map maximised over a panel
@@ -1645,6 +1653,32 @@ class EditorWindow(QtWidgets.QMainWindow):
         """
 
         available = self.main_screen_area()
+
+        # The net goes first and goes over the map, there being no third
+        # rectangle once the other two have filled the screen. The corner is a
+        # choice about what it covers: the map is re-framed on the trace being
+        # edited every time a row is picked, so what the cursor is hunting for
+        # is in the middle of it. Lifted clear of the status bar, which runs the
+        # width of the map window and is where `say` writes -- a net resting on
+        # the bottom edge would cover the left end of every message, which is
+        # where they start.
+        #
+        # Placed on any screen, narrow or not, because it is small enough to
+        # land somewhere on all of them, and because a window covering a corner
+        # of the map is undone by one drag -- which is then remembered.
+        if "net" not in skip:
+            net_width, net_height = NET_WINDOW_PX
+
+            self.net_window.setGeometry(
+                available.left() + TILE_GAP_PX,
+                available.bottom()
+                - net_height
+                - FRAME_ALLOWANCE_PX
+                - self.statusBar().sizeHint().height(),
+                net_width,
+                net_height,
+            )
+
         width = available.width() - PANEL_WIDTH_PX - TILE_GAP_PX
 
         if width < MAP_FLOOR_PX:
@@ -1668,7 +1702,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
     def main_screen_area(self):
         """
-        The desktop the two windows are placed against.
+        The desktop the windows are placed against.
 
         A method rather than the one call it is, so that a check can stand a
         narrow screen in front of it: the placement has two branches and a run
@@ -2051,9 +2085,19 @@ class EditorWindow(QtWidgets.QMainWindow):
         arithmetic.
 
         Guarded like the tooltip, and for a stronger reason: filling this is a
-        `set_data` on three artists and a blit, which is a thousand times a motion
-        event's own cost. `None` is not a value this takes -- clearing is
-        `_clear_net`, called when the trace changes and not when the cursor moves.
+        `set_data` on every artist the net has and a blit, which is a thousand
+        times a motion event's own cost. `None` is not a value this takes --
+        clearing is `_clear_net`, called when the trace changes and not when the
+        cursor moves.
+
+        Drawn whether the window is open or not, which is the opposite of what
+        the fold tool does with the same widget. The difference is what makes it
+        redraw: there it is every frame of a drag, and a hidden canvas costs
+        frame budget and makes the frame cost that tool reports a measurement of
+        something nobody can see. Here it is a cursor crossing onto a different
+        dot. Skipping it would save 2.3 ms on an occasional event and cost the
+        thing it is there for -- a net put back would show whichever station it
+        happened to be closed on.
         """
 
         if which == self._netted:
@@ -2070,8 +2114,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         station = attitude.attrs.get("station") or "no station code"
         lineations = self._lineations_at(attitude)
 
-        self.net_dock.setWindowTitle(
-            f"{station} -- {plane}"
+        self.net_window.setWindowTitle(
+            f"{NET_TITLE} - {station} -- {plane}"
             + (f", {len(lineations)} lineation(s)" if lineations else "")
         )
         self.net.show_attitude(
@@ -2085,7 +2129,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         """Nothing on the net, and a title that says what would put it there."""
 
         self._netted = None
-        self.net_dock.setWindowTitle(NET_EMPTY_TITLE)
+        self.net_window.setWindowTitle(NET_EMPTY_TITLE)
         self.net.show_attitude(None, None)
 
     def _lineations_at(self, attitude):

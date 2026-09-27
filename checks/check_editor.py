@@ -392,25 +392,25 @@ def main():
         check("the box holds the block exactly as the document has it",
               window.panel.text.toPlainText() == window.document.text_of(0))
 
-        # -- two windows, and what keeps them one tool ---------------------
+        # -- three windows, and what keeps them one tool -------------------
         #
-        # The map is the tool and the panel is a window of its own, which is the
-        # section tool's arrangement and now the same code: `gsurf.windows`. Two
-        # things about it are worth holding down and neither shows in the window.
-        # The panel is parented to the map, which has Qt destroy it with the tool
-        # and -- the part that does not show at all -- keeps closing it from
-        # counting as the last window closed: while a tool runs the launcher is
-        # hidden underneath, so an unparented panel would take the application
-        # down instead of handing it back. And closing it hides it, because a
-        # table of the whole file costs a fill and a window shut by accident
-        # should not.
+        # The map is the tool; the panel and the net are windows of their own,
+        # which is the section tool's arrangement and now the same code:
+        # `gsurf.windows`. Two things about it are worth holding down and
+        # neither shows in the window. Each is parented to the map, which has Qt
+        # destroy it with the tool and -- the part that does not show at all --
+        # keeps closing it from counting as the last window closed: while a tool
+        # runs the launcher is hidden underneath, so an unparented panel would
+        # take the application down instead of handing it back. And closing one
+        # hides it, because a table of the whole file costs a fill and a window
+        # shut by accident should not.
 
-        print("\n-- two windows --\n")
+        print("\n-- three windows --\n")
 
         panel_window = window.panel_window
 
-        check("the map and the panel are two windows",
-              sorted(window.group.windows) == ["map", "panel"],
+        check("the map, the panel and the net are three windows",
+              sorted(window.group.windows) == ["map", "net", "panel"],
               ", ".join(sorted(window.group.windows)))
 
         check("the panel is a window in its own right, not a pane of the map",
@@ -441,6 +441,10 @@ def main():
         # reaches only the window the button is in -- which was the only window
         # there was. Ctrl+S over the map is the case that would have gone quiet:
         # clicking anchors along a trace and then writing the file is one motion.
+        #
+        # The net is in this too, and it is the one nobody types in: it is a
+        # canvas, clicking it gives it the keyboard, and a Ctrl+S that depends on
+        # which window was last clicked fails silently and only sometimes.
         def shortcuts_of(widget):
             return {
                 action.shortcut().toString()
@@ -448,10 +452,10 @@ def main():
                 if not action.shortcut().isEmpty()
             }
 
-        check("Save and Apply answer from either window",
+        check("Save and Apply answer from any of the three windows",
               shortcuts_of(window) == shortcuts_of(panel_window)
-              == {"Ctrl+S", "Ctrl+Return"},
-              " and ".join(sorted(shortcuts_of(window))))
+              == shortcuts_of(window.net_window) == {"Ctrl+S", "Ctrl+Return"},
+              " and ".join(sorted(shortcuts_of(window.net_window))))
 
         check("and the buttons carry none of their own, so neither is ambiguous",
               window.save_button.shortcut().isEmpty()
@@ -472,25 +476,31 @@ def main():
         # What a first run makes of a screen, on two screens this run does not
         # have. The laptop this was written on is 1366x741 of usable area, which
         # the group's own rule -- satellites down the right edge, 1600 and up --
-        # calls too small to place anything on: correct for a tool with three
-        # windows and wrong for one with two, where 840 of map beside 520 of
-        # panel is the arrangement the splitter used to make. A map maximised
-        # under a floating panel would have been worse than what this replaces.
+        # calls too small to place anything on. Two of these three fit there
+        # anyway: 840 of map beside 520 of panel is the arrangement the splitter
+        # used to make, and a map maximised under a floating panel would have
+        # been worse than what this replaces.
         was_area = window.main_screen_area
         was_map, was_panel = window.geometry(), panel_window.geometry()
+        was_net = window.net_window.geometry()
 
         def placed_on(width, height):
-            """The two geometries a screen of this size leads to."""
+            """The three geometries a screen of this size leads to."""
 
             window.main_screen_area = lambda: QtCore.QRect(0, 0, width, height)
             window.tiled = False
             window.group.place_unremembered()
 
-            return window.tiled, window.geometry(), panel_window.geometry()
+            return (
+                window.tiled,
+                window.geometry(),
+                panel_window.geometry(),
+                window.net_window.geometry(),
+            )
 
-        tiled, on_map, on_panel = placed_on(1366, 741)
+        tiled, on_map, on_panel, on_net = placed_on(1366, 741)
 
-        check("on one laptop screen the two are laid side by side",
+        check("on one laptop screen map and panel are laid side by side",
               tiled and on_map.width() == 840 and on_panel.width() == 520,
               f"{on_map.width()} of map, {on_panel.width()} of panel")
 
@@ -504,18 +514,42 @@ def main():
               on_map.height() == on_panel.height() == 741 - tool.FRAME_ALLOWANCE_PX,
               f"{on_map.height()} px of 741")
 
-        narrow, _, _ = placed_on(1024, 720)
+        # There is no third rectangle: two windows fill the screen across at any
+        # width, because the panel is a fixed 520 and the map takes the rest. So
+        # the net goes over the map, in the corner furthest from the panel, and
+        # covers 420x440 of an 840x701 map -- 31% of it. That is the cost of it
+        # being readable at all, and it is paid once: this is a window, one drag
+        # puts it where it should be, and `save_geometry` keeps it there.
+        check("and the net over the map's far corner, clear of the status bar",
+              on_net.left() == tool.TILE_GAP_PX
+              and on_net.width() == tool.NET_WINDOW_PX[0]
+              and on_map.contains(on_net)
+              and on_net.bottom()
+              < on_map.bottom() - window.statusBar().sizeHint().height(),
+              f"net {on_net.width()}x{on_net.height()} at "
+              f"({on_net.left()}, {on_net.top()}), map to {on_map.bottom()}")
+
+        narrow, _, _, narrow_net = placed_on(1024, 720)
 
         check("on a screen too narrow for both, the map is not cut to fit one",
               not narrow, "left to fit_to_screen, and the panel over it")
 
-        # Put back, both of them: everything below draws on this map, and an
-        # extent is read off a canvas whose aspect is the window's. A probe that
-        # leaves the window a different shape is a probe that decides what the
-        # framing checks are measuring.
+        # The net is still placed there. It is small enough to land on any
+        # screen, and the branch that gives up on tiling gives up before the map
+        # has a size -- so a net placed against the map would have nothing to be
+        # placed against.
+        check("and the net is placed anyway, against the screen",
+              narrow_net.left() == tool.TILE_GAP_PX and narrow_net.bottom() < 720,
+              f"at ({narrow_net.left()}, {narrow_net.top()}) on 1024x720")
+
+        # Put back, all three: everything below draws on this map, and an extent
+        # is read off a canvas whose aspect is the window's. A probe that leaves
+        # the window a different shape is a probe that decides what the framing
+        # checks are measuring.
         window.main_screen_area = was_area
         window.setGeometry(was_map)
         panel_window.setGeometry(was_panel)
+        window.net_window.setGeometry(was_net)
 
         # -- finding the one to open ---------------------------------------
 
@@ -702,12 +736,14 @@ def main():
         print("\n-- the hover --\n")
 
         # Every probe below is in screen pixels, so the map has to have a data
-        # area for them to be pixels of. The net's dock takes 276 px of the
+        # area for them to be pixels of. This is asserted and not assumed because
+        # for a while it was false: the net was a dock taking 276 px out of the
         # window, and under about 1000 px of window the map's constrained layout
-        # gives up -- matplotlib says `axes sizes collapsed to zero` in a warning
-        # nothing reads -- and puts the whole map into 24 px. Every dot is then
-        # within 10 px of every other and the reach checks pass on nonsense, which
-        # is how this was found. Sized here, and asserted rather than assumed.
+        # gave up -- matplotlib says `axes sizes collapsed to zero` in a warning
+        # nothing reads -- and put the whole map into 24 px. Every dot was then
+        # within 10 px of every other and the reach checks passed on nonsense,
+        # which is how this was found. The net is a window now and the map has
+        # its width back: the number this prints went from 600.7 px to 885.4.
         window.resize(1280, 900)
         QtWidgets.QApplication.processEvents()
         window.map_view.canvas.draw()
@@ -849,8 +885,7 @@ def main():
         # The figure the tooltip cannot be. `270/60` written out is a plane you
         # have to picture; the great circle is the picture, and the thing neither
         # number shows is where a striation sits inside the plane -- down the dip
-        # or along the strike -- which is the whole reason a net is worth the
-        # 276 px it takes off the map.
+        # or along the strike -- which is the whole reason the net is there.
 
         print("\n-- the net --\n")
 
@@ -861,13 +896,30 @@ def main():
               len(window.net.great_circle.get_xdata()) > 2,
               f"{len(window.net.great_circle.get_xdata())} points on the circle")
 
-        check("and the plane is drawn as its pole as well as its great circle",
-              len(window.net.poles.get_xdata()) == 1,
-              f"{len(window.net.poles.get_xdata())} pole(s)")
+        # And that is all of the plane that is drawn. Its pole was there too at
+        # first, on the argument that a pole is how this net would be compared
+        # with the fold tool's -- but that is a reason to draw one where there is
+        # a population. Here the markers inside the primitive circle are the
+        # striae, which is what the picture is read for, and a pole is a mark
+        # inside that circle which is not a striation.
+        check("and nothing else inside the circle, the pole having been dropped",
+              len(window.net.poles.get_xdata()) == 0,
+              f"{len(window.net.poles.get_xdata())} poles on a single plane")
 
-        check("and the dock says whose plane it is, the net having no label",
-              window.net_dock.windowTitle().startswith("S2 -- 270/60"),
-              window.net_dock.windowTitle())
+        check("and the window says whose plane it is, the net having no label",
+              window.net_window.windowTitle().startswith(
+                  f"{tool.NET_TITLE} - S2 -- 270/60"),
+              window.net_window.windowTitle())
+
+        # A window in the group and not a dock, which is what makes where it was
+        # left something that is written down: `WindowGroup.save_geometry` walks
+        # the group, a floating dock's position is not in it, and a net dragged
+        # out to be read would have had to be dragged out again every run.
+        check("the net is one of the tool's windows, so where it is put is kept",
+              window.group.satellites.get("net") is window.net_window
+              and "net" in window.window_actions,
+              f"{sorted(window.group.satellites)}, "
+              f"menu {sorted(window.window_actions)}")
 
         # Two of Gamma's three lineations, by two different rules: one carries
         # `station=S2` and is anchored 70 m away, one carries no station and is
@@ -911,9 +963,34 @@ def main():
 
         check("opening another trace empties the net and says so in the title",
               len(window.net.great_circle.get_xdata()) == 0
-              and window.net_dock.windowTitle() == tool.NET_EMPTY_TITLE,
+              and window.net_window.windowTitle() == tool.NET_EMPTY_TITLE,
               f"{len(window.net.great_circle.get_xdata())} points, "
-              f"{window.net_dock.windowTitle()!r}")
+              f"{window.net_window.windowTitle()!r}")
+
+        # Closed, it goes on being filled -- which is the opposite of what the
+        # fold tool does with this same widget. There the net redraws on every
+        # frame of a drag and a hidden canvas would cost frame budget and make
+        # the frame cost it reports a measurement of something nobody can see.
+        # Here it redraws when the cursor crosses onto another dot, and the
+        # saving would cost the thing it is for: a net put back would show
+        # whichever station it happened to have been closed on.
+        window.net_window.close()
+
+        check("closing the net unticks its own box in the menu",
+              not window.window_actions["net"].isChecked())
+
+        window.select(2)
+        window._on_map_hover(*dot)
+
+        window.window_actions["net"].trigger()
+
+        check("and a net put back shows the dot last rested on, not a stale one",
+              window.net_window.isVisible()
+              and len(window.net.great_circle.get_xdata()) > 2
+              and window.net_window.windowTitle().startswith(
+                  f"{tool.NET_TITLE} - S2 -- 270/60"),
+              f"{window.net_window.windowTitle()!r}, "
+              f"{len(window.net.great_circle.get_xdata())} points")
 
         # The four letters round the edge, proven on the pixels rather than on
         # the text having been set -- it was set from the day the widget was
@@ -957,16 +1034,29 @@ def main():
               f"{shown} drawn against {hidden} behind an opaque background")
 
         # And the widget is shared with the fold tool, which puts a population on
-        # it. Neither use may leave its artists behind for the other to draw.
+        # it. Neither use may leave its artists behind for the other to draw, and
+        # the second direction matters more than it used to: a single plane is
+        # meant to have nothing inside the circle but its striae, so a population
+        # of poles left behind would be twenty marks that are not striae.
         window.net.show_window([120.0, 130.0], [30.0, 40.0])
+        after_population = (
+            len(window.net.poles.get_xdata()),
+            len(window.net.great_circle.get_xdata()),
+            len(window.net.lineation.get_xdata()),
+        )
 
-        check("a population on the same widget clears the single plane",
-              len(window.net.poles.get_xdata()) == 2
-              and len(window.net.great_circle.get_xdata()) == 0
-              and len(window.net.lineation.get_xdata()) == 0,
-              f"{len(window.net.poles.get_xdata())} poles, "
-              f"{len(window.net.great_circle.get_xdata())} circle, "
-              f"{len(window.net.lineation.get_xdata())} lineations")
+        window.net.show_attitude(270.0, 60.0)
+        after_plane = (
+            len(window.net.poles.get_xdata()),
+            len(window.net.great_circle.get_xdata()),
+        )
+
+        check("the widget's two uses clear each other, both ways round",
+              after_population == (2, 0, 0)
+              and after_plane[0] == 0
+              and after_plane[1] > 2,
+              f"a population leaves {after_population} as poles, circle, "
+              f"lineations; one plane after it leaves {after_plane[0]} poles")
 
         window.select(2)
 

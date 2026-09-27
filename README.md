@@ -741,15 +741,19 @@ parented to the map so that Qt destroys it with the tool and closing it cannot
 take the application down with the launcher hidden underneath. Closing it hides
 it; `Windows > Structures` on the map's menu brings it back, and the menu
 follows the window rather than the other way round, so a close from the title
-bar unticks its own box. Where the two were left is remembered per window.
+bar unticks its own box. The stereonet is a third window on the same terms, for
+a reason of its own given further down. Where each was left is remembered per
+window.
 
-With nothing remembered they are laid side by side across the screen, which is
-the splitter's own arrangement made out of two windows: taking a pane out of a
-frame should buy a second monitor, not cost a first one. The section tool's rule
-— satellites down the right edge, and only on a desktop 1600 wide — is for three
-windows that fit nowhere, and on the 1366×741 of usable area this is written on
-it would have left a maximised map with a panel floating over it, half of it
-under the bottom edge. Two windows do fit there: 840 of map beside 520 of panel.
+With nothing remembered, map and panel are laid side by side across the screen,
+which is the splitter's own arrangement made out of two windows: taking a pane
+out of a frame should buy a second monitor, not cost a first one. The section
+tool's rule — satellites down the right edge, and only on a desktop 1600 wide —
+is for windows that fit nowhere, and on the 1366×741 of usable area this is
+written on it would have left a maximised map with a panel floating over it,
+half of it under the bottom edge. These two do fit there: 840 of map beside 520
+of panel, with the net over the map's far corner because there is no third
+rectangle to put it in.
 What cannot be got right is the frame — right after `setGeometry` the title bar
 does not exist yet, the window manager not having reparented the window, so its
 thickness is allowed for at 40 px rather than measured, and erring high costs a
@@ -760,8 +764,11 @@ shortcuts were their buttons' own, and a button's shortcut reaches only the
 window the button is in — so `Ctrl+S` would have worked over the panel and done
 nothing over the map, where half the work is: clicking anchors along a trace and
 then writing the file is one motion. They are now the window's actions, given to
-both windows rather than made application-wide, which would have collided with
-the section tool's own `Ctrl+S` the moment two tools were open. And the status
+every window of the group rather than made application-wide, which would have
+collided with the section tool's own `Ctrl+S` the moment two tools were open —
+and the net is in that group too, being a canvas that takes the keyboard when
+it is clicked, so leaving it out would make `Ctrl+S` depend on which window was
+last touched, which fails silently and only sometimes. And the status
 bar is echoed under the panel, because which window the news belongs on depends
 on the news — the map reports what a click found, the panel what `Apply` and
 `Save` did — and both are read from the other window often enough to matter.
@@ -830,9 +837,17 @@ written out. That is true about poles and false about nets. A pole is how a
 *population* draws a plane; a **great circle** is the plane, and a striation
 drawn on it sits somewhere along that arc, and where along it is the difference
 between a fault that moved down its dip and one that moved along its strike. No
-pair of numbers shows that. So the dock beside the map now holds the plane the
-cursor is resting on, drawn as a great circle and as its pole, with whatever
-lineations were read on it.
+pair of numbers shows that. So a third window beside the map holds the plane the
+cursor is resting on, drawn as a great circle, with whatever lineations were read
+on it.
+
+**As a great circle and nothing else.** Its pole was drawn there too at first, on
+the argument that a pole is how this net would be compared with the fold tool's —
+which is a reason to draw one where there is a population. Here the marks inside
+the primitive circle *are* the striae, that being what the picture is read for,
+and a pole is a mark inside that circle which is not a striation. It said nothing
+the arc does not already say and added one thing to tell apart, so it is gone:
+`show_window` owns the poles and `show_attitude` has none.
 
 There are none to draw. `merid_faults` contains **zero `lineation` records**, and
 three of its 23 attitudes mention striae in a note somebody typed in Italian:
@@ -884,22 +899,45 @@ moves under the cursor. What is under it is worked out on every motion event, at
 0.032 ms when the answer stands and 0.063 when the text has to be rebuilt, so the
 tooltip is Qt's own and inherits the delay everything else on the desktop has.
 
-The net costs more than the tooltip and is guarded harder for it: filling it is
-three `set_data` calls and a blit, **1.8 ms**, against 0.0002 ms when the cursor
-is still on the dot it already answered. And the two answers have deliberately
-different lifetimes. The tooltip goes away when the cursor leaves the dot; the
-net does not, because reading a figure means looking away from the thing that
-asked for it, and one that emptied on the way would only ever be seen out of the
-corner of an eye. What does empty it is opening another trace — a plane beside
-the map belonging to the fault before this one, with nothing on screen saying so,
-is the one way this could lie. The dock's own title carries the station code for
-the same reason. It takes 276 px off the map at 2.6 in against the fold tool's
-3.6, which on a 1366-wide screen is free: the map's axes is capped by its height
-at 596 px either way. Below about 1000 px of window it is not free, and below
-that again matplotlib's constrained layout gives up entirely and collapses the
-map to 24 px — which is how the reach checks were found passing on nonsense, all
-dots being within 10 px of each other, and why `check_editor` now sizes the
-window and asserts the map has a data area before measuring any pixels in it.
+The net costs more than the tooltip and is guarded harder for it: filling it is a
+`set_data` on every artist and a blit, **2.3 ms**, against 0.0002 ms when the
+cursor is still on the dot it already answered. And the two answers have
+deliberately different lifetimes. The tooltip goes away when the cursor leaves
+the dot; the net does not, because reading a figure means looking away from the
+thing that asked for it, and one that emptied on the way would only ever be seen
+out of the corner of an eye. What does empty it is opening another trace — a
+plane beside the map belonging to the fault before this one, with nothing on
+screen saying so, is the one way this could lie. The window's own title carries
+the station code for the same reason. Closed, it goes on being filled — which is
+the opposite of what the fold tool does with the same widget, and the difference
+is what makes each redraw: there it is every frame of a drag, where a hidden
+canvas costs frame budget and makes the reported frame cost a measurement of
+something nobody can see; here it is a cursor crossing onto another dot, and the
+saving would buy 2.3 ms on an occasional event at the price of a net put back
+showing whichever station it happened to have been closed on.
+
+**A window and not a dock**, which it was at first, and the difference is how big
+the picture is allowed to be. A dock is as wide as the map can spare: 276 px
+here, because past that it came off the map's axes, and 276 px of widget is a
+stereonet **268 px across**. At 420 the circle is 412, and it keeps following the
+window from there — the figure size only says where it starts. The way out of a
+dock's width is to float it, and a floating dock is a `Qt::Tool` window whose
+geometry this tool does not save, so a net dragged out and made readable would
+have to be made readable again every run; in the group it is saved with the map
+and the panel, has its entry in the Windows menu, answers Ctrl+S like the others,
+and goes on the second monitor this whole tool is built around. What it costs is
+that there is no third rectangle — the panel is a fixed 520 px and the map takes
+the rest at any screen width — so on one screen it opens over the map's far
+corner, 420×440 of an 840×701 map, 31% of it, clear of the status bar. That is
+paid once: one drag, and it is remembered.
+
+Giving the map its width back is measurable in the checks: the map's data area at
+a 1280-wide window went from 600.7 px to **885.4**. It had been worse than that.
+Below about 1000 px of window matplotlib's constrained layout gave up entirely
+and collapsed the map to 24 px — which is how the reach checks were found passing
+on nonsense, all dots being within 10 px of each other, and why `check_editor`
+sizes the window and asserts the map has a data area before measuring any pixels
+in it.
 
 **What it shows that reading the file does not.** Precedence in this format is a
 computation over several lines at once — a refusal beats a measurement, a
