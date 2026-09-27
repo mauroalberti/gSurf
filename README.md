@@ -974,6 +974,67 @@ the map fills the first one and selects the next. What gets written is the point
 back to get its progressive, so a point fifty metres off the line would read the
 same and say something false about where anybody stood.
 
+**`fit off the DEM` is the fourth button and not a fourth template.** The three
+above write a line for somebody to finish; this one sweeps a window along the
+selected trace and writes a `fit` for every stretch whose plane the topography
+determines — the same producer the import runs over a whole layer, on one trace
+at a time. It was already in the program and reachable from one place only, so
+what this cost was the extraction: `gsurf/fits.py` now holds it, the import
+dialog's `Mapping` no longer being one of its arguments, and `checks/check_imports.py`
+is the net that says the move changed no number.
+
+One trace is about ten milliseconds, so there is no progress bar and no modal box
+— which is also what keeps it drivable from a check. The lines go in the box and
+nothing else happens: `Apply` is still the only thing that reaches the model, and
+a fit is an assertion about a plane that arrived without anybody looking at it.
+The unapplied-work guard covers it like anything else typed — select another trace
+with a computed fit still in the box and it asks before redrawing over it.
+A stretch too straight to carry a plane gets nothing, which is an answer rather
+than a failure, and the panel says what was walked instead — `nothing held, read
+over 250 m (the fallback: no length held better than another): 1375 m line` —
+because an empty answer and a refused one look the same in a file.
+
+The button is off with its reason where the reason is settled in advance: no DEM
+in the session, or a DEM that cannot be sampled for these traces at all. The
+second is the CRS pair, and it is not fussiness — the trace would be sampled in
+the DEM's grid and the anchors written in the file's, so the dip direction that
+came out would be measured from one north and written against another, which no
+reprojection on the way in would fix.
+
+Two things it says rather than settles. The lever floor is measured once off
+every path in the file, never off the trace being fitted: a floor that moved from
+trace to trace would make two verdicts in one file answers to different
+questions. And **precedence is reported, not decided** — `attitude_at` takes the
+*first* fit covering a progressive, and these lines go after the ones the block
+already had, so on a file that came out of the import a fit computed here answers
+nowhere until somebody moves it up. The band above the box draws which line is
+winning at which metre, so it is visible; the panel says it as well, because
+visible and unsaid is how it would become a trap. Where the line should go is a
+decision still to make.
+
+The line is built in `fits.as_line` rather than taken from `dumps`, for the same
+reason the whole tool splices: the format's own writer prints whole degrees, and
+a plane read over a swept window is a computed number — `140.5/31.2` would leave
+as `140/31`. It is built out of the format's own spellings of an anchor and of an
+attribute, not out of new ones, since exactly one attribute written here can hold
+a space — the DEM's file name — and `dem=Monte Alpi.tif` would read back as a
+`dem` of `Monte` and a stray token the parser has no reason to refuse.
+
+**And the floor this found.** Every vertex in the format is written to two
+decimals, so a trace smooth below a centimetre comes back with its own *storage*
+reported as the wander of the pen that drew it: 4 mm on the synthetic traces of
+`check_imports`, measured off the file they were written to where the layer they
+came from had no measurable pen at all. Three times 4 mm is a lever floor of a
+centimetre, which is no floor — every degenerate window cleared the first stage,
+and the V that should read 89/30 came back as two fits at 341/76 and 206/90.
+`digitising_jitter` is right to report it, the roughness of those lines being
+exactly that; what was wrong was reading a storage grid as a property of the
+drawing. `traces.measured_pen` is now the one rule, used both to build the gate
+and to write the sentence beside it, and it refuses a sigma finer than
+`FINEST_PEN_M` — 5 cm, which is far above any precision this project writes and
+far below any pen, three tenths of a millimetre being 5 cm on the ground only at
+1:170.
+
 **Saving replaces the lines of the structures that were edited and leaves every
 other byte alone.** Not fastidiousness — measured. Run `curation.gstruct` through
 a load and a dump and the ten lines of comment in it are gone, because comments
@@ -1066,7 +1127,10 @@ that never ran.
 two anchors.** This is the line FORMAT.md already had somebody else's name
 against: *gli intervalli ancorati ci sono e si leggono — gSurf ne scrive, uno per
 finestra che tiene — quindi qui manca il produttore, non il formato*. Name a DEM
-in the dialog and this is that producer. The window is swept per trace, the gate
+in the dialog and this is that producer — `gsurf/fits.py`, which the trace
+editor's `fit off the DEM` calls one trace at a time. What is here rather than
+there is the part that is about a whole layer: one gate under all of it, the
+cancel, and the counting. The window is swept per trace, the gate
 decides where the plane is held, loose or merely a line, and a run that is only a
 line becomes nothing at all: a plane through a straight trace is arbitrary rather
 than imprecise, and writing one would put a number in the file that nobody could
@@ -1074,6 +1138,13 @@ tell from a measurement. The diagnostics are `window=` and `span_verdict=`, whic
 FORMAT.md names as this producer's own, plus `windows=`, `step=`, `sampled=` and
 `dem=`; never `nvert=`, which counts digitised vertices where this counts DEM
 samples.
+
+`silent` is the remainder and only that, which took the extraction to notice: it
+used to go up whenever no fit came back, so it counted the traces that were off
+the DEM and the ones shorter than the window as well — the three facts the report
+separates, summed into the first of them and printed beside the other two. On
+`elementi_tettonici` that read as the topography having refused 12718 traces it
+was never asked about.
 
 The check builds a DEM that is one plane dipping 30° due east and drapes four
 traces on it, so what the fit must come back as is the arithmetic that made the
@@ -1291,6 +1362,15 @@ table takes all of them in 0.4 s; the fit over the 22531 inside the DEM is
 130 s, and what follows it is 17 s of rebuilding the bundle over the 12254
 records that came back. That last number is the one that decides how the tool
 is used, not the first: it is paid again on every release of the mouse.
+
+**One trace at a time, in the editor**, which is the same producer and a
+different budget. `merid_faults` opens in 1.2 s; the gate over its 393 paths is
+measured once, at 0.04 s, and then one trace read off the 5 m DEM is 0.14 s
+including it — 12 ms a trace over 25 of them with no window around them, which is
+the import's own 10 ms. `Apply` is 0.9 s, being a parse and a redraw of the band.
+So nothing here needs a progress bar, and the one number that would have is the
+gate: measured over the paths of a sheet rather than of a curation it would be
+the wait, which is why it is taken when the first fit is asked for and kept.
 
 Reading those contacts used to cost 9.3 s rather than 1.6, of which 8.3 was
 `Ln.length_2d` in geogst building two `Point` objects and calling
