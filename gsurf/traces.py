@@ -91,6 +91,22 @@ SAGITTA_TO_SIGMA = 1.0 / (0.6745 * math.sqrt(1.5))
 # than a slice of a roughness that never stops.
 MAX_SCALED_EXPONENT = 0.5
 
+# And the finest pen worth believing, in metres. A sigma below this is not a hand
+# that wandered: a `.gstruct` writes every vertex to two decimals, so a trace
+# whose real roughness is under a centimetre comes back with its own *storage*
+# reported as its jitter. Measured, on the four synthetic traces of
+# `check_imports`: no pen at all off the layer they were built from, and 4 mm off
+# the file they were written to -- a lever floor of 1.2 cm, which is no floor, so
+# every degenerate window cleared the first stage and a plane through a straight
+# trace got written. `digitising_jitter` is right to report it, the roughness of
+# those lines being exactly that; what is wrong is reading a storage grid as a
+# property of the drawing.
+#
+# Five centimetres because it has to sit far above any precision this project
+# writes and far below any pen: three tenths of a millimetre, the finest
+# `for_scale` allows for, is 5 cm on the ground only at 1:170.
+FINEST_PEN_M = 0.05
+
 
 def _roughness(lines, stride):
     """Median sagitta and median spacing with every `stride`-th vertex kept."""
@@ -234,6 +250,35 @@ def digitising_jitter(lines, strides=(1, 2, 3, 4, 6, 8)):
     )
 
 
+def measured_pen(jitter):
+    """
+    What `digitising_jitter` found, where it is a pen, and None where it is not.
+
+    Three ways it is not one, and the third is why this is a function rather
+    than an `if` inside `from_traces`: nothing came back at all; `sigma` came
+    back None, the roughness having no scale to be measured at; or `sigma` came
+    back *finer than any pen*, which means what was measured is the precision
+    the coordinates are stored at rather than anything about the drawing. See
+    `FINEST_PEN_M` for the case that put it here.
+
+    Separate because two things need the same answer and they are in different
+    modules: the gate is built off it, and the sentence shown next to the gate
+    is written off it. A floor applied to one and not the other is a tool whose
+    report and whose behaviour disagree, which is worse than either being wrong
+    on its own.
+    """
+
+    if jitter is None:
+        return None
+
+    sigma = jitter.get("sigma")
+
+    if sigma is None or not math.isfinite(sigma) or sigma < FINEST_PEN_M:
+        return None
+
+    return float(sigma)
+
+
 # -- what a window has to clear ------------------------------------------
 
 
@@ -292,12 +337,27 @@ class TraceGate:
         and to see `exponent` before trusting the number.
         """
 
-        jitter = digitising_jitter(lines)
+        return cls.from_jitter(digitising_jitter(lines), factor=factor, **rest)
 
-        if jitter is None or jitter["sigma"] is None:
+    @classmethod
+    def from_jitter(cls, jitter, factor=3.0, **rest):
+        """
+        The same floor off a roughness already measured, for a caller wanting both.
+
+        `digitising_jitter` over a sheet is not free, and a caller that has to
+        *report* the pen as well as gate on it would otherwise measure it twice --
+        which is what the import did. Worse than the cost: two calls are two
+        chances for the number shown and the number used to be arrived at
+        differently, and `measured_pen` is the rule that has to be the same in
+        both. Hence one measurement, passed in.
+        """
+
+        sigma = measured_pen(jitter)
+
+        if sigma is None:
             return cls(**rest)
 
-        return cls(min_lever=factor * jitter["sigma"], **rest)
+        return cls(min_lever=factor * sigma, **rest)
 
     @classmethod
     def for_scale(cls, denominator, pen=3.0e-4, **rest):

@@ -1246,7 +1246,7 @@ def main():
                                          points_dip_field="b")) is None)
 
         # A step that is most of the window makes a held stretch one window wide
-        # and its extent the step, which is the thing `_reach` exists to stop
+        # and its extent the step, which is the thing `fits.reach_of` exists to stop
         # being the normal case rather than the corner.
         check("and a step that barely overlaps its window is refused",
               dialog.refusal(Mapping(fit_step=200.0, fit_fallback=250.0))

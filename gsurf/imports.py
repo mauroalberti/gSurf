@@ -118,6 +118,17 @@ from PyQt6 import QtCore, QtWidgets
 
 from .attitudes import CONVENTIONS, admissible, normalised_azimuth, numeric, numeric_fields
 from .curation import SUFFIX, degrees_not_metres, gstruct_plane, module
+from .fits import (
+    FROM_DEM,
+    SHORTENED,
+    SWEPT,
+    TOO_SHORT,
+    UNREACHED,
+    Sweep,
+    dem_refusal,
+    fits_along,
+    gate_for,
+)
 from .sources import first_match
 from .vectors import VectorSource, single_parts
 
@@ -127,12 +138,12 @@ from .vectors import VectorSource, single_parts
 # computed nothing -- the number was in the table.
 FROM = "table"
 
-# What a plane read off the topography says it came from: FORMAT.md's own name
-# for it, and deliberately the same one `export_geology.py` writes. Both sample
-# a DEM along a mapped trace, so they are the same kind of derivation; what
-# separates them is the diagnostic each can honestly report, and `src=gsurf`
-# says which program to read those by.
-FROM_DEM = "trace-dem"
+# What a plane read off the topography says it came from is `fits.FROM_DEM`:
+# FORMAT.md's own name for it, and deliberately the same one
+# `export_geology.py` writes. Both sample a DEM along a mapped trace, so they
+# are the same kind of derivation; what separates them is the diagnostic each
+# can honestly report, and `src=gsurf` says which program to read those by. Kept
+# importable from here as well, this having been where it was written.
 
 # How far a measured point may sit from a trace and still be a measurement on
 # it. `export_geology.py`'s `ATTACH_M`, and the same 100 m, which is a figure
@@ -350,7 +361,7 @@ class Mapping:
     target_crs: str = None
 
     # The topography, and how the window is swept along the trace. The gate is
-    # not here: `TraceGate.from_traces` measures its lever floor off the layer
+    # not here: `fits.gate_for` measures its lever floor off the layer
     # being read, which is the way round to prefer, so it is built where the
     # geometry is rather than typed in beside the file name.
     dem_path: str = None
@@ -395,12 +406,15 @@ class Mapping:
         return self.measures_path, self.measures_layer
 
     @property
-    def lengths(self):
-        """The sweep, defaulting to the one `traces` measured its costs on."""
+    def sweep(self):
+        """The four sweep numbers as the one thing they are, for `fits`."""
 
-        from .traces import DEFAULT_SWEEP
-
-        return tuple(self.fit_lengths) or DEFAULT_SWEEP
+        return Sweep(
+            lengths=tuple(self.fit_lengths),
+            step=self.fit_step,
+            fallback=self.fit_fallback,
+            keep=self.fit_keep,
+        )
 
 
 def fields_of(path, layer=None):
@@ -1736,220 +1750,6 @@ def _unstationed(gstruct, dataset, orphans, mapping, report):
 # -- the planes off the topography ---------------------------------------
 
 
-def _dem_refusal(dem, frame_crs):
-    """
-    Why this DEM cannot be sampled for this layer, or None.
-
-    One CRS or nothing, and the refusal is not fussiness. The trace would be
-    sampled in the DEM's grid and the fit's anchors written in the layer's, so a
-    mismatch puts the plane and the place it holds over in two different
-    coordinate systems -- and the dip direction that came out would be measured
-    from the DEM's north, which is not the north the file declares. Transforming
-    the trace on the way in would fix the sampling and not that.
-    """
-
-    code = dem.crs.to_epsg() if dem.crs is not None else None
-    wanted = frame_crs.to_epsg() if frame_crs is not None else None
-
-    if code is not None and wanted is not None and code == wanted:
-        return None
-
-    return (
-        f"the DEM is in {dem.crs.to_string() if dem.crs else 'no declared CRS'} "
-        f"and the layer in "
-        f"{frame_crs.to_string() if frame_crs else 'no declared CRS'}. A plane "
-        f"read off the topography is a dip direction measured from the DEM's "
-        f"north and written against the layer's: reproject one of them first, "
-        f"because nothing here can make that mean the same thing."
-    )
-
-
-# How near an end of the path counts as being at it: a centimetre, which is the
-# precision anchors are written to anyway.
-AT_THE_END = 0.01
-
-
-def _anchors(gstruct, path, start, end, span):
-    """
-    A stretch as a pair of anchors, with `*` wherever it reaches an end of the path.
-
-    `*` is the format's own word for an end of the path, and writing it is not
-    tidiness: on a **closed** trace `path[-1]` is `path[0]`, so a fit reaching
-    both ends writes one coordinate twice and reads back covering nothing at all.
-    Eight traces of `elementi_tettonici` are closed rings, and on every one a fit
-    that had held over eighteen windows came back with an extent of zero -- a
-    plane in the file, covering no part of the trace it had been read off.
-
-    Both ends in one call, because on a ring the coordinate cannot say which end
-    it is and only the caller knows.
-    """
-
-    return (
-        None if start <= AT_THE_END else gstruct.point_at(path, start),
-        None if end >= span - AT_THE_END else gstruct.point_at(path, end),
-    )
-
-
-def _reach(runs, index, length, ends):
-    """
-    How far along the trace a held run's plane is written as holding.
-
-    **Half a window beyond the centres that held, but never into ground another
-    verdict already claims.** Both halves of that are load-bearing, and the
-    first was missing: `TraceSpans.runs` reports the interval the window
-    *centres* covered, which for a run of one position is a single step. On 1200
-    traces of `elementi_tettonici` that made every one of 244 fits claim 25 m of
-    trace while having been read over 150 to 600 m of it -- so `attitude_at`
-    answered `assente` over almost all of a trace whose plane the file had just
-    determined. The centres are where the verdict was taken; the window is where
-    the evidence was.
-
-    Widening stops at a neighbouring run because that run is a verdict, and on
-    these traces it is usually `line`: the gate, asked about that stretch, said
-    the plane was not determined there, and answering with the neighbour's plane
-    would be overruling the gate using the gate's own data. The ends of a part
-    are different in kind -- no window could be centred there, so nothing was
-    ever asked -- and that is the ground this may take.
-
-    `traces` deliberately does not widen, and is right not to: there the runs
-    are summed into metres per verdict, and widened ones would overlap and total
-    past the trace. Nothing sums these.
-    """
-
-    _, s0, s1 = runs[index]
-
-    before = runs[index - 1][2] if index else ends[0]
-    after = runs[index + 1][1] if index + 1 < len(runs) else ends[1]
-
-    return max(s0 - length / 2.0, before), min(s1 + length / 2.0, after)
-
-
-def _fit_along(gstruct, structure, dem, mapping, gate, report):
-    """
-    Every stretch of one path whose plane the topography determines, as `fit`s.
-
-    One path at a time and never the parts of a multipart together, which the
-    split has already seen to: `trace_points` runs its progressive *on* across
-    parts, so a fit computed over two fragments would be anchored by a
-    progressive measured on their concatenation and land somewhere else when the
-    file was read back.
-
-    **A run that is only a line becomes nothing.** That is the whole of why this
-    goes through the gate rather than writing the plane at every window: a plane
-    through a straight trace is arbitrary and not merely imprecise, and a file
-    saying `fit plane 90/47` where the trace never turned would be a number
-    nobody could tell from a measurement.
-
-    The window length is swept per trace and not chosen once, for the reason
-    `traces.fit_records` gives -- where lengthening stops helping is a property
-    of the trace. Most traces have no such turn and take the fallback, and the
-    report counts which is which rather than quoting the tally that looks better.
-
-    **And where the fallback does not fit, the longest window that does.** A part
-    shorter than the window is not fitted at all -- `trace_spans` is deliberate
-    about that, since reading one fragment at a different scale from the rest
-    makes the verdicts along a trace incomparable -- but the *fallback* is a
-    default and not a scale somebody chose. On `elementi_tettonici` the median
-    trace is 172 m, so keeping to 250 m would refuse two thirds of the sheet on
-    the strength of a number nobody typed. Which window was used is in the file
-    as `window=`, so the scale a plane was read at is never in doubt.
-    """
-
-    from .traces import holding_length, trace_points, trace_spans, window_sweep
-
-    sampled = min(10.0, mapping.fit_step)
-
-    parts = trace_points([structure.path], dem, step=sampled)
-
-    if not parts:
-        report.unreached += 1
-        return []
-
-    sweep = window_sweep(
-        parts, mapping.lengths, step=mapping.fit_step, gate=gate
-    )
-    length = holding_length(sweep)
-
-    if length is not None:
-        report.swept += 1
-        spans = sweep[length]
-    else:
-        length = mapping.fit_fallback
-        spans = (
-            sweep[length] if length in sweep
-            else trace_spans(parts, length, step=mapping.fit_step, gate=gate)
-        )
-
-        if len(spans) == 0:
-            shorter = [
-                other for other in sorted(sweep, reverse=True)
-                if other < length and len(sweep[other])
-            ]
-
-            if not shorter:
-                report.too_short += 1
-                return []
-
-            length = shorter[0]
-            spans = sweep[length]
-            report.shortened += 1
-
-    out = []
-
-    runs = spans.runs()
-
-    # The ends of a part carry no verdict at all: a window has to fit, so the
-    # first centre sits half a window in and the ground outside that was never
-    # classified. Which is what `_reach` is allowed to claim and a neighbouring
-    # run is not.
-    progressive = parts[0][1]
-    ends = (float(progressive[0]), float(progressive[-1]))
-    span = gstruct.path_length(structure.path)
-
-    for index, (verdict, s0, s1) in enumerate(runs):
-        if verdict != mapping.fit_keep:
-            continue
-
-        # On the unwidened bounds, always: these are the centres whose windows
-        # held, and averaging over the reach instead would pull in the windows
-        # that failed.
-        attitude = spans.mean_attitude(s0, s1)
-
-        if attitude is None:
-            continue
-
-        covered = int(((spans.progressive >= s0) & (spans.progressive <= s1)).sum())
-
-        start, end = _reach(runs, index, length, ends)
-
-        # Anchors and not the progressives, which is the format's rule and not a
-        # preference: a reader projects them onto whatever path it has, so the
-        # same stretch survives the trace being redigitised, where a stored `s`
-        # would migrate.
-        start, end = _anchors(gstruct, structure.path, start, end, span)
-
-        out.append(gstruct.Fit(
-            plane=gstruct.Plane(attitude[0], attitude[1]),
-            start=start,
-            end=end,
-            attrs={
-                "from": FROM_DEM,
-                "src": "gsurf",
-                # The two FORMAT.md names for this producer's diagnostic, and
-                # no third: `nvert` counts digitised vertices and this counts
-                # DEM samples, so it is not a number this has.
-                "window": f"{length:.0f}",
-                "span_verdict": verdict,
-                "windows": str(covered),
-                "step": f"{spans.step:.0f}",
-                "sampled": f"{sampled:.0f}m",
-                "dem": dem.path.name,
-            },
-        ))
-
-    return out
-
-
 def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
     """
     The DEM read along every path, with the fits attached only if it finished.
@@ -1963,39 +1763,42 @@ def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
     which is recoverable -- the same import runs again.
 
     **The lever floor is measured off the layer**, which is the way round
-    `TraceGate.from_traces` exists for: a departure from straightness smaller
-    than the wander of the pen that drew the line is not evidence of a turn, and
-    how much the pen wandered is a property of the sheet rather than a constant.
-    Where the measurement does not come back -- a self-affine layer, which is
-    what a mapped contact usually is -- the class default stands and the note
-    says so, rather than a number being extrapolated and made to look measured.
+    `fits.gate_for` exists for: a departure from straightness smaller than the
+    wander of the pen that drew the line is not evidence of a turn, and how much
+    the pen wandered is a property of the sheet rather than a constant. Where the
+    measurement does not come back -- a self-affine layer, which is what a mapped
+    contact usually is -- the class default stands and the note says so, rather
+    than a number being extrapolated and made to look measured.
+
+    Reading one trace is `fits.fits_along`, which the trace editor calls as well.
+    What is here is the part that is about a whole layer: the one gate under all
+    of it, the cancel, and the counting.
     """
 
     from .dem import Dem
-    from .traces import TraceGate, digitising_jitter
 
     dem = Dem(mapping.dem_path)
 
     try:
-        said = _dem_refusal(dem, frame_crs)
+        said = dem_refusal(dem, frame_crs)
 
         if said:
             raise ValueError(said)
 
         paths = [structure.path for structure in dataset.structures]
 
-        jitter = digitising_jitter(paths)
-        gate = TraceGate.from_traces(paths)
+        gate, sigma = gate_for(paths)
 
         report.notes.append(
             f"gate: lever {gate.min_lever:.1f} m "
             + (
-                f"(3x il jitter misurato, {jitter['sigma']:.1f} m)"
-                if jitter is not None and jitter["sigma"] is not None
+                f"(3x il jitter misurato, {sigma:.1f} m)"
+                if sigma is not None
                 else "(default: il jitter non si misura su questo layer)"
             )
         )
 
+        sweep = mapping.sweep
         found, total = {}, len(dataset.structures)
 
         for index, structure in enumerate(dataset.structures):
@@ -2003,12 +1806,30 @@ def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
                 report.stopped = True
                 break
 
-            fits = _fit_along(gstruct, structure, dem, mapping, gate, report)
+            reading = fits_along(
+                structure, dem, gate, sweep=sweep, gstruct=gstruct
+            )
 
-            if fits:
-                found[index] = fits
-            else:
+            if reading.fits:
+                found[index] = reading.fits
+
+            # `Reading.silent` and not "no fits came back", which is what this
+            # counted before the reading was a thing that could say which of the
+            # three it was. A trace off the DEM has no fits and a trace shorter
+            # than the window has no fits, so `silent` was the sum of the three
+            # facts this dataclass exists to keep apart -- printed beside the
+            # other two as though it were the remainder. Now it is.
+            if reading.silent:
                 report.silent += 1
+
+            if reading.outcome == UNREACHED:
+                report.unreached += 1
+            elif reading.outcome == TOO_SHORT:
+                report.too_short += 1
+            elif reading.outcome == SWEPT:
+                report.swept += 1
+            elif reading.outcome == SHORTENED:
+                report.shortened += 1
 
         if report.stopped:
             report.swept = report.shortened = 0

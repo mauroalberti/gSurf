@@ -315,6 +315,60 @@ def main():
         f"exponent {selfaffine['exponent']:+.2f}, between a pen and a curve",
     )
 
+    # The one that was found by hooking the fit up to the editor, where the
+    # traces are read out of a `.gstruct` instead of off a layer. Every vertex in
+    # that format is written to two decimals, so a trace smooth below a
+    # centimetre comes back with its own *storage* as its measured roughness --
+    # scale-free noise, which is exactly what the exponent guard is looking for,
+    # so it passes. The measurement is right and reading it as a pen is not.
+    # Straight and densified, which is what makes the point: the true sagitta is
+    # exactly zero at every vertex, so whatever roughness comes back is the
+    # rounding and nothing else. A bearing off the axes, or the coordinates would
+    # be round numbers and there would be nothing to round.
+    step = 20.0 * np.array([np.cos(np.radians(26.565)), np.sin(np.radians(26.565))])
+    stored = np.round(np.outer(np.arange(200.0), step), 2)
+    quantised = traces.digitising_jitter([Line(stored)])
+
+    check(
+        "a trace stored to the centimetre reports its own grid as roughness",
+        quantised["sigma"] is not None
+        and quantised["sigma"] < traces.FINEST_PEN_M,
+        f"sigma {quantised['sigma'] * 1000.0:.1f} mm, "
+        f"exponent {quantised['exponent']:+.2f}",
+    )
+
+    check(
+        "and that is refused as a pen, so the gate keeps its own floor",
+        traces.measured_pen(quantised) is None
+        and traces.TraceGate.from_traces([Line(stored)]) == traces.TraceGate(),
+        f"floor {traces.TraceGate.from_traces([Line(stored)]).min_lever:.2f} m "
+        f"against {3.0 * quantised['sigma']:.3f} m unfloored",
+    )
+
+    # Which is the failure it would otherwise be, stated as the number it was: a
+    # lever floor of a centimetre admits every window of every trace, so a plane
+    # gets written where the trace never turned -- the one thing the gate is for.
+    unfloored = traces.TraceGate(min_lever=3.0 * quantised["sigma"])
+
+    # 13 cm of transverse spread: a metre of `s2` over sixty points, which is a
+    # trace that is straight to within a hand's width of its own storage.
+    barely = (60, 500.0, 1.0, 0.001)
+
+    check(
+        "an unfloored centimetre would admit a straight trace, which the floor does not",
+        unfloored.determines(*barely)
+        and not traces.TraceGate().determines(*barely),
+        f"{traces.transverse_spread(barely[0], barely[2]) * 100.0:.0f} cm of spread "
+        f"against a floor of {unfloored.min_lever * 100.0:.1f} cm",
+    )
+
+    check(
+        "a real pen is not touched by that floor, being nowhere near it",
+        traces.measured_pen(original) is not None
+        and abs(traces.measured_pen(original) - original["sigma"]) < 1e-12,
+        f"{original['sigma']:.2f} m against a floor of {traces.FINEST_PEN_M:.2f} m",
+    )
+
     check(
         "a gate built off a rough layer stands clear of the roughness",
         abs(traces.TraceGate.from_traces([Line(rough)]).min_lever
