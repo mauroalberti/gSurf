@@ -149,11 +149,17 @@ class Launcher(QtWidgets.QMainWindow):
         It goes in as a spec and not a bare path because that is the shape the
         `traces` slot restores from -- with no columns named, the format saying
         what everything is being the reason a `.gstruct` needs none.
+
+        The DEM slot goes down with it, and not so that anything is read off it
+        here: a layer in degrees names no datum, and what the rest of this work
+        is written in is the only evidence there is of which one is meant. A
+        file written in the wrong one opens perfectly and then has `fit off the
+        DEM` grey forever, which is how this was found. See `projected_for`.
         """
 
         from .imports import run
 
-        written = run(self)
+        written = run(self, alongside=self.chosen.get("dem"))
 
         if written is None:
             return None

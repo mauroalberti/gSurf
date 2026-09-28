@@ -581,7 +581,34 @@ def crs_refusal(said):
     return None
 
 
-def projected_for(path, layer=None):
+def alongside_crs(named, zone, hemisphere):
+    """
+    What is to be written beside, as a CRS, where it is projected onto this zone.
+
+    Anything else is no answer and the caller falls back to coining a code.
+    Another zone would place the layer somewhere it is not; a projection with no
+    EPSG code cannot go into a `crs` line that holds one word; and something
+    still in degrees has the same nothing to say about a datum that the layer
+    being read has.
+    """
+
+    if not named:
+        return None
+
+    from pyproj import CRS
+
+    try:
+        kept = CRS.from_user_input(named)
+    except Exception:
+        return None
+
+    if kept.is_geographic or kept.to_epsg() is None:
+        return None
+
+    return kept if kept.utm_zone == f"{zone}{hemisphere}" else None
+
+
+def projected_for(path, layer=None, alongside=None):
     """
     The projection to propose writing in, as `(epsg, why)`.
 
@@ -596,9 +623,29 @@ def projected_for(path, layer=None):
     this area: its datum is the WGS 84 *ensemble*, a name the EPSG database has
     no UTM zone registered against.
 
-    ETRS89 in, ETRS89 out, where the zone has one: a survey in EPSG:4258 taken
-    to WGS 84 / UTM would carry a datum shift of about half a metre that nobody
-    asked for, and this area's own files are written in EPSG:25833.
+    **The zone comes from the layer and the datum from the company it will
+    keep.** Where it is on the ground the layer can say, and the extent says it;
+    what it cannot say is which datum, because the name on EPSG:4326 is that
+    same ensemble -- "WGS 84" here means unspecified to about two metres, and no
+    rule reading that name can turn it into ETRS89. So a rule that reads it
+    cannot fire, which is what the ETRS89 branch below did on this AOI: a faults
+    layer in EPSG:4326 was written as EPSG:32633 beside a DEM in EPSG:25833, and
+    the trace editor's `fit off the DEM` was grey on that file ever after.
+
+    `alongside` is what the written file will be read beside -- the DEM, which
+    is the case that bites. A plane read off the topography is a dip direction
+    measured from the DEM's north and written against the traces', so
+    `fits.dem_refusal` turns down the pair outright where the two codes differ,
+    and here the import itself raises on it. Proposing a code the very next step
+    refuses is the one answer this must not give.
+
+    Only the datum is taken from it and only within the layer's own zone, so
+    what comes back is still where the layer is: see `alongside_crs`.
+
+    ETRS89 in, ETRS89 out, where the zone has one and nothing else is known: a
+    survey in EPSG:4258 taken to WGS 84 / UTM would carry a datum shift of about
+    half a metre that nobody asked for, and this area's own files are written in
+    EPSG:25833.
     """
 
     import pyogrio
@@ -630,6 +677,15 @@ def projected_for(path, layer=None):
     lat = (float(bounds[1]) + float(bounds[3])) / 2.0
 
     zone = int((lon + 180.0) // 6.0) + 1
+
+    kept = alongside_crs(alongside, zone, "N" if lat >= 0.0 else "S")
+
+    if kept is not None:
+        return f"EPSG:{kept.to_epsg()}", (
+            f"the layer is in degrees ({crs.name}), which names no datum; UTM "
+            f"zone {zone} from its own extent around lon {lon:.2f}, and "
+            f"{kept.name} because that is what it will be read beside"
+        )
 
     # 28N to 38N is the whole of ETRS89 / UTM's own range, and outside it the
     # code would be an EPSG number that means something else entirely.
@@ -1864,13 +1920,23 @@ class ImportDialog(QtWidgets.QDialog):
     plumbing.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, alongside=None):
         super().__init__(parent)
 
         self.setWindowTitle("gSurf - lines to .gstruct")
 
         self._path = None
         self.written = None
+
+        # What the file being written will be read beside, as a raster path or a
+        # code: the session's DEM, handed in by the launcher. A layer in degrees
+        # can say which zone it falls in and nothing about which datum, and this
+        # is the only thing in the room that can -- see `projected_for`.
+        self._alongside = alongside
+
+        # The last code this dialog filled in, so that re-proposing can tell a
+        # field nobody has touched from an answer somebody typed.
+        self._proposed = None
 
         self.path_label = QtWidgets.QLabel("no file")
         self.path_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -2196,7 +2262,34 @@ class ImportDialog(QtWidgets.QDialog):
 
         self._describe(layer)
 
-    def _propose_crs(self, layer):
+    def _company(self):
+        """
+        The projection the written file will be read beside, or None.
+
+        The DEM named here first, because that is the one this import will fit
+        against itself and the one `dem_refusal` is about to be handed; the
+        session's otherwise. Read with `rasterio` and not with `Dem`, which
+        builds a hillshade and a median on the way in -- seconds on a mosaic,
+        and this runs on every change of layer to answer one question about the
+        header.
+        """
+
+        for path in (self._dem, self._alongside):
+            if not path:
+                continue
+
+            try:
+                import rasterio
+
+                with rasterio.open(str(path)) as src:
+                    if src.crs is not None:
+                        return src.crs.to_string()
+            except Exception:
+                continue
+
+        return None
+
+    def _propose_crs(self, layer, only_untouched=False):
         """
         The projection to write in, filled in from the layer, and why.
 
@@ -2205,12 +2298,23 @@ class ImportDialog(QtWidgets.QDialog):
         that would be wrong without looking wrong, since a file in EPSG:25833
         holding coordinates transformed from somewhere else reads as perfectly
         ordinary.
+
+        Naming a DEM changes the answer too, since that is where the datum comes
+        from for a layer in degrees -- but it does not overwrite a code somebody
+        typed, which the change of layer does. The difference is which of the
+        two the reader is looking at: the layer is what this dialog is about, and
+        the DEM is named further down and long after.
         """
 
+        if only_untouched and self.crs_edit.text().strip() != (self._proposed or ""):
+            return
+
         try:
-            epsg, why = projected_for(self._path, layer)
+            epsg, why = projected_for(self._path, layer, alongside=self._company())
         except Exception as err:
             epsg, why = None, f"{type(err).__name__}: {err}"
+
+        self._proposed = epsg or ""
 
         self.crs_edit.setText(epsg or "")
         self.crs_note.setText(why or "")
@@ -2535,11 +2639,13 @@ class ImportDialog(QtWidgets.QDialog):
             self._dem = path
             self.dem_label.setText(str(path))
             self._describe(self.layer_combo.currentText())
+            self._propose_crs(self.layer_combo.currentText(), only_untouched=True)
 
     def _clear_dem(self):
         self._dem = None
         self.dem_label.setText("no DEM")
         self._describe(self.layer_combo.currentText())
+        self._propose_crs(self.layer_combo.currentText(), only_untouched=True)
 
     # -- the mapping -------------------------------------------------------
 
@@ -2778,16 +2884,19 @@ class ImportDialog(QtWidgets.QDialog):
         self.accept()
 
 
-def run(parent=None):
+def run(parent=None, alongside=None):
     """
     The dialog, and the file it wrote if it wrote one.
 
     What comes back is a path, which is what the caller does something with: the
     launcher remembers it in the traces slot, so the editor proposes it next
     without anybody browsing for it again.
+
+    `alongside` is the session's DEM, passed in for the sake of the header a
+    layer in degrees gets written with: see `projected_for`.
     """
 
-    dialog = ImportDialog(parent)
+    dialog = ImportDialog(parent, alongside=alongside)
 
     if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None

@@ -1184,6 +1184,75 @@ def main():
               projected_for(path, "faglie") == ("EPSG:25833", None),
               str(projected_for(path, "faglie")))
 
+        # The zone stays the layer's and the datum comes from the company: a
+        # layer in EPSG:4326 carries the WGS 84 *ensemble*, which names no datum
+        # at all, so the only evidence of which one is meant is what the file is
+        # about to be read beside.
+        beside, why = projected_for(degrees, "faglie", alongside="EPSG:25832")
+
+        check("a layer in degrees takes the datum of what it will be read beside",
+              beside == "EPSG:25832" and "read beside" in (why or ""),
+              f"{beside} - {why}")
+
+        # And the guard, which is what keeps this a fact about the data: a DEM
+        # in another zone says nothing about where this layer is, and one still
+        # in degrees has the same nothing to say that the layer has.
+        check("but only from the same zone, and only from something projected",
+              projected_for(degrees, "faglie", alongside="EPSG:25833")[0]
+              == "EPSG:32632"
+              and projected_for(degrees, "faglie", alongside="EPSG:4326")[0]
+              == "EPSG:32632"
+              and projected_for(degrees, "faglie", alongside="nonsense")[0]
+              == "EPSG:32632",
+              str([projected_for(degrees, "faglie", alongside=said)[0]
+                   for said in ("EPSG:25833", "EPSG:4326", "nonsense")]))
+
+        check("and a layer in metres is still its own, whatever it sits beside",
+              projected_for(path, "faglie", alongside="EPSG:32633")
+              == ("EPSG:25833", None),
+              str(projected_for(path, "faglie", alongside="EPSG:32633")))
+
+        # And through the dialog, which is where this was met: a file written in
+        # EPSG:32633 beside a DEM in EPSG:25833 opens perfectly and then has
+        # `fit off the DEM` grey on it forever, because `dem_refusal` turns the
+        # pair down and the button is disabled from the refusal.
+        beside_dem = relief_at(tmp, "beside.tif", crs="EPSG:25832")
+
+        plain = ImportDialog()
+        plain.set_path(str(degrees))
+
+        check("the dialog coins a code while nothing says which datum is meant",
+              plain.crs_edit.text() == "EPSG:32632", plain.crs_edit.text())
+
+        asked = ImportDialog(alongside=str(beside_dem))
+        asked.set_path(str(degrees))
+
+        check("and one opened beside the session's DEM writes in the DEM's datum",
+              asked.crs_edit.text() == "EPSG:25832"
+              and "read beside" in asked.crs_note.text(),
+              f"{asked.crs_edit.text()} - {asked.crs_note.text()}")
+
+        # Named here rather than carried in, and named after the layer: the
+        # field follows it, since this is the DEM the import itself will fit
+        # against and hand to `dem_refusal`.
+        asked._dem = str(relief_at(tmp, "named.tif", crs="EPSG:32632"))
+        asked._propose_crs(asked.layer_combo.currentText(), only_untouched=True)
+
+        check("a DEM named in the dialog outranks the session's, and moves it again",
+              asked.crs_edit.text() == "EPSG:32632", asked.crs_edit.text())
+
+        # A code somebody typed is an answer, not a leftover: the change of
+        # layer overwrites it and the change of DEM does not.
+        asked.crs_edit.setText("EPSG:3004")
+        asked._dem = None
+        asked._propose_crs(asked.layer_combo.currentText(), only_untouched=True)
+
+        check("but a code typed by hand survives a change of DEM",
+              asked.crs_edit.text() == "EPSG:3004", asked.crs_edit.text())
+
+        plain.close()
+        asked.close()
+
         text, moved_over = transcript_of(
             degrees, Mapping(layer="faglie", ident_field="code",
                              target_crs="EPSG:32632")
@@ -1298,8 +1367,18 @@ def main():
         # run: a file nobody remembered is a file the next dialog does not offer.
         import gsurf.imports
 
+        launcher.chosen["dem"] = "/somewhere/dem.tif"
+
+        handed = {}
+
         original = gsurf.imports.run
-        gsurf.imports.run = lambda parent=None: str(written)
+
+        def instead(parent=None, alongside=None):
+            handed["alongside"] = alongside
+
+            return str(written)
+
+        gsurf.imports.run = instead
 
         try:
             back = launcher.import_lines()
@@ -1315,9 +1394,15 @@ def main():
               and launcher.chosen["traces"]["path"] == str(written),
               str(proposed.get("path")))
 
+        # The session's DEM goes down with the question, which is what decides
+        # the datum of a layer that has none of its own: see `projected_for`.
+        check("and the session's DEM goes down to the dialog, for the header",
+              handed.get("alongside") == "/somewhere/dem.tif",
+              str(handed.get("alongside")))
+
         cancelled = Launcher(recent=Recent(store_in(tmp, "empty.ini")))
 
-        gsurf.imports.run = lambda parent=None: None
+        gsurf.imports.run = lambda parent=None, alongside=None: None
 
         try:
             nothing = cancelled.import_lines()

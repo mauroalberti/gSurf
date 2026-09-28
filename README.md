@@ -1307,6 +1307,26 @@ the cartographer inside the value, and on a sheet whose 24717 lines are 16506
 stratigraphic contacts and 2152 faults there is no one answer to type either.
 Unsaid is the true answer, and the editor is where it stops being.
 
+The header gets a proposal before it gets a refusal. A layer already in metres
+proposes itself, which changes nothing. A layer in degrees has no projection of
+its own to keep, so the UTM zone is worked out from its own extent — a fact about
+the data rather than a preference, and one that stays in the field to be
+overridden. What an extent cannot give is a datum: EPSG:4326 is the WGS 84
+*ensemble*, a name that means unspecified to about two metres, and no rule
+reading that name can turn it into ETRS89. So the zone comes from the layer and
+the datum from the company the file will keep — the session's DEM, or one named
+in the dialog — and only where that is projected onto the layer's own zone, so
+that what comes back is still where the layer is.
+
+Not a nicety. `fits.dem_refusal` turns down a DEM and a set of traces whose codes
+differ, because a plane read off the topography is a dip direction measured from
+the DEM's north and written against the traces'; and the trace editor disables
+`fit off the DEM` from that refusal. A faults layer in EPSG:4326 imported beside
+a DEM in EPSG:25833 used to come out as EPSG:32633 — every coordinate right to a
+tenth of a millimetre, the same zone, the same grid north, and the button grey on
+that file ever after. A code the next step refuses is the one proposal this must
+not make.
+
 Two refusals are about the header rather than the rows, and both close the same
 trap. A projection with no EPSG code is refused, because `crs` is read back as
 one token and a WKT written there would lose all but its first word. A layer in
