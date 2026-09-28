@@ -32,11 +32,14 @@ shortcuts and a status bar, and `_build_shortcuts` and `say` are those.
 **Finding the one to open.** 45 of the 393 faults of `merid_faults` carry a
 plane; the other 348 are mapped contacts nobody has read one off yet. So the
 first question this tool has to answer is which forty-five, and it answers it
-twice over: the table sorts on what is written, and the map draws a trace
-carrying something firmly and one carrying nothing faintly. Both go through
-`carries`, so the two can never disagree. A row picked in the table then brings
-its trace into view -- the one thing a highlight cannot do is say where to look,
-and on an AOI-wide framing a 1 km fault is three pixels of orange somewhere.
+three times over: the table sorts on what is written, the map draws a trace
+carrying something firmly and one carrying nothing faintly, and every station in
+the file has its dot whether or not its fault is the one open. The first two go
+through `carries`, so they can never disagree; the third is finer than either,
+because a fault carrying a plane is a line and a station is a place on it. A row
+picked in the table then brings its trace into view -- the one thing a highlight
+cannot do is say where to look, and on an AOI-wide framing a 1 km fault is three
+pixels of orange somewhere.
 
 **What a dot cannot say about itself.** A station dot is drawn on the trace, at
 the progressive the anchor gives; the reading was taken wherever somebody stood,
@@ -49,6 +52,16 @@ in the panel was the only thing that said it does not hold. Resting on the dot
 says both, which is why the hover exists and why what it says is text: `off` is a
 number and a refusal is a word, and neither is a picture.
 
+**All of them, and the selected fault's larger.** The dots were the selection's
+alone at first, which made the map answer "where has anything been read" one
+fault at a time -- 393 selections to see 23 dots. They are in the background now,
+with the traces and for the traces' reason: they change when a block is applied
+and at no other time. What separates the fault under the hand is size and not
+hue, because every hue on this map already means something and the orange
+highlight is saying which fault it is anyway. The cost of the change is that a
+dot is now something to aim at that is not on the trace being edited, which
+`pick` answers for.
+
 **And the one thing text cannot say.** This argument was first made as a reason
 not to draw a net at all -- one measurement per station, no population, and a
 single pole says less than `145/35` written out. The first half is right and the
@@ -56,10 +69,29 @@ conclusion did not follow. A pole is a population's way of drawing a plane; a
 *great circle* is a plane, and a striation drawn on it sits somewhere along it,
 and where along it is the difference between a fault that moved down its dip and
 one that moved along its strike. No pair of numbers shows that, and the net shows
-it without arithmetic. So the window beside the map holds both: the plane the
-cursor is resting on, and the lineations read on it. Only those -- the pole was
-drawn there at first and is not, because with one plane on the net the markers
-inside the circle are the striae, and a pole is a mark inside it that is not one.
+it without arithmetic. The pole was drawn there at first and is not, because the
+markers inside the circle are the striae and a pole is a mark inside it that is
+not one.
+
+**Whose planes the net is showing.** The selected fault's, all of them, and it
+was one -- whichever the cursor was resting on. One is what the data looked like
+from the side of the attitudes: 23 readings over 393 faults, no station repeated,
+so a net per fault and a net per station were the same picture 17 times out of
+20. They are not the same picture once the fits are on it. Counting both, seven
+faults carry two planes or more and six carry a reading *and* a fit, and the
+question those pose is agreement -- whether two planes are the same surface --
+which is a question about a pair and cannot be asked one circle at a time.
+F0074 is the case that settles it: 135/30 with a compass, an `exposed-facet` fit
+at 141/29, and a `trace-dem` fit at 221/10 carrying
+`caveat=immersione non vincolata dalla traccia`. Two circles nearly coincident
+and a third across the net is that caveat, drawn.
+
+So the net follows the selection and the cursor points within it: resting on a
+station dot draws that station's circle again, thicker, with the rest dimmed.
+Which also ends an asymmetry that needed explaining -- the net used to be filled
+by the cursor and emptied by a change of trace, and the title had to carry whose
+plane it was because nothing else did. The title still names the fault. It no
+longer changes while the hand moves.
 
 There are none. `merid_faults` has zero `lineation` records in it, and three of
 its 23 attitudes mention striae in an Italian note -- `lineazione N080°` at S20,
@@ -184,6 +216,14 @@ HOLDS_SAMPLES = 64
 CARRYING_STYLE = dict(colors="#1a1a1a", linewidths=1.5)
 BARE_STYLE = dict(colors="#8a8a8a", linewidths=0.7)
 
+# And how big a station dot is, on the selected fault and anywhere else. Size and
+# not hue, for the reason the trace weights are weight: a dot on a fault nobody is
+# working on is still a place somebody stood and read a plane, which is what the
+# green says, and the only thing that separates it from the others is that it is
+# not the one under the hand. Which the orange highlight is already saying.
+STATION_SIZE = 5
+OTHER_STATION_SIZE = 3.5
+
 # Room around a trace a made framing leaves, and the smallest window it will
 # make. Both are in the docstring of `framing_for`, which is where the numbers
 # they are measured against are.
@@ -225,9 +265,15 @@ SAME_OUTCROP_M = 2.0
 # What the net's window is called, and what it says with nothing on it. A title
 # and not a label inside the figure, because an empty equal-area net is a circle
 # with a grid in it and reads as a widget that has not loaded rather than as one
-# waiting to be pointed at.
+# with nothing to show.
+#
+# And what it says is which structure it is about, which is the whole of how the
+# net says whose planes those are. It read `rest on a green dot` while the net was
+# filled by the cursor; it is filled by the selection now, and 348 of the 393
+# selections fill it with nothing, so an empty net has to name the fault that is
+# empty or it cannot be told from a net that has not been pointed at yet.
 NET_TITLE = "gSurf - stereonet"
-NET_EMPTY_TITLE = f"{NET_TITLE} - rest on a green dot"
+NET_EMPTY_TITLE = f"{NET_TITLE} - nothing selected"
 
 # How big the net opens. Its own window, so the map is no longer paying for it,
 # and that is the whole of the difference: as a dock it had to stop at 276 px,
@@ -1556,17 +1602,30 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._frame_timer.setSingleShot(True)
         self._frame_timer.timeout.connect(lambda: self.frame_now())
 
-        # The station dots that are drawn, as `(where on the map, the record)`,
-        # and which of them the tooltip is currently about. The artist holds
-        # coordinates and nothing else, so the records they were made from have
-        # to be kept alongside or there is no way back from a dot to a station.
+        # The station dots that are drawn, as `(where on the map, the record, which
+        # circle on the net)`, and which of them the tooltip is currently about.
+        # The artist holds coordinates and nothing else, so the records they were
+        # made from have to be kept alongside or there is no way back from a dot to
+        # a station.
+        #
+        # The third element is what ties the two windows together, and it is stored
+        # rather than worked out because the two lists are filtered differently: a
+        # dot is drawn for a station that has an anchor and a circle for a station
+        # that has a plane, and in `merid_faults` all 23 have both. All 23 today --
+        # an attitude carrying `at=` and no plane is a legal record, it would be a
+        # dot with nothing to point at, and a net indexed by counting dots would
+        # then answer with its neighbour's plane. `None` there is that station.
         self._marked = []
         self._tipped = None
 
-        # And which of them the net is showing, which is not the same question:
-        # the tooltip follows the cursor and the net stays where it was put. See
-        # `_on_map_hover`.
+        # And which circle the cursor is pointing at, which is not the same
+        # question: the dot is on the map and the circle is on the net, and between
+        # the two sits a station that may have no plane.
         self._netted = None
+
+        # Before the map, which draws them, and before the first selection, which
+        # picks its own out of them rather than working them out again.
+        self._marked = self._all_stations()
 
         self._build_ui(legend)
         self._draw_base_map()
@@ -1649,7 +1708,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view.legend_handles_provider = self._legend_handles
         self.map_view.pressed.connect(self._on_map_pressed)
         self.map_view.hovered.connect(self._on_map_hover)
-        self.map_view.hover_off.connect(lambda: self._tip_on(None))
+        self.map_view.hover_off.connect(lambda: self._on_map_hover(None, None))
         self.map_view.status.connect(self.say)
 
         # A third window, and not the dock it was first built as. The fold tool's
@@ -1918,6 +1977,19 @@ class EditorWindow(QtWidgets.QMainWindow):
             for carrying in (False, True)
         }
 
+        # Every station in the file, and in the background with the traces for the
+        # same reason they are: they change when a block is applied and at no other
+        # time, so redrawing them on a selection would be paying a full draw for a
+        # picture that did not move.
+        #
+        # Under the animated ones and not over: where a dot is both -- the selected
+        # fault's own -- what stays whole is the larger one.
+        (self.stations,) = axes.plot(
+            [], [], color=PROVENANCE_TINT["misurata"], marker="o",
+            markersize=OTHER_STATION_SIZE, linestyle="none", zorder=4,
+        )
+        self._draw_stations()
+
         self.highlight = self.map_view.add_animated(
             axes.add_line(Line2D([], [], color="#ff7f0e", lw=2.6, zorder=6))
         )
@@ -1930,7 +2002,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             axes.add_line(
                 Line2D(
                     [], [], color=PROVENANCE_TINT["misurata"], marker="o",
-                    markersize=5, linestyle="none", zorder=8,
+                    markersize=STATION_SIZE, linestyle="none", zorder=8,
                 )
             )
         )
@@ -1951,6 +2023,60 @@ class EditorWindow(QtWidgets.QMainWindow):
         # the combo, and a colour nobody can look up is a colour that says nothing.
         self.map_view.refresh_legend()
         self.map_view.anchor_home()
+
+    def _all_stations(self):
+        """
+        Every station dot in the file, as `(on the map, the record, whose trace,
+        which of that trace's planes)`.
+
+        Worked out once and kept, rather than per selection, and that is the whole
+        of what makes the dots global: 348 of the 393 faults contribute nothing to
+        this list and the 45 that do contribute 23 dots between them, so the cost
+        of knowing them all is a list of 23 tuples.
+
+        The fourth element counts planes within one structure, so it survives the
+        selection moving: a dot points at a circle on the net only while its own
+        fault is the one on the net, and that is a comparison made at hover time
+        rather than a number that has to be rebuilt.
+
+        A structure with fewer than two points in its path is skipped whatever it
+        carries. `point_on` has no line to place a progressive on there, and until
+        now such a record could only break the window by being selected -- built
+        for the whole file, it would break the window by being in it.
+        """
+
+        found = []
+
+        for index, structure in enumerate(self.document.dataset.structures):
+            if len(structure.path) < 2:
+                continue
+
+            anchored = [a for a in structure.attitudes if a.s is not None]
+
+            if not anchored:
+                continue
+
+            drawn = self.on_map([point_on(structure.path, a.s) for a in anchored])
+            circles = 0
+
+            for point, attitude in zip(drawn, anchored):
+                on_net = None
+
+                if attitude.plane is not None:
+                    on_net = circles
+                    circles += 1
+
+                found.append((point, attitude, index, on_net))
+
+        return found
+
+    def _draw_stations(self):
+        """Hands the background artist every dot there is."""
+
+        self.stations.set_data(
+            [point[0] for point, _, _, _ in self._marked],
+            [point[1] for point, _, _, _ in self._marked],
+        )
 
     def _segments(self, carrying):
         """The drawn paths of the traces on one side of `carries`."""
@@ -2064,10 +2190,12 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.highlight.set_data([x for x, _ in drawn], [y for _, y in drawn])
 
         self._mark_refusals(structure)
-        self._mark_attitudes(structure)
+        self._mark_attitudes(index)
         self.picked.set_data([], [])
 
         self.map_view.blit()
+
+        self._fill_net(index)
 
     def _mark_refusals(self, structure):
         """The stretches somebody has rejected, drawn where they are."""
@@ -2089,39 +2217,45 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self.refused.set_data(xs, ys)
 
-    def _mark_attitudes(self, structure):
-        marked = [
-            attitude for attitude in structure.attitudes if attitude.s is not None
-        ]
-        drawn = self.on_map([point_on(structure.path, a.s) for a in marked])
+    def _mark_attitudes(self, index):
+        """The selected fault's own dots, drawn again at full size over the rest.
+
+        Drawn twice, which is what the map already does with `traces` and
+        `highlight`: the background holds every dot there is and cannot be redrawn
+        without a full draw, so the handful belonging to the fault under the hand
+        go in an animated artist above it. Above and larger, so that the pair lands
+        as one dot of the bigger size rather than as two.
+        """
+
+        here = [point for point, _, whose, _ in self._marked if whose == index]
 
         # The same reversed pair as in `select`, and the same consequence: the
         # green dot marking where a plane was measured was never on the fault.
-        self.marks.set_data([x for x, _ in drawn], [y for _, y in drawn])
+        self.marks.set_data([x for x, _ in here], [y for _, y in here])
 
-        # Kept for the hover, and dropped first: the tooltip is held by index
-        # into this list, and index 0 of the trace just selected is not index 0
-        # of the one before it. Without the reset a cursor that had not moved
-        # would go on showing the station of a dot that is no longer there.
+        # Dropped because the cursor has not moved and the answer has: a tooltip
+        # naming a station on the fault that was selected a moment ago is now
+        # naming one on a fault the hand is no longer on, and the circle the net
+        # was pointing at is not on the net any more.
         self._tip_on(None)
-
-        # And the net with it, this being the change it is cleared by. A net is
-        # meant to outlast the cursor leaving its dot, which is the whole reason
-        # `hover_off` does not touch it -- but it must not outlast the trace it
-        # belongs to, or the window would show one fault with another's plane
-        # beside it and nothing on screen saying so.
-        self._clear_net()
-        self._marked = list(zip(drawn, marked))
+        self._netted = None
 
     def _on_applied(self, index):
         """A block that parsed: the map has to agree with it again."""
 
         self._drawn[index] = self.on_map(self.document.dataset.structures[index].path)
 
-        # The static collections hold a copy of the geometry, so a path edited
-        # in the box has to be handed over again -- and then a full draw, which
-        # is what recaptures the background the rest is blitted over.
+        # The static artists hold a copy of the geometry, so a path edited in the
+        # box has to be handed over again -- and then a full draw, which is what
+        # recaptures the background the rest is blitted over.
+        #
+        # The dots are rebuilt for the whole file and not for the block that was
+        # applied. An edit that moves a path moves the dots on it, an edit that
+        # adds an `attitude` line adds one, and the list is 23 tuples: working out
+        # which of those happened would cost more to write than redoing it.
         self._reset_traces()
+        self._marked = self._all_stations()
+        self._draw_stations()
         self.map_view.canvas.draw()
 
         self.select(index)
@@ -2181,21 +2315,23 @@ class EditorWindow(QtWidgets.QMainWindow):
         """
         A cursor resting on a station dot, or on nothing.
 
-        Two answers with two lifetimes, which is why they are two calls. The
-        tooltip is about where the cursor is and goes away with it -- that is
-        what `hover_off` is connected to. The net is a figure, and reading a
-        figure means looking away from the dot that asked for it: one that
-        emptied as the cursor left would only ever be seen out of the corner of
-        an eye. So the net is filled by a hover and cleared by a change of
-        trace, and in between it keeps saying whose it is in its own title.
+        Two answers about the same dot, and both die with the cursor: the tooltip
+        says which station it is and the net says which of the circles already on
+        it is that station's plane. Neither outlives the hover, which is why
+        `hover_off` arrives here as a hover over nothing rather than at a second
+        slot -- a highlight left behind by a cursor that has gone would be
+        pointing at a circle for no reason anybody could see.
+
+        What does not die with it is the net's contents. Those belong to the
+        selected structure, and the cursor never chooses them: it chooses which of
+        them to point at. That is the whole division, and it is what makes the
+        answer to "whose planes are these" a thing the title can state once.
         """
 
-        which = self._station_near(x, y)
+        which = None if x is None else self._station_near(x, y)
 
         self._tip_on(which)
-
-        if which is not None:
-            self._net_on(which)
+        self._mark_on_net(which)
 
     def _station_near(self, x, y):
         """
@@ -2216,7 +2352,9 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         transform = self.map_view.axes.transData
         here = transform.transform((x, y))
-        offsets = transform.transform([point for point, _ in self._marked]) - here
+        offsets = (
+            transform.transform([point for point, _, _, _ in self._marked]) - here
+        )
         squared = (offsets * offsets).sum(axis=1)
         nearest = int(np.argmin(squared))
 
@@ -2250,70 +2388,133 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self._tipped = which
         self.map_view.canvas.setToolTip(
-            "" if which is None else self._station_tip(self._marked[which][1])
+            "" if which is None else self._station_tip(*self._marked[which][1:3])
         )
 
-    def _net_on(self, which):
+    def _fill_net(self, index):
         """
-        Puts one station's plane on the net, with the lines read on it.
+        Puts one fault's planes on the net: what was measured and what was fitted.
 
-        The great circle is what the two numbers in the tooltip already say and
-        the net says differently: `145/35` is a plane you have to picture, and a
-        picture is what this is for. What it is really for is the second fact --
-        where a striation sits within the plane -- because a trend and a dip
-        direction written side by side do not show whether the movement was down
-        the dip or along the strike, and the net does, at a glance, without
-        arithmetic.
+        All of them and not the one under the cursor, which is what this did
+        first. A great circle is what the two numbers in the table already say and
+        the net says differently -- `145/35` is a plane you have to picture -- but
+        that is the smaller half of it, and it is the half a tooltip can do. The
+        half it cannot is agreement: of the forty-five faults of `merid_faults`
+        that carry anything, seven carry two planes or more and six carry both a
+        reading and a fit, and whether two planes are the same surface is a
+        question no pair of columns answers. F0074 is why -- a compass reading of
+        135/30, an `exposed-facet` fit at 141/29, and a `trace-dem` fit at 221/10
+        with `caveat=immersione non vincolata dalla traccia` written beside it.
+        Two circles almost on top of each other and a third across the net says
+        that at a glance; three rows of numbers make you do it in your head.
 
-        Guarded like the tooltip, and for a stronger reason: filling this is a
-        `set_data` on every artist the net has and a blit, which is a thousand
-        times a motion event's own cost. `None` is not a value this takes --
-        clearing is `_clear_net`, called when the trace changes and not when the
-        cursor moves.
+        Measured and fitted go on as two lists, drawn solid and dashed, because
+        the difference between them is the difference between a plane somebody put
+        a compass on and one least-squares fitted to a scatter. Counting the fits
+        is what makes the net worth opening at all: measurements alone leave it
+        empty on 373 of the 393 selections, and with the fits that falls to 348.
 
-        Drawn whether the window is open or not, which is the opposite of what
-        the fold tool does with the same widget. The difference is what makes it
-        redraw: there it is every frame of a drag, and a hidden canvas costs
-        frame budget and makes the frame cost that tool reports a measurement of
-        something nobody can see. Here it is a cursor crossing onto a different
-        dot. Skipping it would save 2.3 ms on an occasional event and cost the
-        thing it is there for -- a net put back would show whichever station it
-        happened to be closed on.
+        Whose planes they are is in the title, once, and it does not change while
+        the cursor moves. The alternative -- a title following the hover, which is
+        what it did -- flickered the window caption on a gesture that happens sixty
+        times a second, to say a thing the tooltip was saying anyway.
         """
 
-        if which == self._netted:
-            return
+        structure = self.document.dataset.structures[index]
 
-        self._netted = which
-        attitude = self._marked[which][1]
-        plane = attitude.plane
+        # Out of the global list and filtered here, so the circles come out in the
+        # order the dots were numbered in: the fourth element of an entry *is* its
+        # place among these, and reading the planes off `structure.attitudes`
+        # instead would be a second filter free to disagree with the first.
+        measured = [
+            attitude
+            for _, attitude, whose, on_net in self._marked
+            if whose == index and on_net is not None
+        ]
+        fitted = [fit for fit in structure.fits if fit.plane is not None]
 
-        if plane is None:
-            self._clear_net()
-            return
-
-        station = attitude.attrs.get("station") or "no station code"
-        lineations = self._lineations_at(attitude)
+        # Pooled across the planes, not split by which one they were read on: a
+        # stria drawn on the net lies in the plane it was read on, so the circle it
+        # belongs to is the one it is sitting on. See `show_planes`.
+        lineations = [
+            found
+            for attitude in measured
+            for found in self._lineations_at(structure, attitude)
+        ]
 
         self.net_window.setWindowTitle(
-            f"{NET_TITLE} - {station} -- {plane}"
-            + (f", {len(lineations)} lineation(s)" if lineations else "")
+            self._net_title(structure, measured, fitted, lineations)
         )
-        self.net.show_attitude(
-            plane.dip_dir,
-            plane.dip,
-            lineations,
-            color=PROVENANCE_TINT["misurata"],
+        self.net.show_planes(
+            measured=[(a.plane.dip_dir, a.plane.dip) for a in measured],
+            fitted=[(f.plane.dip_dir, f.plane.dip) for f in fitted],
+            lineations=lineations,
+            marked=self._netted,
+            measured_color=PROVENANCE_TINT["misurata"],
+            fitted_color=PROVENANCE_TINT["fit"],
         )
 
-    def _clear_net(self):
-        """Nothing on the net, and a title that says what would put it there."""
+    def _net_title(self, structure, measured, fitted, lineations):
+        """What the net's window says it is showing."""
 
-        self._netted = None
-        self.net_window.setWindowTitle(NET_EMPTY_TITLE)
-        self.net.show_attitude(None, None)
+        if not measured and not fitted:
+            return f"{NET_TITLE} - {structure.ident} - nothing read"
 
-    def _lineations_at(self, attitude):
+        counted = []
+
+        if measured:
+            counted.append(f"{len(measured)} measured")
+
+        if fitted:
+            counted.append(f"{len(fitted)} fitted")
+
+        if lineations:
+            counted.append(f"{len(lineations)} lineation(s)")
+
+        return f"{NET_TITLE} - {structure.ident} -- {', '.join(counted)}"
+
+    def _mark_on_net(self, which):
+        """
+        Points at the circle of the station the cursor is on, or at no circle.
+
+        Guarded like the tooltip, and for a stronger reason: this is a `set_data`
+        and a blit on another canvas, which is a thousand times a motion event's
+        own cost, and a motion event is what the cursor sitting still on a dot
+        produces sixty times a second.
+
+        A dot with no plane behind it points at nothing, which is `None` and not a
+        refusal: the tooltip still says what that station is, and the net says --
+        by dimming nothing and highlighting nothing -- that there is no circle on
+        it to show. That is also what a cursor over bare map says, and the two
+        being the same answer is right: neither is pointing at a plane.
+
+        Drawn whether the window is open or not, which is the opposite of what the
+        fold tool does with the same widget. The difference is what makes it
+        redraw: there it is every frame of a drag, and a hidden canvas costs frame
+        budget and makes the frame cost that tool reports a measurement of
+        something nobody can see. Here it is a cursor crossing onto a dot.
+        """
+
+        on_net = None
+
+        if which is not None:
+            _, _, whose, on_net = self._marked[which]
+
+            # A dot on some other fault points at nothing, because the net is not
+            # showing that fault. Not an error and not a refusal: the tooltip still
+            # answers, which is the whole reason the dot is drawn at all, and the
+            # net saying nothing is the true answer to "which circle is this" when
+            # none of them is.
+            if whose != self.index:
+                on_net = None
+
+        if on_net == self._netted:
+            return
+
+        self._netted = on_net
+        self.net.mark(on_net)
+
+    def _lineations_at(self, structure, attitude):
         """
         The lineations read at the same place as one plane, as `(trend, plunge)`.
 
@@ -2333,9 +2534,14 @@ class EditorWindow(QtWidgets.QMainWindow):
         file at all -- the striae that were read are prose inside `note=`, and
         turning prose into a record is curation and not something to guess at
         while drawing.
+
+        The structure is a parameter and not `self.index`, which is what it read
+        while the net was filled by the cursor. The same value, since the dots have
+        only ever been the selected fault's -- but it was the one line in the net's
+        half of this tool that could not be called with a structure in hand, and
+        the net is filled with one in hand now.
         """
 
-        structure = self.document.dataset.structures[self.index]
         station = attitude.attrs.get("station")
         found = []
 
@@ -2359,7 +2565,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         return found
 
-    def _station_tip(self, attitude):
+    def _station_tip(self, attitude, whose):
         """
         What a station dot is, in the order somebody pointing at it wants it.
 
@@ -2376,15 +2582,24 @@ class EditorWindow(QtWidgets.QMainWindow):
         drawn, because somebody did stand there and that does not stop being
         true, but it is not what holds -- and until now the band in the panel was
         the only thing that said so, which is a different window.
+
+        `whose` is the fault the dot is on, and it is a parameter because it is no
+        longer the selected one. This read `self.index` while the only dots drawn
+        were the selection's, which was right then and became a lie the moment
+        every station in the file got a dot: the line naming the trace would have
+        named whichever fault happened to be open. Saying so where it differs, and
+        saying it here, because the line already existed -- what a dot on another
+        fault needs is not a new sentence but the one sentence to be true.
         """
 
         attrs = attitude.attrs
         station = attrs.get("station") or "no station code"
-        structure = self.document.dataset.structures[self.index]
+        structure = self.document.dataset.structures[whose]
 
         lines = [
             station if attitude.plane is None else f"{station} -- {attitude.plane}",
-            f"{attitude.s:.0f} m along {structure.ident}",
+            f"{attitude.s:.0f} m along {structure.ident}"
+            + ("" if whose == self.index else ", which is not the selected trace"),
         ]
 
         off = _as_number(attrs.get("off"))
@@ -2435,6 +2650,16 @@ class EditorWindow(QtWidgets.QMainWindow):
         trace is nearest, because the anchor is about to be written into that
         block and an anchor snapped onto a neighbour would read back as a
         progressive on a fault it was never measured on.
+
+        That rule is older than the dots being global, and the dots are what put
+        it at risk. A green dot on a neighbouring fault is now a visible thing to
+        aim at, and aiming at one writes a progressive on the selected trace --
+        correctly, silently, and not where the eye was. So when the click lands
+        nearer some other trace than the one it is being written onto, the line
+        this says names that other trace instead of confirming the anchor. Not a
+        refusal: a click 300 m off a trace is how you anchor the end of a fault
+        that runs past a closer one, and nothing here can tell that from a
+        mis-aim. What it can do is stop reading like a confirmation.
         """
 
         here = self.in_file(x, y)
@@ -2462,10 +2687,24 @@ class EditorWindow(QtWidgets.QMainWindow):
             self.picked.set_data([drawn[0]], [drawn[1]])
             self.map_view.blit()
 
-            self.say(
+            said = (
                 f"@{snapped[0]:.2f},{snapped[1]:.2f} -- {structure.ident} at "
                 f"{s:.0f} m, {distance:.0f} m from where you clicked"
             )
+
+            # Measured against every trace and not against the ones in reach: the
+            # reach dial is how far a *measurement* answers for, and borrowing it
+            # here would make the warning appear and disappear as that is turned.
+            nearer = nearest_structure(self.document.dataset, *here)
+
+            if nearer is not None and nearer[0] != self.index and nearer[2] < distance:
+                said += (
+                    f" -- but {self.document.dataset.structures[nearer[0]].ident} "
+                    f"is nearer, at {nearer[2]:.0f} m; anchors go on the selected "
+                    f"trace"
+                )
+
+            self.say(said)
             return
 
         found = nearest_structure(self.document.dataset, *here, within=reach)

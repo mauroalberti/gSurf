@@ -829,6 +829,33 @@ the plane, the progressive, the source and date, and the notes folded at 64
 characters so a file with a paragraph in one cannot open a tooltip wider than the
 map it is covering.
 
+**Every dot in the file, and not the open fault's alone.** They were the
+selection's at first, which made the map answer *where has anything been read*
+one fault at a time — 393 selections to find 23 dots. Drawn together they answer
+it once, and on an AOI-wide framing they answer something the traces cannot: over
+117 × 103 km the 23 gather into **two tight knots**, which is where the fieldwork
+is. The orange highlight is invisible at that scale, a 1 km fault being three
+pixels; a dot has a size in pixels and does not shrink.
+
+They go in the background with the traces, for the traces' reason — they change
+when a block is applied and at no other time — and the open fault's own are drawn
+again over them in an animated artist, larger. Size and not hue, because every
+hue on this map already means something and the highlight is saying which fault
+it is anyway. Knowing them all costs **0.16 ms** for the whole file, which is why
+an applied block rebuilds the lot rather than working out which dots moved.
+
+Two things fell out of it that were latent before. The tooltip's line naming the
+trace read `self.index`, so it was right only because the only dots drawn belonged
+to the selection — it would have put the open fault's name on a neighbour's
+station, and it now names the dot's own fault and says when that is not the
+selected one. And the anchor rule is exposed: shift-click writes onto the
+**selected** trace whatever it was aimed at, which is what keeps a progressive off
+a fault nobody measured, and a green dot on a neighbour is now a visible thing to
+aim at. Not made into a refusal — a click 300 m off a trace is how you anchor the
+end of a fault running past a closer one, and nothing here can tell that from a
+mis-aim — but when the click lands nearer some other trace, the line it prints
+names that trace instead of confirming the anchor.
+
 **And a net beside it, for the thing the text cannot say.** The tooltip came
 first with an argument against the net attached to it: 23 measurements over 23
 distinct station codes, **one each**, no `siblings` from a relational import, so
@@ -837,17 +864,45 @@ written out. That is true about poles and false about nets. A pole is how a
 *population* draws a plane; a **great circle** is the plane, and a striation
 drawn on it sits somewhere along that arc, and where along it is the difference
 between a fault that moved down its dip and one that moved along its strike. No
-pair of numbers shows that. So a third window beside the map holds the plane the
-cursor is resting on, drawn as a great circle, with whatever lineations were read
-on it.
+pair of numbers shows that. So a third window beside the map holds the selected
+fault's planes, drawn as great circles, with whatever lineations were read on
+them.
 
-**As a great circle and nothing else.** Its pole was drawn there too at first, on
+**Its planes and not the one under the cursor**, which is what it held first, and
+the thing that changed the answer is counting the fits. From the side of the
+attitudes one was right: 23 readings over 393 faults, no station repeated, so a
+net per fault and a net per station were the same picture 17 times out of 20. The
+fits are 33 more planes on 31 faults — 29 of them on faults with no reading at
+all, and 6 sharing a fault with one. Counting both, **45 of the 393** put
+something on the net and seven put two planes or more, and what those pose is a
+question about a *pair*: whether two planes are the same surface. That cannot be
+asked one circle at a time. It also decides whether the window is worth opening —
+readings alone leave the net empty on 373 selections out of 393, and with the
+fits that falls to 348.
+
+**Measured solid, fitted dashed**, because the two are not the same kind of
+claim: one is a plane somebody put a compass on and the other a surface
+least-squares fitted to a scatter, and a picture drawing them alike invites them
+to be read as one. F0074 is the case that pays for the distinction — a field
+reading of 135/30, an `exposed-facet` fit at **141/29**, and a `trace-dem` fit at
+**221/10**, 86° away in dip direction and carrying `caveat=immersione non
+vincolata dalla traccia` in the file. Two circles nearly coincident and a third
+across the net *is* that caveat, drawn. Three rows of numbers make you do it in
+your head.
+
+Any number of planes costs **two artists**, not two per plane: `nan` between the
+great circles breaks the polyline, which is the same trick the rejected stretches
+on the map use, and without it the last point of one circle would be joined to
+the first of the next by a chord across the net — a line nobody measured, in the
+colour of a measurement.
+
+**As great circles and nothing else.** Poles were drawn there too at first, on
 the argument that a pole is how this net would be compared with the fold tool's —
-which is a reason to draw one where there is a population. Here the marks inside
+which is a reason to draw them where there is a population. Here the marks inside
 the primitive circle *are* the striae, that being what the picture is read for,
-and a pole is a mark inside that circle which is not a striation. It said nothing
-the arc does not already say and added one thing to tell apart, so it is gone:
-`show_window` owns the poles and `show_attitude` has none.
+and a pole is a mark inside that circle which is not a striation. They said
+nothing the arcs do not already say and added one thing to tell apart, so they
+are gone: `show_window` owns the poles and `show_planes` has none.
 
 There are none to draw. `merid_faults` contains **zero `lineation` records**, and
 three of its 23 attitudes mention striae in a note somebody typed in Italian:
@@ -899,22 +954,36 @@ moves under the cursor. What is under it is worked out on every motion event, at
 0.032 ms when the answer stands and 0.063 when the text has to be rebuilt, so the
 tooltip is Qt's own and inherits the delay everything else on the desktop has.
 
-The net costs more than the tooltip and is guarded harder for it: filling it is a
-`set_data` on every artist and a blit, **2.3 ms**, against 0.0002 ms when the
-cursor is still on the dot it already answered. And the two answers have
-deliberately different lifetimes. The tooltip goes away when the cursor leaves
-the dot; the net does not, because reading a figure means looking away from the
-thing that asked for it, and one that emptied on the way would only ever be seen
-out of the corner of an eye. What does empty it is opening another trace — a
-plane beside the map belonging to the fault before this one, with nothing on
-screen saying so, is the one way this could lie. The window's own title carries
-the station code for the same reason. Closed, it goes on being filled — which is
-the opposite of what the fold tool does with the same widget, and the difference
-is what makes each redraw: there it is every frame of a drag, where a hidden
-canvas costs frame budget and makes the reported frame cost a measurement of
-something nobody can see; here it is a cursor crossing onto another dot, and the
-saving would buy 2.3 ms on an occasional event at the price of a net put back
-showing whichever station it happened to have been closed on.
+**What the cursor still chooses is which circle answers.** Resting on a station
+dot draws that station's circle again over the rest, thicker, with everything
+else dimmed to 0.3 — dimmed and not recoloured, because the colour here says what
+kind of claim a circle is and a hover must not spend it: a plane pointed at is
+still a compass reading or still a fit, and after the cursor leaves it has to be
+the same circle it was before. It is a third artist and not a restyling of the
+first, because a `nan`-joined polyline has one colour and one width for every
+circle in it; the only way to make one of them answer is to draw that one twice,
+which is what the map does with `traces` and `highlight`.
+
+Pointing costs more than the tooltip and is guarded harder for it — a `set_data`
+and a blit on another canvas against 0.045 ms for a motion event whose answer has
+not changed — and it is `mark` rather than a second `show_planes` for a reason
+that measures: filling F0058's net is **3.5 ms** and pointing at one of its
+circles **1.8 ms**, because the second does not rebuild the arcs. The floor is the
+blit, which is most of what is left: a net with nothing on it still costs 1.95 ms
+to fill. Both answers now die with the cursor, which ends an
+asymmetry that used to need explaining: the net was *filled* by the hover and
+emptied by a change of trace, so `hover_off` had to leave it alone or a figure
+would only ever be seen out of the corner of an eye. What the cursor owns goes
+away with the cursor; the planes and the caption are the fault's and are not the
+cursor's to clear. The title names the fault, once, and no longer changes while
+the hand moves — and an empty net has to name it too, because 348 of the 393
+selections fill it with nothing and `stereonet` alone reads as a window that has
+not loaded. Closed, it goes on being filled — the opposite of what the fold tool
+does with the same widget, and the difference is what makes each redraw: there it
+is every frame of a drag, where a hidden canvas costs frame budget and makes the
+reported frame cost a measurement of something nobody can see; here it is a
+selection, and the saving would buy 2.3 ms at the price of a net put back showing
+whichever fault it happened to have been closed on.
 
 **A window and not a dock**, which it was at first, and the difference is how big
 the picture is allowed to be. A dock is as wide as the map can spare: 276 px

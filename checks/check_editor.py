@@ -786,6 +786,30 @@ def main():
               != window.document.text_of(window.index)
               and not window.document.dirty)
 
+        # An anchor goes on the selected trace whatever it was aimed at, which is
+        # the rule that keeps a progressive off a fault nobody measured -- and the
+        # rule the dots put at risk, now that a green dot on a neighbour is a
+        # visible thing to aim at. Gamma is open; this click is 10 m from Beta and
+        # 1200 m from Gamma, and it is written on Gamma, correctly and silently.
+        window.pick(602200.0, 4420010.0, anchor=True)
+        aimed = window.statusBar().currentMessage()
+
+        check("an anchor aimed nearer another trace still goes on the open one",
+              "F003 at" in aimed and "F002 is nearer" in aimed, aimed)
+
+        # And the same click aimed at the trace it is on says nothing extra, or the
+        # warning would be furniture rather than a warning.
+        window.pick(603000.0, 4420300.0, anchor=True)
+        aimed = window.statusBar().currentMessage()
+
+        check("and one aimed at the open trace is confirmed and not warned about",
+              "F003 at" in aimed and "is nearer" not in aimed, aimed)
+
+        window.panel._redraw()
+        window.panel.add_line('  span use * * rejected reason="check"')
+        window.pick(603000.0, 4420200.0, anchor=True)
+        window.pick(603000.0, 4420600.0, anchor=True)
+
         check("applying it reads it in", window.panel.apply_block())
 
         after_edit = window.document.dataset.structures[2]
@@ -828,6 +852,65 @@ def main():
               and abs(marks[0][1] - gamma_at[1]) < 0.01,
               f"{marks} against {[gamma_at]}")
 
+        # And every other station in the file is drawn too, which is what makes the
+        # map answer "where has anything been read" once rather than 393 times.
+        # Alpha's S1 is on the map while Gamma is the fault open in the box.
+        everywhere = list(zip(window.stations.get_xdata(), window.stations.get_ydata()))
+        alpha = window.document.dataset.structures[0]
+        alpha_at = point_on(alpha.path, alpha.attitudes[0].s)
+
+        check("every station in the file has a dot, not only the open fault's",
+              len(everywhere) == 2
+              and any(
+                  abs(x - alpha_at[0]) < 0.01 and abs(y - alpha_at[1]) < 0.01
+                  for x, y in everywhere
+              ),
+              f"{everywhere} against {[alpha_at, gamma_at]}")
+
+        # Drawn twice where they are the selection's, larger on top. Size and not
+        # hue, because every hue on this map already means something -- and the two
+        # artists have to land on the same point or the pair reads as two stations
+        # a metre apart rather than as one.
+        check("the open fault's own are the same dots, drawn bigger over the rest",
+              window.stations.get_markersize() < window.marks.get_markersize()
+              and window.stations.get_color() == window.marks.get_color()
+              and any(
+                  abs(x - gamma_at[0]) < 0.01 and abs(y - gamma_at[1]) < 0.01
+                  for x, y in everywhere
+              ),
+              f"{window.stations.get_markersize()} under "
+              f"{window.marks.get_markersize()}, "
+              f"{window.stations.get_color()} and {window.marks.get_color()}")
+
+        # In the background with the traces, because they change when a block is
+        # applied and at no other time. Which means an applied block has to hand
+        # them over again -- an `attitude` line added to Beta is a dot that was not
+        # there, on a fault that had none.
+        window.select(1)
+        was = window.document.text_of(1)
+        window.panel.text.setPlainText(
+            was.rstrip("\n")
+            + "\n  attitude @602100.00,4420000.00 plane 10/20 station=S9 src=check"
+        )
+        window.panel.apply_block()
+
+        check("a block that adds a station adds its dot, the file over again",
+              len(window.stations.get_xdata()) == 3
+              and len(window.marks.get_xdata()) == 1,
+              f"{len(window.stations.get_xdata())} in the file, "
+              f"{len(window.marks.get_xdata())} on the open fault")
+
+        window.panel.text.setPlainText(was)
+        window.panel.apply_block()
+
+        check("and taking the line back takes the dot back with it",
+              len(window.stations.get_xdata()) == 2
+              and len(window.marks.get_xdata()) == 0,
+              f"{len(window.stations.get_xdata())} in the file, "
+              f"{len(window.marks.get_xdata())} on the open fault")
+
+        window.select(2)
+
         # -- what the cursor is resting on ---------------------------------
 
         print("\n-- the hover --\n")
@@ -852,7 +935,16 @@ def main():
               f"{axes.get_window_extent().width:.1f} px wide")
 
         kept_view = (axes.get_xlim(), axes.get_ylim())
-        dot = window._marked[0][0]
+
+        # Gamma's, found by asking which fault each dot is on rather than by
+        # position. `_marked` is every station in the file now and Alpha's S1 comes
+        # first in it, so the dot at index 0 is no longer the dot of the fault that
+        # happens to be selected.
+        at_gamma = next(
+            where for where, (_, _, whose, _) in enumerate(window._marked)
+            if whose == 2
+        )
+        dot = window._marked[at_gamma][0]
 
         window._on_map_hover(*dot)
         tip = window.map_view.canvas.toolTip().splitlines()
@@ -909,7 +1001,7 @@ def main():
         close_in, far_out = reach_at(500.0), reach_at(50000.0)
 
         check("the reach is in pixels: just inside it hits at either framing",
-              close_in[1] == 0 and far_out[1] == 0,
+              close_in[1] == at_gamma and far_out[1] == at_gamma,
               f"{close_in[1]} at {close_in[0]:.1f} m/px, "
               f"{far_out[1]} at {far_out[0]:.1f} m/px")
 
@@ -918,7 +1010,7 @@ def main():
               f"{close_in[2]}, {far_out[2]}")
 
         check("while a fixed 400 m is a miss zoomed in and a hit zoomed out",
-              close_in[3] is None and far_out[3] == 0,
+              close_in[3] is None and far_out[3] == at_gamma,
               f"{close_in[3]} at {close_in[0]:.1f} m/px, "
               f"{far_out[3]} at {far_out[0]:.1f} m/px")
 
@@ -926,20 +1018,39 @@ def main():
         axes.set_ylim(*kept_view[1])
         window.map_view.canvas.draw()
 
-        # Held on the dot across a change of structure. The tooltip is kept by
-        # index into the drawn dots, and index 0 of the trace just opened is not
-        # index 0 of the one before it -- so without the reset a cursor that had
-        # not moved would go on naming a station that is no longer on the map.
+        # Held on the dot across a change of structure. The tooltip is dropped on a
+        # selection because the cursor has not moved and the answer may have: what
+        # it said a moment ago was about a fault that was open and is not now.
         window._on_map_hover(*dot)
         named = window.map_view.canvas.toolTip().splitlines()[:1]
         window.select(0)
-        window._on_map_hover(*dot)
 
-        check("opening another trace drops the tooltip instead of keeping it",
+        check("opening another trace drops the tooltip the cursor is still on",
               named == ["S2 -- 270/60"] and window.map_view.canvas.toolTip() == "",
               f"{named} then {window.map_view.canvas.toolTip()!r}")
 
+        # And the dot is still there to ask again, which is the change: it used to
+        # be swept off the map with its fault, so there was nothing under the
+        # cursor to answer. What it answers is the same station and one line more.
+        window._on_map_hover(*dot)
+        again = window.map_view.canvas.toolTip().splitlines()
+
+        check("but the dot is still on the map, and says whose trace it is on",
+              again[:2] == [
+                  "S2 -- 270/60",
+                  "0 m along F003, which is not the selected trace",
+              ],
+              str(again[:2]))
+
+        # The one line in the tooltip that named a trace named `self.index` -- so
+        # before the dots were global it was right by accident, and the moment they
+        # were it would have put the open fault's name on another fault's station.
         window.select(2)
+        window._on_map_hover(*dot)
+
+        check("and drops the caveat once that trace is the one selected",
+              window.map_view.canvas.toolTip().splitlines()[1] == "0 m along F003",
+              str(window.map_view.canvas.toolTip().splitlines()[1]))
 
         # One motion event, two meanings. The gesture had this event to itself
         # until now, and a hover firing while a handle is being dragged would put
@@ -977,36 +1088,112 @@ def main():
 
         window._tip_on(None)
 
-        # -- the plane on the net ------------------------------------------
+        # -- the planes on the net -----------------------------------------
         #
         # The figure the tooltip cannot be. `270/60` written out is a plane you
         # have to picture; the great circle is the picture, and the thing neither
         # number shows is where a striation sits inside the plane -- down the dip
-        # or along the strike -- which is the whole reason the net is there.
+        # or along the strike. And the thing no *pair* of numbers shows is whether
+        # two planes are the same surface, which is why the net carries the whole
+        # of one fault and not the one reading under the cursor.
 
         print("\n-- the net --\n")
 
         window.select(2)
-        window._on_map_hover(*dot)
 
-        check("resting on a dot puts that plane on the net as a great circle",
-              len(window.net.great_circle.get_xdata()) > 2,
-              f"{len(window.net.great_circle.get_xdata())} points on the circle")
+        check("selecting a fault puts its plane on the net, no cursor needed",
+              len(window.net.measured.get_xdata()) > 2,
+              f"{len(window.net.measured.get_xdata())} points on the circle")
 
         # And that is all of the plane that is drawn. Its pole was there too at
         # first, on the argument that a pole is how this net would be compared
         # with the fold tool's -- but that is a reason to draw one where there is
-        # a population. Here the markers inside the primitive circle are the
-        # striae, which is what the picture is read for, and a pole is a mark
-        # inside that circle which is not a striation.
+        # a population to see the shape of. Here the markers inside the primitive
+        # circle are the striae, which is what the picture is read for, and a pole
+        # is a mark inside that circle which is not a striation.
         check("and nothing else inside the circle, the pole having been dropped",
               len(window.net.poles.get_xdata()) == 0,
-              f"{len(window.net.poles.get_xdata())} poles on a single plane")
+              f"{len(window.net.poles.get_xdata())} poles on one fault's planes")
 
-        check("and the window says whose plane it is, the net having no label",
-              window.net_window.windowTitle().startswith(
-                  f"{tool.NET_TITLE} - S2 -- 270/60"),
+        check("and the window says whose planes they are, the net having no label",
+              window.net_window.windowTitle()
+              == f"{tool.NET_TITLE} - F003 -- 1 measured, 2 lineation(s)",
               window.net_window.windowTitle())
+
+        # Alpha is the case the whole change is for: a reading and a fit on one
+        # fault, which in `merid_faults` is six of the forty-five that carry
+        # anything. Solid and dashed, because one is a plane somebody put a compass
+        # on and the other is a surface least-squares fitted to a scatter, and a
+        # picture that drew them alike would invite them to be read as the same
+        # kind of claim -- on F0074 the two disagree by 86 degrees in dip
+        # direction and the file says why in a `caveat`.
+        window.select(0)
+
+        check("a fault carrying both draws the reading and the fit together",
+              len(window.net.measured.get_xdata()) > 2
+              and len(window.net.fitted.get_xdata()) > 2,
+              f"{len(window.net.measured.get_xdata())} measured points, "
+              f"{len(window.net.fitted.get_xdata())} fitted")
+
+        check("and the two are told apart by the line and not by the colour alone",
+              window.net.measured.get_linestyle() == "-"
+              and window.net.fitted.get_linestyle() != "-"
+              and window.net.measured.get_color() != window.net.fitted.get_color(),
+              f"measured {window.net.measured.get_linestyle()!r} "
+              f"{window.net.measured.get_color()}, fitted "
+              f"{window.net.fitted.get_linestyle()!r} "
+              f"{window.net.fitted.get_color()}")
+
+        check("the title counts both kinds",
+              window.net_window.windowTitle()
+              == f"{tool.NET_TITLE} - F001 -- 1 measured, 1 fitted",
+              window.net_window.windowTitle())
+
+        # Beta is the other half of it, and the measurement that decided the
+        # question. It carries a fit and no reading, so there is no station dot on
+        # it and under the old rule -- the net filled by resting on a dot -- its
+        # net was blank and stayed blank. Twenty-nine faults of `merid_faults` are
+        # this shape: a net that showed only readings was empty on 373 selections
+        # out of 393, and counting the fits that falls to 348.
+        window.select(1)
+
+        check("a fault with a fit and no reading is no longer a blank net",
+              len(window.net.fitted.get_xdata()) > 2
+              and len(window.net.measured.get_xdata()) == 0
+              and window.net_window.windowTitle()
+              == f"{tool.NET_TITLE} - F002 -- 1 fitted",
+              f"{len(window.net.measured.get_xdata())} measured, "
+              f"{len(window.net.fitted.get_xdata())} fitted, "
+              f"{window.net_window.windowTitle()!r}")
+
+        # And Delta, which carries neither. An empty net has to name the fault it
+        # is empty about: 348 of the 393 selections fill it with nothing, so a
+        # caption that said only `stereonet` could not be told from a window that
+        # had not been pointed at yet.
+        window.select(3)
+
+        check("a fault with nothing read empties the net and names itself",
+              len(window.net.measured.get_xdata()) == 0
+              and len(window.net.fitted.get_xdata()) == 0
+              and window.net_window.windowTitle()
+              == f"{tool.NET_TITLE} - F004 - nothing read",
+              f"{window.net_window.windowTitle()!r}")
+
+        # Several planes go on one artist with a break between them, which is what
+        # lets any number of them cost two Line2D instead of two per fault. Without
+        # the break the last point of one circle joins the first point of the next
+        # by a chord across the net -- a line nobody measured, drawn in the colour
+        # of a measurement. Asserted on the widget rather than through a fixture,
+        # because giving a structure a second attitude moves the table, the
+        # provenance band and `carries` along with it.
+        window.net.show_planes(measured=[(90.0, 30.0), (270.0, 60.0)])
+        xs = np.asarray(window.net.measured.get_xdata(), dtype=float)
+
+        check("several planes on one artist are broken apart, not joined up",
+              np.isnan(xs).sum() == 2 and np.isnan(xs[-1]),
+              f"{np.isnan(xs).sum()} breaks in {len(xs)} points")
+
+        window.select(2)
 
         # A window in the group and not a dock, which is what makes where it was
         # left something that is written down: `WindowGroup.save_geometry` walks
@@ -1036,33 +1223,81 @@ def main():
               ),
               f"{len(drawn)} drawn, wanted {len(wanted)}")
 
-        check("a station code outranks distance along the trace, 70 m apart",
-              window._lineations_at(window._marked[0][1])[0] == GAMMA_LINEATIONS[0],
-              f"{window._lineations_at(window._marked[0][1])}")
+        gamma = window.document.dataset.structures[2]
 
-        # The net is a figure and reading one means looking away from the dot that
-        # asked for it. A net that emptied as the cursor left would only ever be
-        # seen out of the corner of an eye -- so `hover_off` does not touch it,
-        # which is the one place in this window where the tooltip and the net
-        # deliberately disagree about how long an answer lives.
+        check("a station code outranks distance along the trace, 70 m apart",
+              window._lineations_at(gamma, window._marked[at_gamma][1])[0]
+              == GAMMA_LINEATIONS[0],
+              f"{window._lineations_at(gamma, window._marked[at_gamma][1])}")
+
+        # -- and which of them the cursor is on ----------------------------
+        #
+        # What the hover chooses now is not the net's contents but which circle on
+        # it answers. Drawn again over itself, thicker, with everything else
+        # dimmed: dimming the rest and not recolouring the one, because the colour
+        # here says what kind of claim a circle is and a hover must not spend it.
+        window._on_map_hover(*dot)
+
+        check("resting on a station dot points at that station's circle",
+              len(window.net.marked.get_xdata()) > 2
+              and window.net.marked.get_color() == window.net.measured.get_color(),
+              f"{len(window.net.marked.get_xdata())} points, "
+              f"{window.net.marked.get_color()}")
+
+        check("and the rest of the net steps back while it does",
+              window.net.measured.get_alpha() == window.net.DIMMED
+              and window.net.fitted.get_alpha() == window.net.DIMMED,
+              f"measured {window.net.measured.get_alpha()}, "
+              f"fitted {window.net.fitted.get_alpha()}")
+
+        # Both answers are about where the cursor is and both die with it. That is
+        # the asymmetry this used to have and no longer does: the net was filled by
+        # the cursor and cleared by a change of trace, so `hover_off` had to leave
+        # it alone. What the cursor owns now goes away with the cursor, and what it
+        # does not own is not its to clear.
+        title = window.net_window.windowTitle()
         window.map_view.hover_off.emit()
 
-        check("the cursor leaving the dot takes the tooltip and leaves the net",
+        check("the cursor leaving takes the tooltip and the pointing with it",
               window.map_view.canvas.toolTip() == ""
-              and len(window.net.great_circle.get_xdata()) > 2,
+              and len(window.net.marked.get_xdata()) == 0
+              and window.net.measured.get_alpha() == 1.0,
               f"tip {window.map_view.canvas.toolTip()!r}, "
-              f"{len(window.net.great_circle.get_xdata())} points")
+              f"{len(window.net.marked.get_xdata())} marked, "
+              f"alpha {window.net.measured.get_alpha()}")
 
-        # But it must not outlast the trace. Beta carries no attitude at all, so
-        # there is no dot to move the net onto and nothing on screen would say the
-        # plane beside the map belongs to the fault before this one.
-        window.select(1)
-
-        check("opening another trace empties the net and says so in the title",
-              len(window.net.great_circle.get_xdata()) == 0
-              and window.net_window.windowTitle() == tool.NET_EMPTY_TITLE,
-              f"{len(window.net.great_circle.get_xdata())} points, "
+        check("and leaves the planes and the caption alone, those being the fault's",
+              len(window.net.measured.get_xdata()) > 2
+              and window.net_window.windowTitle() == title,
+              f"{len(window.net.measured.get_xdata())} points, "
               f"{window.net_window.windowTitle()!r}")
+
+        # A dot is drawn where somebody stood and a circle where they read a plane,
+        # and all 23 stations of `merid_faults` are both -- so the two lists run in
+        # step today and the pairing is stored anyway. An `attitude` carrying `at=`
+        # and no plane is a legal record: it would be a dot with no circle, and a
+        # net indexed by counting dots would answer with the next station's plane.
+        # Counted within a fault, so that it survives the selection moving.
+        check("a dot knows which circle is its own, and not by counting dots",
+              [(whose, on_net) for _, _, whose, on_net in window._marked]
+              == [(0, 0), (2, 0)],
+              f"{[(whose, on_net) for _, _, whose, on_net in window._marked]}")
+
+        # And a dot on a fault that is not open points at no circle at all, because
+        # the net is not showing that fault. The tooltip still answers -- which is
+        # the whole reason the dot is drawn -- and the net saying nothing is the
+        # true answer to "which of these circles is this one".
+        window.select(0)
+        window._on_map_hover(*dot)
+
+        check("a dot on another fault is readable and points at nothing",
+              window.map_view.canvas.toolTip() != ""
+              and window._netted is None
+              and len(window.net.marked.get_xdata()) == 0,
+              f"netted {window._netted}, "
+              f"{len(window.net.marked.get_xdata())} points pointed at")
+
+        window.select(2)
 
         # Closed, it goes on being filled -- which is the opposite of what the
         # fold tool does with this same widget. There the net redraws on every
@@ -1076,18 +1311,16 @@ def main():
         check("closing the net unticks its own box in the menu",
               not window.window_actions["net"].isChecked())
 
-        window.select(2)
-        window._on_map_hover(*dot)
-
+        window.select(0)
         window.window_actions["net"].trigger()
 
-        check("and a net put back shows the dot last rested on, not a stale one",
+        check("and a net put back shows the fault now open, not a stale one",
               window.net_window.isVisible()
-              and len(window.net.great_circle.get_xdata()) > 2
-              and window.net_window.windowTitle().startswith(
-                  f"{tool.NET_TITLE} - S2 -- 270/60"),
+              and len(window.net.measured.get_xdata()) > 2
+              and window.net_window.windowTitle()
+              == f"{tool.NET_TITLE} - F001 -- 1 measured, 1 fitted",
               f"{window.net_window.windowTitle()!r}, "
-              f"{len(window.net.great_circle.get_xdata())} points")
+              f"{len(window.net.measured.get_xdata())} points")
 
         # The four letters round the edge, proven on the pixels rather than on
         # the text having been set -- it was set from the day the widget was
@@ -1132,28 +1365,43 @@ def main():
 
         # And the widget is shared with the fold tool, which puts a population on
         # it. Neither use may leave its artists behind for the other to draw, and
-        # the second direction matters more than it used to: a single plane is
-        # meant to have nothing inside the circle but its striae, so a population
+        # the second direction matters more than it used to: one fault's planes are
+        # meant to have nothing inside the circle but their striae, so a population
         # of poles left behind would be twenty marks that are not striae.
+        window.net.show_planes(measured=[(270.0, 60.0)])
         window.net.show_window([120.0, 130.0], [30.0, 40.0])
         after_population = (
             len(window.net.poles.get_xdata()),
-            len(window.net.great_circle.get_xdata()),
+            len(window.net.measured.get_xdata()),
+            len(window.net.fitted.get_xdata()),
             len(window.net.lineation.get_xdata()),
         )
 
-        window.net.show_attitude(270.0, 60.0)
-        after_plane = (
+        window.net.show_planes(measured=[(270.0, 60.0)], fitted=[(100.0, 40.0)])
+        after_planes = (
             len(window.net.poles.get_xdata()),
-            len(window.net.great_circle.get_xdata()),
+            len(window.net.girdle.get_xdata()),
+            len(window.net.measured.get_xdata()),
         )
 
         check("the widget's two uses clear each other, both ways round",
-              after_population == (2, 0, 0)
-              and after_plane[0] == 0
-              and after_plane[1] > 2,
-              f"a population leaves {after_population} as poles, circle, "
-              f"lineations; one plane after it leaves {after_plane[0]} poles")
+              after_population[:3] == (2, 0, 0)
+              and after_planes[0] == 0
+              and after_planes[2] > 2,
+              f"a population leaves {after_population} as poles, measured, "
+              f"fitted, lineations; planes after it leave {after_planes[0]} poles")
+
+        # And a population must not leave the planes behind it *pointable* either.
+        # `mark` draws one of the planes on the net a second time, and the net it
+        # was handed them by is gone: an index that still resolved would put a
+        # circle from another tool's question over a fold's poles.
+        window.net.show_planes(measured=[(270.0, 60.0)])
+        window.net.show_window([120.0, 130.0], [30.0, 40.0])
+        window.net.mark(0)
+
+        check("a population also forgets the planes, so nothing can point into it",
+              len(window.net.marked.get_xdata()) == 0,
+              f"{len(window.net.marked.get_xdata())} points pointed at")
 
         window.select(2)
 
