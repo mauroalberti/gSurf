@@ -192,6 +192,7 @@ from collections import Counter
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.collections import LineCollection
+from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -217,7 +218,15 @@ from gsurf.curation import (
 )
 from gsurf.convergence import MeridianConvergence
 from gsurf.fits import AT_THE_END, as_line, dem_refusal, fits_along, gate_for
-from gsurf.planes import FROM_STEERED, broken_path, laid_on, side_for
+from gsurf.planes import (
+    FROM_STEERED,
+    broken_path,
+    gaps_on,
+    ground_on,
+    laid_on,
+    side_for,
+    walked,
+)
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.stereonet import StereonetView
 from gsurf.traces import draped_length
@@ -295,6 +304,38 @@ CUTTING_WIDTH = 1.2
 # it: an intersection is a plane *through a point*, and every curve on screen
 # turns about that one. Hollow, so the trace under it stays readable.
 PIN_SIZE = 9
+
+# And how near the cut runs to the trace, metre by metre along it. The widest
+# thing on the map and the lowest, with the claimed band's 8 sitting inside it:
+# the two are meant to be compared -- the gesture is to look at where the cut
+# agrees and pull the claim onto it -- and nesting them makes "the claim is
+# where the agreement is" a shape rather than two colours to hold in the head.
+#
+# Round caps here where the claimed band has butt ones, and the difference is
+# not inconsistency. Butt caps are there because that band's ends are
+# coordinates somebody picked, and half a linewidth past one is metres of trace
+# nobody asked for. This band's ends are wherever the DEM window stops, which is
+# nobody's decision, while its *interior* is hundreds of segments a pixel and a
+# half long that have to read as one continuous strip.
+AGREEING_WIDTH = 14.0
+AGREEING_ALPHA = 0.55
+
+# And drawn in steps rather than as a continuous ramp, which is two decisions
+# that happen to be the same one.
+#
+# It is what the eye wants. The band is read for where the agreement *stops*,
+# and an edge between two tints is a place, where a gradient is a feeling.
+# Because `Gaps.close` is linear in log10 over the decade above a cell, four
+# equal steps of it are four equal factors of distance -- 1, 1.8, 3.2, 5.6 and
+# 10 cells -- so the scale can be said in words.
+#
+# And it is what the frame wants, which is the same measurement `broken_path`
+# was written for. One path per sample costs about 7 microseconds whatever is
+# in it: 536 of them across this window was 3.9 ms a frame, three times the
+# whole blit without them. Quantising lets consecutive samples of the same step
+# be drawn as one polyline, and on real ground the answer changes far less
+# often than every five metres.
+AGREEING_LEVELS = 4
 
 
 # What the provenance band is sampled at. The band's edges are therefore good to
@@ -2115,11 +2156,12 @@ class PlaneSteering(QtWidgets.QWidget):
     `tools/intersection.py`'s panel, cut down to what is left once the tool has
     something to aim at. Gone are the source point's three boxes and the
     compute-window spinner, and neither is a simplification: there the point is
-    put wherever you click, because the tool has no idea what you are looking
-    at, and the window is a cost dial because the plane is unbounded. Here the
-    point is the middle of the stretch being decided and the window is sized
-    from that stretch, so both were answers to questions this tool can already
-    answer for itself.
+    typed in or clicked anywhere, because the tool has no idea what you are
+    looking at, and the window is a cost dial because the plane is unbounded.
+    Here the point is on a trace -- the middle of the stretch the caret's line
+    claims, or wherever ctrl-click puts it -- and the window is sized from the
+    stretch or from what is on screen, so both were answers to questions this
+    tool can work out for itself.
 
     What is left is the pair of controls that *are* the tool -- turn it, watch
     the curves move, stop when they run along the fault -- plus the one button
@@ -2135,6 +2177,7 @@ class PlaneSteering(QtWidgets.QWidget):
     steered = QtCore.pyqtSignal(float, float)
     take_asked = QtCore.pyqtSignal()
     armed_changed = QtCore.pyqtSignal(bool)
+    unpin_asked = QtCore.pyqtSignal()
 
     # QDial puts its minimum at six o'clock, not at twelve, and it runs
     # clockwise like an azimuth -- so between its scale and dip direction there
@@ -2148,10 +2191,11 @@ class PlaneSteering(QtWidgets.QWidget):
 
         self.on = QtWidgets.QCheckBox("plane on the DEM")
         self.on.setToolTip(
-            "Lay a plane through the middle of the stretch the line in the box "
-            "claims, and draw where it cuts the topography. Turn the dial until "
-            "the cut runs along the trace: that attitude is the one the ground "
-            "is telling you, and the button below writes it into the line."
+            "Lay a plane on the trace and draw where it cuts the topography, "
+            "with a band along the trace saying how near the cut runs at each "
+            "metre. The plane hangs at the middle of the stretch the line in "
+            "the box claims, or wherever you ctrl-click the trace -- which is "
+            "how to turn the dial first and decide which stretch afterwards."
         )
 
         self.dial = QtWidgets.QDial()
@@ -2195,6 +2239,21 @@ class PlaneSteering(QtWidgets.QWidget):
         self.take = QtWidgets.QPushButton("write it in the line")
         self.take.clicked.connect(lambda: self.take_asked.emit())
 
+        # Disabled rather than hidden, and that is the whole design of it. A pin
+        # put by hand is a mode -- the plane stops following the caret until it
+        # is given back -- and a mode with no visible way out is a trap. Shown
+        # greyed when there is no pin to release, so the way out is legible
+        # before it is needed and the panel does not change height when one is
+        # put down.
+        self.release = QtWidgets.QPushButton("release the pin")
+        self.release.setEnabled(False)
+        self.release.setToolTip(
+            "Give the plane back to the line the caret is on. Ctrl-click the "
+            "trace to pin it anywhere instead, which is how to steer a plane "
+            "before deciding which stretch it is about."
+        )
+        self.release.clicked.connect(lambda: self.unpin_asked.emit())
+
         self.dial.valueChanged.connect(self._dial_moved)
         self.dip_dir.valueChanged.connect(self._dip_dir_typed)
         self.slider.valueChanged.connect(self._slider_moved)
@@ -2210,6 +2269,7 @@ class PlaneSteering(QtWidgets.QWidget):
         layout.addWidget(self.slider)
         layout.addWidget(self.dip)
         layout.addWidget(self.take)
+        layout.addWidget(self.release)
         layout.addWidget(self.label)
 
         # The refusal is a fact about the session and not about the gesture --
@@ -2252,6 +2312,19 @@ class PlaneSteering(QtWidgets.QWidget):
 
     def note(self, said):
         self.label.setText(said or "")
+
+    def set_pinned(self, pinned):
+        """
+        Whether a pin has been put by hand, which is the only way back from one.
+
+        Not routed through `_steering`, which follows the checkbox: a pin can be
+        put down with the steering off -- ctrl-click says so and offers to
+        switch it on -- and a release button greyed out at exactly that moment
+        would be the one state in which the mode is real and looks like it is
+        not.
+        """
+
+        self.release.setEnabled(bool(pinned))
 
     def set_writable(self, may, why=None):
         """Whether there is a plane slot under the caret for the button to fill."""
@@ -2344,6 +2417,36 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._cut_window = None
         self._cut_for = None
 
+        # A pin put by hand, as `(x, y, the ground it was put while looking at)`,
+        # which overrides the one the caret's line implies for as long as it is
+        # set. The point of it is the order of work: the line's pin is the middle
+        # of a stretch, so it can only exist once somebody has declared which
+        # stretch -- and the stretch is the conclusion, not the premise. This one
+        # lets the plane be steered first and attributed afterwards.
+        #
+        # The extent is stored with it rather than read per frame so the window
+        # does not resize under a zoom: the ground being cut against is the
+        # ground that was on screen when the pin went down, and moving it is how
+        # you ask for different ground.
+        self._free_pin = None
+
+        # The topography read along the selected trace, for the band. Kept
+        # against what it was read for, which is the trace and the window: the
+        # DEM half of the band costs a gather and the plane half costs six
+        # multiplications, so a dial turned ninety times does the second ninety
+        # times and the first not at all.
+        self._ground = None
+        self._ground_for = None
+
+        # And what the band's segments were last built for, kept apart from
+        # `_ground_for` because they are two different costs: the ground is a
+        # raster gather and the segments are a reprojection and a path per
+        # segment. They happen to move together today; a band drawn over a
+        # reframed map would move the second without the first.
+        self._agreeing_for = None
+        self._joined = np.zeros(0, dtype=bool)
+        self._band_xy = np.zeros((0, 2))
+
         # Which trace the framing is on its way to, and the timer it waits on.
         self._framing = None
         self._frame_timer = QtCore.QTimer(self)
@@ -2429,7 +2532,11 @@ class EditorWindow(QtWidgets.QMainWindow):
     def on_map(self, path):
         """A path in the file's projection, as the map's coordinates."""
 
-        if not path:
+        # `len(...) == 0` and not `not path`, because one of the callers now
+        # hands over an `(n, 2)` array: numpy raises on the truth value of one
+        # with more than one element, so the emptiness test refused every path
+        # that had anything in it.
+        if len(path) == 0:
             return []
 
         if self._forward is None:
@@ -2564,6 +2671,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.steering.steered.connect(self._steer)
         self.steering.take_asked.connect(self._take_plane)
         self.steering.armed_changed.connect(self._steering_armed)
+        self.steering.unpin_asked.connect(self.unpin)
 
         beside = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(beside)
@@ -2831,6 +2939,25 @@ class EditorWindow(QtWidgets.QMainWindow):
             )
         )
 
+        # And under that, how near the cut runs to the trace at each metre of
+        # it. A collection and not a line because the quantity varies along the
+        # trace and a `Line2D` has one colour: what has to be visible is *where*
+        # the agreement stops, which is the number about to be written as the
+        # end of a `fit`.
+        #
+        # Lowest of everything, so that the claim, the trace, the refusals and
+        # the cut all lie on top of it in their own colours. It is the only
+        # artist here that is about neither the file nor the plane but about how
+        # the two are getting on.
+        self.agreeing = self.map_view.add_animated(
+            axes.add_collection(
+                LineCollection(
+                    [], linewidths=AGREEING_WIDTH, capstyle="round",
+                    joinstyle="round", zorder=5.2,
+                )
+            )
+        )
+
         # And the plane the hand is steering, where it cuts the ground. Over
         # everything rather than under, which is the opposite of the band above
         # and for a reason the band does not have: a match *is* the cut running
@@ -3055,7 +3182,19 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._mark_attitudes(index)
         self.picked.set_data([], [])
 
-        self.map_view.blit()
+        # A hand-placed pin belongs to the trace it was placed on, so it does
+        # not survive moving to another one: kept, it would hang a plane over
+        # one fault while the band measured it against a second, and both
+        # pictures would look exactly as they do when they are right.
+        self._free_pin = None
+        self._ground = self._ground_for = None
+        self.steering.set_pinned(False)
+
+        # And laid again rather than blitted, because the panel has already
+        # shown the new block and steered off the old pin on the way in: a plain
+        # blit here would leave that frame on the map, drawn against a trace
+        # that is no longer the selected one.
+        self._resteer()
 
         self._fill_net(index)
 
@@ -3138,9 +3277,88 @@ class EditorWindow(QtWidgets.QMainWindow):
             self._steer(*self.steering.plane())
             return
 
+        self._clear_steering()
+        self.map_view.blit()
+
+    def _clear_steering(self):
+        """Everything the steering draws, taken off the map. Does not blit."""
+
         self.cutting.set_data([], [])
         self.pin.set_data([], [])
-        self.map_view.blit()
+        self.agreeing.set_segments([])
+        self._agreeing_for = None
+        self._joined = np.zeros(0, dtype=bool)
+        self._band_xy = np.zeros((0, 2))
+
+    def pin_freely(self, x, y):
+        """
+        Puts the plane's pin on the selected trace, wherever the hand says.
+
+        The gesture the tool was missing, and the reason is an order of work.
+        Everything else here pins the plane from the line under the caret --
+        the middle of the stretch it claims, or an attitude's anchor -- so a
+        plane could not be steered until somebody had already written down
+        which stretch it was about. That is backwards: which stretch is the
+        conclusion. This lets the plane be laid at a point, turned until the
+        cut runs along something, and only then attributed.
+
+        Snapped to the trace and not left where the mouse was, for the same
+        reason `pick` snaps an anchor: the elevation under it is taken from the
+        DEM because the trace is a contact somebody walked, and that sentence
+        is only true of a point the trace passes through. A pin fifty metres
+        off the line would be a plane through ground nobody stood on, drawn in
+        the same purple as one that is.
+
+        The window is sized from what is on screen now and kept that way, so
+        that turning the dial afterwards does not resize the ground being cut.
+        """
+
+        if self.index is None:
+            self.say("nothing selected to pin a plane on")
+
+            return
+
+        structure = self.document.dataset.structures[self.index]
+
+        if len(structure.path) < 2:
+            self.say(f"{structure.ident} has no path to pin on")
+
+            return
+
+        if self.steering.refusal:
+            self.say(self.steering.refusal)
+
+            return
+
+        s, distance = place_on(structure.path, x, y)
+        snapped = point_on(structure.path, s)
+
+        left, right = self.map_view.axes.get_xlim()
+
+        self._free_pin = (snapped[0], snapped[1], abs(right - left))
+        self.steering.set_pinned(True)
+
+        said = (
+            f"plane pinned at {s:.0f} m of {structure.ident}, {distance:.0f} m "
+            f"from where you clicked"
+        )
+
+        if not self.steering.armed():
+            said += " -- switch the steering on to lay a plane there"
+
+        self.say(said)
+        self._resteer()
+
+    def unpin(self):
+        """Gives the pin back to the line under the caret."""
+
+        if self._free_pin is None:
+            return
+
+        self._free_pin = None
+        self.steering.set_pinned(False)
+        self.say("the plane is back on the line the caret is on")
+        self._resteer()
 
     def _repin(self):
         """
@@ -3160,7 +3378,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         """
 
         dem = self.session.dem
-        asked = None if dem is None else self.panel.pinned_at()
+
+        if dem is None:
+            asked = None
+        elif self._free_pin is not None:
+            asked = (self._free_pin[:2], self._free_pin[2])
+        else:
+            asked = self.panel.pinned_at()
 
         if asked is None:
             self._pin = self._cut_window = self._cut_for = None
@@ -3192,15 +3416,17 @@ class EditorWindow(QtWidgets.QMainWindow):
             return
 
         if not self._repin():
-            self.cutting.set_data([], [])
-            self.pin.set_data([], [])
+            self._clear_steering()
             self.map_view.blit()
             self.steering.note(
-                "nothing to lay a plane on: put the caret on a line that claims "
-                "a stretch, or on an attitude with an anchor"
+                "nothing to lay a plane on: ctrl-click the trace to pin one "
+                "anywhere, or put the caret on a line that claims a stretch or "
+                "carries an anchor"
             )
 
             return
+
+        convergence = self.session.convergence.at(*self._pin[:2])
 
         laid = laid_on(
             self._cut_window,
@@ -3208,8 +3434,10 @@ class EditorWindow(QtWidgets.QMainWindow):
             dip_dir,
             dip,
             nodata=self.session.dem.nodata,
-            convergence=self.session.convergence.at(*self._pin[:2]),
+            convergence=convergence,
         )
+
+        gaps = self._show_agreement(dip_dir, dip, convergence)
 
         if laid.chords:
             xs, ys = laid.points[:, 0], laid.points[:, 1]
@@ -3235,7 +3463,131 @@ class EditorWindow(QtWidgets.QMainWindow):
         # every step of a dial, the bar is one line, and the bar is where the
         # panel answers for what was last pressed -- a per-frame report there is
         # the mistake the claimed stretch already made once, ninety times a turn.
-        self.steering.note(laid.describe())
+        said = laid.describe()
+
+        if gaps is not None:
+            said += "\n" + gaps.describe()
+
+        self.steering.note(said)
+
+    def _ground_now(self):
+        """
+        The topography along the selected trace, inside the window being cut.
+
+        Cached against the pair it was read for, which is the whole reason the
+        band can be drawn inside a frame: the DEM half of it is a gather over
+        the window and the plane half is six multiplications, so a dial turned
+        ninety times should do the second ninety times and the first not at all.
+
+        Sampled at the DEM's own cell, because that is the finest the cut can be
+        located anyway -- `walked` thins what comes out of the window if the
+        trace wanders far enough through it to need it.
+        """
+
+        if self.index is None or self._cut_window is None:
+            return None
+
+        for_now = (self.index, self._cut_for)
+
+        if for_now == self._ground_for:
+            return self._ground
+
+        dem = self.session.dem
+        cell = max(dem.res_x, dem.res_y)
+        structure = self.document.dataset.structures[self.index]
+
+        s, xy = walked(structure.path, box=self._cut_window.bounds, step=cell)
+
+        self._ground = ground_on(
+            self._cut_window, s, xy, nodata=dem.nodata, cell=cell,
+            whole=structure.length,
+        )
+        self._ground_for = for_now
+
+        return self._ground
+
+    def _show_agreement(self, dip_dir, dip, convergence):
+        """
+        How near the cut runs to the trace, drawn along the trace. The gaps, or None.
+
+        The band is the answer to the question the picture alone cannot settle.
+        A cut and a trace lying on top of each other is what agreement looks
+        like, but at 1:100000 thirty metres of it is one pixel, a window holds a
+        dozen curves of which only one is the one near the trace, and none of
+        that says *where along the trace* the agreement stops -- which is the
+        number about to be written as the ends of a `fit`.
+
+        It draws and does not decide. The ends stay a gesture, and that is not
+        timidity: the same measurement that finds a long stretch of good
+        agreement finds the longest one of all where the plane is lying down on
+        the hillside and the cut would follow whatever it was put on. A
+        threshold reading this column would propose that stretch most
+        confidently of all. `planes.FLAT` is why nothing is drawn there instead.
+        """
+
+        ground = self._ground_now()
+
+        if ground is None or not len(ground):
+            self.agreeing.set_segments([])
+
+            return None
+
+        gaps = gaps_on(ground, self._pin, dip_dir, dip, convergence=convergence)
+
+        # The reprojection is what is cached, not the segments: the segments
+        # depend on the plane now, because runs of one step get drawn as one
+        # polyline, and the steps move as the dial turns. This does not.
+        if self._agreeing_for != self._ground_for:
+            self._band_xy = np.asarray(self.on_map(ground.xy), dtype=float)
+
+            # Which samples are actually neighbours. `ground_on` drops what
+            # falls on nodata or against the window's rim, so two consecutive
+            # rows can be a kilometre apart -- and a band drawn across that
+            # would be the one place it spoke confidently about ground it had
+            # refused to read.
+            self._joined = np.diff(ground.s) <= 1.5 * (ground.step or 1.0)
+            self._agreeing_for = self._ground_for
+
+        if len(self._band_xy) < 2 or not self._joined.any():
+            self.agreeing.set_segments([])
+
+            return gaps
+
+        # The worse of a segment's two ends and not their average: the band is
+        # read for where the agreement stops, and a mean would carry the last
+        # good sample half a step into ground that has already lost it.
+        close = np.minimum(gaps.close[:-1], gaps.close[1:])
+
+        # `ceil`, so nought is the only thing that lands on nought: a sample
+        # with any agreement at all gets the faintest step rather than being
+        # rounded out of the picture, and only a sample the gap refused is not
+        # drawn.
+        level = np.ceil(np.clip(close, 0.0, 1.0) * AGREEING_LEVELS).astype(int)
+        level[~self._joined] = 0
+
+        # One polyline per run of equal step. A run of `k` samples covers
+        # `k + 1` points, which is why the slice goes one past the end.
+        change = np.flatnonzero(np.diff(level)) + 1
+        segments, alphas = [], []
+
+        for start, end in zip(
+            np.concatenate(([0], change)),
+            np.concatenate((change, [len(level)])),
+        ):
+            if level[start] <= 0:
+                continue
+
+            segments.append(self._band_xy[start:end + 1])
+            alphas.append(level[start] / AGREEING_LEVELS * AGREEING_ALPHA)
+
+        colours = np.empty((len(alphas), 4))
+        colours[:, :3] = to_rgb(CLAIMED_TINT)
+        colours[:, 3] = alphas
+
+        self.agreeing.set_segments(segments)
+        self.agreeing.set_color(colours)
+
+        return gaps
 
     def _take_plane(self):
         """
@@ -3717,6 +4069,14 @@ class EditorWindow(QtWidgets.QMainWindow):
 
     def _on_map_pressed(self, x, y):
         modifiers = QtWidgets.QApplication.keyboardModifiers()
+
+        # Ctrl before shift, so a hand holding both gets the pin rather than an
+        # anchor. Neither order is obviously right; what matters is that it is
+        # decided here and not by which `if` happens to be first in `pick`.
+        if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
+            self.pin_freely(*self.in_file(x, y))
+
+            return
 
         self.pick(
             x, y,

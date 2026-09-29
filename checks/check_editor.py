@@ -31,6 +31,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -258,8 +259,10 @@ def main():
         with_attrs,
         with_plane,
     )
+    from gsurf.planes import GAP_FADE_CELLS, gaps_on
     from gsurf.session import Session
     from gsurf.tools import editor as tool
+    from gsurf.tools.editor import AGREEING_ALPHA, AGREEING_LEVELS
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])  # noqa: F841
 
@@ -2532,6 +2535,248 @@ def main():
               and "140.5/31.0" in added[0]
               and "from=plane-dem" in added[0],
               f"{len(added)} line(s) changed")
+
+        # -- the pin put by hand, and the band that measures it -------------
+        #
+        # The order of work this was missing. Everything above pins the plane
+        # from the line under the caret -- the middle of the stretch it claims,
+        # or an anchor -- so a plane could not be steered until somebody had
+        # written down which stretch it was about, and which stretch is the
+        # conclusion. Ctrl-click puts the pin anywhere on the trace, and the
+        # band says how near the cut runs at each metre of it, which is the
+        # number that then gets written as the ends of the `fit`.
+
+        print("\n-- the pin put by hand, and the band that measures it --\n")
+
+        fitting.select(rows["VEE"])
+        steering.on.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        vee = fitting.document.dataset.structures[rows["VEE"]]
+        from_line = fitting._pin
+
+        # A quarter of the way up the first limb: nowhere near the middle of
+        # anything, which is the point of it.
+        free = point_on(vee.path, APEX_S / 2.0)
+
+        fitting.pin_freely(*free)
+        QtWidgets.QApplication.processEvents()
+
+        check("ctrl-click hangs the plane where the hand says, not where a claim is",
+              fitting._pin is not None
+              and math.hypot(fitting._pin[0] - free[0], fitting._pin[1] - free[1]) < 0.01
+              and math.hypot(fitting._pin[0] - from_line[0],
+                             fitting._pin[1] - from_line[1]) > 100.0,
+              f"pinned at {fitting._pin[0]:.0f},{fitting._pin[1]:.0f}; the line's "
+              f"middle is {from_line[0]:.0f},{from_line[1]:.0f}")
+
+        # Snapped onto the trace and at the ground's elevation, which are one
+        # decision: the elevation is taken from the DEM because the trace is a
+        # contact somebody walked, and that sentence is only true of a point the
+        # trace passes through.
+        off_line, distance = place_on(vee.path, *fitting._pin[:2])
+
+        check("snapped onto the trace, at the elevation the DEM has there",
+              distance < 0.01
+              and abs(fitting._pin[2] - panel.dem.elevation_at(*fitting._pin[:2])) < 1e-6,
+              f"{distance:.3f} m off the path, at {off_line:.0f} m")
+
+        # The cut is drawn about the hand's pin and not the line's, which is the
+        # assertion that the two halves agree: a pin moved without the kernel
+        # being told would leave the old curves on the map.
+        pinned_cut = [x for x in fitting.cutting.get_xdata() if x == x]
+
+        check("and the cut is redrawn about it",
+              pinned_cut
+              and min(abs(x - fitting._pin[0]) for x in pinned_cut) <= CELL / 2.0 + 1e-9,
+              f"{len(pinned_cut)} vertices, nearest {min(abs(x - fitting._pin[0]) for x in pinned_cut):.2f} m")
+
+        # -- the band ------------------------------------------------------
+        #
+        # A horizontal plane on a DEM that is one plane dipping east cuts it
+        # along a north-south contour, so the gap between the cut and any point
+        # of the trace is that point's easting distance from the pin -- exactly,
+        # up to the cell the elevation was read in. That makes the band's whole
+        # column a closed form here rather than something to eyeball.
+
+        steering.show_plane(0.0, 0.0)
+        fitting._steer(0.0, 0.0)
+        QtWidgets.QApplication.processEvents()
+
+        ground = fitting._ground
+        gaps = gaps_on(ground, fitting._pin, 0.0, 0.0,
+                       convergence=fitting.session.convergence.at(*fitting._pin[:2]))
+
+        # The pin's own cell centre, because the elevation everything here hangs
+        # from is a nearest-cell read and not an interpolation.
+        cut_at = min(
+            (x for x in fitting.cutting.get_xdata() if x == x),
+            key=lambda x: abs(x - fitting._pin[0]),
+        )
+        closed = np.abs(ground.xy[:, 0] - cut_at)
+
+        check("the band measures the gap the geometry says it should",
+              len(ground) > 100
+              and float(np.max(np.abs(gaps.gap - closed))) < CELL,
+              f"{len(ground)} samples, worst {np.max(np.abs(gaps.gap - closed)):.2f} m "
+              f"against the closed form, cell {CELL:g} m")
+
+        # And it is drawn: one segment per step of trace, coloured by that gap,
+        # with the alpha peaking where the cut actually crosses the trace. A V
+        # on a north-south contour crosses it twice, so the band has two bright
+        # places and is dark between them -- which is the picture the extent of
+        # a `fit` gets read off.
+        drawn = fitting.agreeing.get_segments()
+        alphas = np.asarray(fitting.agreeing.get_colors())[:, 3]
+
+        # The brightest step is the top quarter of `close`, which on a ramp
+        # linear in log10 over a decade is everything within ten to the quarter
+        # of a cell -- 8.9 m here, not 2 cells. Worth deriving rather than
+        # fitting to what came out: the first version of this asserted 2 cells,
+        # failed at 16 m, and the 16 m was the ramp doing what it says.
+        reach = CELL * GAP_FADE_CELLS ** (1.0 / AGREEING_LEVELS) + ground.step
+        top = [
+            run for run, alpha in zip(drawn, alphas)
+            if alpha > (1.0 - 0.5 / AGREEING_LEVELS) * AGREEING_ALPHA
+        ]
+        worst = max(
+            (float(np.max(np.abs(run[:, 0] - cut_at))) for run in top), default=None
+        )
+
+        check("and it is drawn along the trace, brightest where the cut meets it",
+              top and worst < reach,
+              f"{len(drawn)} run(s) over {len(ground)} samples, {len(top)} at the "
+              f"top step, all within {worst:.0f} m of the cut against a step that "
+              f"reaches {reach:.0f} m")
+
+        # Which is also the assertion that the quantising is doing its job: one
+        # path per sample is what `broken_path` was written to avoid, and 536 of
+        # them measured 3.9 ms a frame here -- three times the rest of the blit.
+        check("and as runs of one step, not as one path per sample",
+              len(drawn) < len(ground) / 10.0,
+              f"{len(drawn)} paths instead of {len(ground) - 1}")
+
+        # The case the first version of this got wrong, and the reason the floor
+        # is a refusal rather than a warning. Laid at the DEM's own attitude the
+        # arithmetic does not divide by zero: it divides 4.6e-13 by 2.0e-14 and
+        # answers twenty-two metres, a number with nothing in it, and the band
+        # drew that at full colour over 580 m of trace.
+        #
+        # In *grid* azimuth, which is how the raster was built -- so the dial is
+        # set to 90 plus the convergence, and that this lands on the DEM exactly
+        # is also the assertion that the band and the kernel are given the same
+        # north.
+        drape = 90.0 + fitting.session.convergence.at(*fitting._pin[:2])
+
+        steering.show_plane(drape, RELIEF_DIP)
+        fitting._steer(drape, RELIEF_DIP)
+        QtWidgets.QApplication.processEvents()
+
+        flat_gaps = gaps_on(ground, fitting._pin, drape, RELIEF_DIP,
+                            convergence=fitting.session.convergence.at(*fitting._pin[:2]))
+
+        check("a plane laid on the DEM's own attitude draws nothing at all",
+              len(fitting.agreeing.get_segments()) == 0
+              and flat_gaps.flat > 0.99
+              and not np.isfinite(flat_gaps.gap).any(),
+              f"{len(fitting.agreeing.get_segments())} run(s) drawn, "
+              f"{flat_gaps.flat * 100:.0f}% of the trace refused")
+
+        check("and it says so, rather than reporting a good agreement",
+              "no answer rather than a good one" in flat_gaps.describe(),
+              flat_gaps.describe()[-58:])
+
+        # The window a hand-placed pin is cut against is the ground that was on
+        # screen when the pin went down -- there is no claimed stretch to size it
+        # from -- and it is taken then rather than read per frame so that turning
+        # the dial afterwards does not resize the ground underneath it.
+        wide = fitting._cut_for[2]
+
+        fitting.map_view.axes.set_xlim(free[0] - 300.0, free[0] + 300.0)
+        fitting.pin_freely(*free)
+        QtWidgets.QApplication.processEvents()
+
+        check("the window is sized from what is on screen when the pin goes down",
+              fitting._cut_for[2] < wide
+              and abs(fitting._cut_for[2] - 600.0 * 2.0 / CELL) <= 1.0,
+              f"{fitting._cut_for[2]} cells on a 600 m view, {wide} on the whole map")
+
+        # And then the band stops where the window stops, which on the map looks
+        # exactly like a band that faded out -- so it is said in words. The two
+        # readings are opposite: one is the plane leaving the trace, the other is
+        # nobody having asked yet.
+        steering.show_plane(0.0, 0.0)
+        fitting._steer(0.0, 0.0)
+        QtWidgets.QApplication.processEvents()
+
+        check("and the band says when it stopped because the window did",
+              fitting._ground.metres < vee.length / 2.0
+              and "the band stops where the window does" in steering.label.text(),
+              f"{fitting._ground.metres:.0f} m sampled of {vee.length:.0f}")
+
+        fitting.map_view.axes.set_xlim(X0 - 100.0, X0 + 2700.0)
+        fitting.pin_freely(*free)
+        QtWidgets.QApplication.processEvents()
+
+        ground = fitting._ground
+
+        # The dial moves the plane and nothing else, which is what keeps the
+        # band inside a frame: the DEM half is a gather over the window, the
+        # plane half is six multiplications, and a turn of ninety steps should
+        # do the second ninety times and the first not at all.
+        was = fitting._ground
+
+        for step in range(20):
+            fitting._steer(float(step * 7), 40.0)
+
+        check("turning the dial does not read the DEM again",
+              fitting._ground is was)
+
+        started = time.perf_counter()
+
+        for step in range(20):
+            fitting._steer(float(step * 7), 40.0)
+
+        per_frame = (time.perf_counter() - started) / 20.0 * 1000.0
+
+        # Generous, and deliberately: this is a guard against the band turning
+        # the loop into something else, not a benchmark. The tool's own budget
+        # is 6.4 ms a frame on this fixture and the number below has to survive
+        # a loaded machine.
+        check("and a frame still lands",
+              per_frame < 50.0, f"{per_frame:.1f} ms a frame with the band")
+
+        # -- and the way back ----------------------------------------------
+
+        fitting.unpin()
+        QtWidgets.QApplication.processEvents()
+
+        check("releasing the pin gives the plane back to the caret's line",
+              fitting._pin is not None
+              and math.hypot(fitting._pin[0] - from_line[0],
+                             fitting._pin[1] - from_line[1]) < 0.01
+              and not steering.release.isEnabled())
+
+        # A pin belongs to the trace it was put on. Kept across a selection it
+        # would hang a plane over one fault while the band measured it against
+        # another, and both pictures would look exactly as they do when they
+        # are right.
+        fitting.pin_freely(*free)
+        QtWidgets.QApplication.processEvents()
+        pinned_elsewhere = fitting._free_pin is not None
+
+        fitting.select(rows["TAKEN"])
+        QtWidgets.QApplication.processEvents()
+
+        check("and selecting another trace drops it rather than carrying it over",
+              pinned_elsewhere and fitting._free_pin is None
+              and not steering.release.isEnabled())
+
+        steering.on.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        check("switched off, the band goes with the cut",
+              len(fitting.agreeing.get_segments()) == 0)
 
         fitting.close()
 

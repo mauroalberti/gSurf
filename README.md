@@ -1158,8 +1158,9 @@ anything to aim at. The point goes wherever you click, and the answer is read ou
 loud into a notebook.
 
 So the calculation moves into `gsurf/planes.py` with the tool's controls taken
-off it, and two things in their place. The plane hangs at **the middle of the
-stretch the line in the box claims** — the band already drawn there — at the
+off it, and two things in their place. The plane hangs on the trace — by default
+at **the middle of the stretch the line in the box claims**, the band already
+drawn there, and otherwise wherever ctrl-click puts it — at the
 elevation the DEM has under it, because the trace is a contact somebody walked;
 pinned at an *end* it would be exactly right there and free to swing away over the
 rest, which is the error this exists to show. And the compute window is sized from
@@ -1206,6 +1207,70 @@ on a cell boundary and the contour comes out 2.5 m east of it — exactly right,
 about a point half a cell from the one that was asked for. Left as it is, because
 the judgement being made is whether a cut runs along a trace drawn from 1:25000
 mapping, where the line itself is 25 m wide.
+
+**A pin put by hand, because the stretch is the conclusion.** Everything above
+hangs the plane off the line under the caret, which means a plane could not be
+steered until somebody had already written down which stretch it was about — and
+which stretch is the answer, not the question. Ctrl-click puts the pin anywhere on
+the selected trace: steer first, attribute afterwards. It is snapped to the trace
+rather than left where the mouse was, and that is not tidiness — the elevation is
+taken from the DEM *because* the trace is a contact somebody walked, and that
+sentence is only true of a point the trace passes through. A pin fifty metres off
+the line would be a plane through ground nobody stood on, drawn in the same purple
+as one that is. With no claim to size the window from, it is sized from what was on
+screen when the pin went down, and kept: turning the dial afterwards must not
+resize the ground being cut. The pin is a mode, so there is a **release the pin**
+button, greyed rather than hidden — a mode with no visible way out is a trap — and
+selecting another trace drops it, since a pin kept across a selection would hang a
+plane over one fault while the band measured it against another, and both pictures
+would look exactly as they do when they are right.
+
+**And the band, because the picture cannot settle it.** A cut lying on top of a
+trace is what agreement looks like, but at 1:100000 thirty metres of it is one
+pixel, a window holds a dozen curves of which one is the one near the trace, and
+none of it says *where along the trace* the agreement stops — which is the number
+about to be written as the ends of a `fit`. So it is computed and drawn along the
+trace, metre by metre, under everything else.
+
+Not by measuring to the drawn chords. The cut is the zero set of `f = z_plane −
+z_dem`, a field defined at every point of the trace whether a chord came near it
+or not, and the distance to that zero set is `|f| / |∇f|`. That buys a number
+everywhere instead of only near a curve, a cost that does not grow with how finely
+the kernel chopped the window — 0.04 ms for the whole column — and, the point, the
+divisor. `∇f` is the difference between the plane's slope and the ground's, so it
+vanishes exactly when the plane lies down on the hillside, which is when the gap
+explodes. The 1/sin above, as an arithmetic the tool can name instead of a picture
+somebody has to interpret.
+
+**And it has to refuse, not warn.** The first version drew the ramp and printed a
+caveat, and laying a plane at the DEM's own attitude does not divide by zero — it
+divides 4.6e-13 by 2.0e-14, answers twenty-two metres, and the band drew that at
+full colour over 580 m of trace. The floor is not picked: the elevation is read at
+the nearest cell, so the vertical mismatch is known to about half a cell whatever
+else is true, and once `(cell/2)/|∇f|` reaches the distance the band fades out at,
+every value it could draw is inside its own error bar. Set the two equal and the
+cell cancels — half over ten, a pure number. Below it nothing is drawn and the
+label says so in words, because a band gone pale and a band refused are opposite
+findings: one says this attitude is wrong, the other says this ground cannot tell
+any attitude from another.
+
+The scale is the DEM's own: full weight at one cell, gone at ten, linear in log10
+over that decade, in four steps. Four rather than a gradient because the band is
+read for where the agreement *stops*, and an edge between two tints is a place
+where a gradient is a feeling — and because runs of one step draw as one polyline.
+That second half is `broken_path`'s measurement again: one path per sample costs
+about 7 µs whatever is in it, 536 of them was 3.9 ms a frame, three times the rest
+of the blit, and quantising took the whole band to 0.5 ms. A band that stops
+because the *window* stopped looks identical to one that faded out, so that is
+said in words too.
+
+On the AOI it agrees with a producer it shares no code with. F0005 carries a
+`fit` of 226/61 computed by `trace-dem`, the best-fit plane through the draped
+trace; steer to that attitude and the band reports the cut within 5 m of 655 m of
+trace and within 50 m of all 910. Rotate it 40° and that falls to 20 m and 210 m;
+90°, to 10 m and 115 m. At the window's ceiling a frame is 37 ms on real ground,
+which is the kernel's documented worst case and not the band's — zoom in and the
+window shrinks with the view.
 
 **The north these files did not declare.** Steering needs a grid azimuth and a
 compass reads a true one, so this subtracts meridian convergence before the kernel
