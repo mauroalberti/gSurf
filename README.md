@@ -1148,6 +1148,80 @@ winning at which metre, so it is visible; the panel says it as well, because
 visible and unsaid is how it would become a trap. Where the line should go is a
 decision still to make.
 
+**And the plane steered by hand, for everything that button is quiet about.** The
+gate is right to refuse most traces — a plane through a straight trace is
+arbitrary and not merely imprecise, and 27 of 185 attempts pass it on the AOI —
+but a curator looking at a bend that carries nothing still has the topography in
+front of them. gSurf has been steering a plane across a DEM by hand since before
+this tool existed, in *real-time intersection*; what that tool has never had is
+anything to aim at. The point goes wherever you click, and the answer is read out
+loud into a notebook.
+
+So the calculation moves into `gsurf/planes.py` with the tool's controls taken
+off it, and two things in their place. The plane hangs at **the middle of the
+stretch the line in the box claims** — the band already drawn there — at the
+elevation the DEM has under it, because the trace is a contact somebody walked;
+pinned at an *end* it would be exactly right there and free to swing away over the
+rest, which is the error this exists to show. And the compute window is sized from
+that stretch instead of being a fixed thousand cells: in the other tool the window
+is a cost dial, because the plane is unbounded and the point is anywhere, and here
+there is a piece of ground the question is about. Half the claim again on each
+side, so a curve cannot leave the picture exactly where it would start to diverge;
+120 cells at the floor, 1200 at the ceiling, which is where a frame stops landing.
+Measured on the check's fixture: 6.4 ms a frame, 156 fps.
+
+Turn the dial until the cut runs along the trace, and **write it in the line**
+puts that attitude in the plane slot of whatever line the caret is on — `fit`
+fourth from the keyword, `attitude` third, `span` not at all, since its fourth
+slot holds a vocabulary word and a plane written there would parse and mean
+nothing. One replacement of one line, so it is one step of the undo stack; a dial
+that wrote as it turned would put ninety there. The loop also runs backwards, and
+that is the half worth more on a file that already has planes in it: click into a
+`fit` somebody computed and the dial shows it, cutting the ground it was computed
+over. `conflicts.py` asks whether a plane agrees with the ground arithmetically.
+This asks it by looking.
+
+What goes in with the number is where it came from, which is the format's own
+rule — `from=` names the producer, and a producer does not fill in another's
+diagnostics. This one has no gate, no residual and no window swept, so it writes
+none of `snr`, `flat` or `jack`; `from=plane-dem` is the honest name for somebody
+who looked at two lines and judged them to run together. It also writes **which
+north**, which no line in these files currently does — see the note below, because
+that turned out to be a question about the files and not about this button.
+
+**Where it goes wrong is where the geology says it should.** The cut passes
+through the pin within half a cell of the DEM — 1.5 m over four attitudes on the
+check's 5 m fixture — until the plane lies down on the slope, and then it wanders:
+6 m at ten degrees from the ground's own attitude, 23 m at under three. That is
+not slack to be tightened. Two nearly parallel planes barely determine the line
+they share, and a plane nearly parallel to the hillside is exactly the case
+FORMAT.md writes `drape` for — a fit reproducing the topography is not evidence
+about the fault. The attribute says so as a number; this says it by making the
+curves unsteerable.
+
+The half cell is worth naming too, because it is not the kernel: `Dem.elevation_at`
+is a nearest-cell lookup and not an interpolation, so the plane is laid at the
+elevation of the *cell* the pin is in. On the check's fixture the pin lands exactly
+on a cell boundary and the contour comes out 2.5 m east of it — exactly right,
+about a point half a cell from the one that was asked for. Left as it is, because
+the judgement being made is whether a cut runs along a trace drawn from 1:25000
+mapping, where the line itself is 25 m wide.
+
+**The north these files do not declare.** Steering needs a grid azimuth and a
+compass reads a true one, so this subtracts meridian convergence before the kernel
+— which is what *real-time intersection* has always done, and it is where the
+question surfaced. `traces.mean_attitude` fits in projected coordinates and
+averages normals, so the dip direction it produces is measured from **grid** north,
+and `fits_along` writes it into the file unchanged: `convergence` appears nowhere
+in `traces.py`, `fits.py` or `imports.py`. An `attitude … src=field` is a compass
+reading corrected for declination, so it is measured from **true** north. FORMAT.md
+does not mention north at all. In the AOI the gap runs +0.41° to +1.04°, which is
+far below everything else on these traces — S22 and S25 are 16 m apart and diverge
+by 14° — so this is a missing line of documentation and not a wrong number. This
+button writes `north=true` and `converg=` beside its plane, which makes its own
+lines the only unambiguous ones in the file; what to do about the fits already
+written is a decision, and not one a button should make quietly.
+
 The line is built in `fits.as_line` rather than taken from `dumps`, for the same
 reason the whole tool splices: the format's own writer prints whole degrees, and
 a plane read over a swept window is a computed number — `140.5/31.2` would leave

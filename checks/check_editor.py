@@ -251,9 +251,12 @@ def main():
         interval_of,
         nearest_structure,
         place_on,
+        plane_of,
         point_on,
         provenance_of,
         stretch,
+        with_attrs,
+        with_plane,
     )
     from gsurf.session import Session
     from gsurf.tools import editor as tool
@@ -517,6 +520,111 @@ def main():
         check("nor does one whose slots hold something that is not an end",
               interval_of("  fit plane 100/40 * from=", alpha.path) is None
               and interval_of("  kind fault", alpha.path) is None)
+
+        # -- and the plane that line carries -------------------------------
+        #
+        # The other slot on the same two lines, and it is not in the same place
+        # on both: `fit <kind> <start> <end> <plane>` keeps it fourth from the
+        # keyword and `attitude <anchor> plane <plane>` third. The ends happen
+        # to coincide between the two and the planes do not, which is the whole
+        # reason `PLANE_AT` is a table where `ENDS_AT` is a constant.
+
+        print("\n-- the plane a line carries, read and rewritten --\n")
+
+        check("a fit's plane is read out of the fourth slot",
+              plane_of("  fit plane * * 140.5/31 from=trace-dem") == (140.5, 31.0))
+
+        check("and an attitude's out of the third",
+              plane_of("  attitude @600800.00,4420000.00 plane 90/30 station=S1")
+              == (90.0, 30.0))
+
+        # The template's, and it is read as the plane it says it is rather than
+        # as a placeholder. Which is what puts the dial on north-and-horizontal
+        # the moment `+ fit` is pressed -- correct, because that is what the line
+        # would mean if it were applied as it stands.
+        check("including the template's, which is a plane like any other",
+              plane_of("  fit plane * * 000/00 from=") == (0.0, 0.0))
+
+        # A line being written passes through every prefix of itself, and half of
+        # those are not planes. None rather than a guess: a control put on
+        # `140/0` while somebody is still typing the dip would redraw a plane
+        # nobody has asked for yet.
+        check("a half-typed plane is not one",
+              plane_of("  fit plane * * 140/ from=") is None)
+
+        # `span`'s fourth slot is the one place this would go wrong quietly. It
+        # holds a vocabulary word, `value_at` reads any string at all, so a plane
+        # written there parses -- the file would carry `use 140.5/31` and mean
+        # nothing by it, with nothing to say so.
+        check("a span has no plane slot, which is why it is not in the table",
+              plane_of('  span use * * rejected reason="prova"') is None
+              and with_plane('  span use * * rejected reason="prova"', 140.5, 31.0)
+              is None)
+
+        check("nor has an attitude that does not say `plane`",
+              plane_of("  attitude @600800.00,4420000.00 90/30") is None)
+
+        # Spliced and not rebuilt from the tokens, which is `Document`'s own rule
+        # one level down. Joining them would write the line in this function's
+        # spacing: the two-space indent that puts it inside its structure, and
+        # any alignment somebody typed, are bytes nobody asked to have changed.
+        lined_up = "  fit plane @600300.00,4420000.00 *    000/00  from=trace-dem"
+
+        check("rewriting the plane leaves every other byte where it was",
+              with_plane(lined_up, 140.52, 31.44)
+              == "  fit plane @600300.00,4420000.00 *    140.5/31.4  from=trace-dem",
+              with_plane(lined_up, 140.52, 31.44))
+
+        check("and an attitude's plane goes in its own slot, not a fit's",
+              with_plane("  attitude @600800.00,4420000.00 plane 90/30 station=S1",
+                         140.5, 31.0)
+              == "  attitude @600800.00,4420000.00 plane 140.5/31.0 station=S1")
+
+        # -- and where the number says it came from ------------------------
+
+        # The templates arrive carrying `from=` with nothing after it, which is
+        # the format's way of leaving a slot open rather than a value of its own
+        # -- `_kw` does not write an empty one at all. So an empty value is an
+        # invitation and a filled one is a decision, and only the first is
+        # written over.
+        check("an empty `from=` is filled, and taken out of the middle",
+              with_attrs("  fit plane * * 140.5/31.0 from=", {"from": "plane-dem"})
+              == "  fit plane * * 140.5/31.0 from=plane-dem",
+              with_attrs("  fit plane * * 140.5/31.0 from=", {"from": "plane-dem"}))
+
+        check("a filled one is left alone, whatever it says",
+              with_attrs("  fit plane * * 140.5/31.0 from=trace-dem",
+                         {"from": "plane-dem"})
+              == "  fit plane * * 140.5/31.0 from=trace-dem")
+
+        # The one value here that can hold a space. `dem=Monte Alpi.tif` reads
+        # back as a `dem` of `Monte` and a stray token the parser has no reason
+        # to refuse, so the file would not say what it appears to say -- which is
+        # the failure this format's quoting exists to prevent. Quoted by
+        # gstruct's own `_q` and not by a rule reimplemented here.
+        spaced = with_attrs("  fit plane * * 140.5/31.0 from=",
+                            {"from": "plane-dem", "dem": "Monte Alpi.tif"})
+
+        check("a DEM whose name holds a space is quoted, not left to split",
+              spaced.endswith('dem="Monte Alpi.tif"'), spaced)
+
+        # And it reads back as one value, which is the assertion the quoting is
+        # actually for: the spelling above could be right and the reading wrong.
+        check("and the file then says what it appears to say",
+              gstruct.loads(
+                  "gstruct 0.2\nstructure X \"\"\n" + spaced + "\n"
+              ).structures[0].fits[0].attrs["dem"] == "Monte Alpi.tif")
+
+        # Runs of spaces inside a quoted value are the reason the empty token is
+        # cut out by where it sits rather than by rebuilding the line: `reason="la
+        # traccia qui ricalca"` is four tokens to anything splitting on
+        # whitespace, and a join on single spaces would close them up.
+        quoted = '  span use * * rejected src= reason="la traccia  qui ricalca"'
+
+        check("and a quoted value keeps its own spaces through the splice",
+              with_attrs(quoted, {"src": "gsurf"})
+              == '  span use * * rejected reason="la traccia  qui ricalca" src=gsurf',
+              with_attrs(quoted, {"src": "gsurf"}))
 
         # -- the tool -----------------------------------------------------
 
@@ -1843,6 +1951,11 @@ def main():
               and "25833" in (crossed.panel.dem_said or ""),
               (crossed.panel.dem_said or "nothing said")[:58])
 
+        # Kept before the window goes: the steering is refused by the same fact
+        # about the same pair, and asserting that where it is asserted would mean
+        # opening a second window in another projection to ask it again.
+        crossed_steering = crossed.steering.refusal
+
         crossed.close()
 
         session = Session.open(dem_path=str(relief), frame_layers=[traced_spec])
@@ -2143,6 +2256,224 @@ def main():
               len(changed) == 3
               and all(one.startswith("+  fit plane") for one in changed),
               f"{len(changed)} line(s) changed")
+
+        # -- the plane steered onto the topography -------------------------
+        #
+        # The other way to a plane, and the opposite one: `fit off the DEM` reads
+        # the trace and answers, this draws and lets somebody else answer. It is
+        # here because the first one is quiet on most traces -- three fits out of
+        # four structures above, and on `elementi_tettonici` 27 of 185 attempts
+        # pass the gate -- and a curator looking at a bend that carries nothing
+        # still has the topography in front of them.
+        #
+        # This DEM is a single plane dipping 30 degrees due east, which makes the
+        # arithmetic closed-form: any plane not parallel to it cuts it in one
+        # straight line, and a horizontal one cuts it along a contour.
+
+        print("\n-- the plane steered onto the topography --\n")
+
+        steering = fitting.steering
+
+        check("a DEM these traces can be read against arms it",
+              steering.refusal is None and not steering.armed())
+
+        check("and a DEM in another projection refuses it in the same words",
+              crossed_steering is not None
+              and "25832" in crossed_steering
+              and "25833" in crossed_steering,
+              (crossed_steering or "nothing said")[:58])
+
+        fitting.select(rows["VEE"])
+        fitting.panel.add_line("  fit plane * * 000/00 from=")
+        QtWidgets.QApplication.processEvents()
+
+        check("nothing is laid until it is switched on",
+              len(fitting.cutting.get_xdata()) == 0 and fitting._pin is None)
+
+        steering.on.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        # The middle of the claim and not an end, which is the one place a plane
+        # can hang without prejudging the answer: pinned at one end it would be
+        # exactly right there and free to swing away over the rest, which is the
+        # error this exists to show.
+        vee = fitting.document.dataset.structures[rows["VEE"]]
+        apex = point_on(vee.path, vee.length / 2.0)
+
+        check("the plane hangs at the middle of the stretch the line claims",
+              fitting._pin is not None
+              and math.hypot(fitting._pin[0] - apex[0], fitting._pin[1] - apex[1]) < 0.01,
+              f"pinned at {fitting._pin[0]:.0f},{fitting._pin[1]:.0f}; "
+              f"apex {apex[0]:.0f},{apex[1]:.0f}")
+
+        # And the elevation is the ground's, because the trace is a contact
+        # somebody walked: a plane through a point the trace does not pass
+        # through is not what any of this is being asked.
+        check("and at the elevation the DEM has there",
+              abs(fitting._pin[2] - panel.dem.elevation_at(*fitting._pin[:2])) < 1e-6)
+
+        # The template arrives carrying `000/00`, so the dial reads that -- which
+        # is the loop running backwards, and the half worth more on a file with
+        # planes already in it: clicking into a fit somebody computed shows that
+        # plane cutting the ground it was computed over.
+        check("the dial shows what the line says, rather than a number of its own",
+              steering.plane() == (0.0, 0.0))
+
+        # A horizontal plane on a DEM that is itself one plane is a contour, and
+        # on this one the contours run north-south. The straightness is exact --
+        # every vertex of the cut on one easting, to the last digit -- and that
+        # is the assertion about the kernel.
+        eastings = [x for x in fitting.cutting.get_xdata() if x == x]
+
+        check("a horizontal plane cuts this DEM along a contour, dead straight",
+              eastings and max(eastings) - min(eastings) < 1e-9,
+              f"{len(eastings)} vertices, all at easting {eastings[0]:.2f}")
+
+        # And it runs half a cell east of the pin, which is not slack in the
+        # kernel but `Dem.elevation_at` being a nearest-cell lookup rather than
+        # an interpolation. The pin here lands exactly on a cell boundary, so it
+        # is the full half cell: the plane is laid at the elevation of the *cell*
+        # the pin is in, whose centre is 601302.50, and a horizontal plane at
+        # that elevation cuts this DEM through that centre. Exactly right, about
+        # a point 2.5 m from the one that was asked for.
+        #
+        # Left as it is rather than interpolated, and the reason is what the
+        # number is for: the judgement being made is whether a cut runs along a
+        # trace drawn from 1:25000 mapping, where the line itself is 25 m wide.
+        # What it costs is half a cell of gradient in the elevation -- 1.4 m
+        # here, on a 30 degree slope -- and that is the error every cut below
+        # carries, including the 1/sin blow-up as the plane lies down.
+        check("through the cell the pin is in, which is half a cell from the pin",
+              abs(eastings[0] - fitting._pin[0]) <= CELL / 2.0 + 1e-9,
+              f"cut at {eastings[0]:.2f}, pin at {fitting._pin[0]:.2f}, "
+              f"cell {CELL:g} m")
+
+        # The invariant that holds for every attitude, this DEM or any other: the
+        # plane passes through the pin, so its cut does too. What it costs to
+        # assert is a tolerance, and the tolerance is not a fudge -- it is half a
+        # cell of elevation sampling divided by the sine of the angle between the
+        # plane and the ground, which is why it is quoted at an angle rather than
+        # flat. Measured over 154 attitudes: within 2.5 m at 30 degrees or more
+        # from the slope, 3.5 m at 20, 6.2 m at 10, and 22.7 m at 2.7.
+        def nearest_chord(xs, ys, at):
+            xs, ys = np.asarray(xs), np.asarray(ys)
+            head = np.column_stack([xs[0::3], ys[0::3]])
+            tail = np.column_stack([xs[1::3], ys[1::3]])
+            along = tail - head
+            where = np.array(at)
+            how_far = np.clip(
+                ((where - head) * along).sum(1)
+                / np.maximum((along * along).sum(1), 1e-12),
+                0.0, 1.0,
+            )
+
+            return float(np.min(np.hypot(
+                *(head + how_far[:, None] * along - where).T
+            )))
+
+        worst = 0.0
+
+        for dip_dir, dip in ((0.0, 45.0), (180.0, 60.0), (270.0, 20.0), (90.0, 80.0)):
+            steering.show_plane(dip_dir, dip)
+            fitting._steer(dip_dir, dip)
+            worst = max(worst, nearest_chord(
+                fitting.cutting.get_xdata(), fitting.cutting.get_ydata(),
+                fitting._pin[:2],
+            ))
+
+        check("and every attitude's cut passes through the pin, within half a cell",
+              worst < CELL / 2.0,
+              f"worst miss {worst:.2f} m over four attitudes, cell {CELL:g} m")
+
+        # Which stops being true as the plane lies down on the slope, and that is
+        # geometry rather than a defect: at 2.7 degrees from this DEM's own 90/30
+        # the cut wanders 22.7 m from the pin, because where two planes are nearly
+        # parallel the line they share is barely determined. It is `drape`, drawn
+        # -- FORMAT.md's warning that a fit reproducing the hillside is not
+        # evidence about the fault -- and the tool shows it as curves going wild
+        # rather than as a number in an attribute.
+        steering.show_plane(85.0, 31.0)
+        fitting._steer(85.0, 31.0)
+
+        grazing = nearest_chord(
+            fitting.cutting.get_xdata(), fitting.cutting.get_ydata(), fitting._pin[:2],
+        )
+
+        check("and stops being true where the plane lies down on the slope",
+              grazing > 4.0 * CELL,
+              f"{grazing:.1f} m out at 2.7 degrees from the DEM's own plane")
+
+        # The number, into the line the caret is on, and nowhere else until
+        # Apply. One replacement of one line, so it is one step of the undo
+        # stack: a dial that wrote as it turned would put ninety there.
+        steering.show_plane(140.5, 31.0)
+        fitting._steer(140.5, 31.0)
+        fitting._take_plane()
+        QtWidgets.QApplication.processEvents()
+
+        taken = fitting.panel.text.textCursor().block().text()
+
+        check("the button writes the steered attitude into the caret's line",
+              "140.5/31.0" in taken, taken.strip()[:66])
+
+        # With the provenance, which is the format's rule and not decoration: a
+        # derived plane names the producer that made it. This one has no gate and
+        # no residual, so it writes none of the three numbers that say a fit is
+        # sound -- what it has is somebody who looked.
+        check("and says which producer made it, borrowing no diagnostics",
+              "from=plane-dem" in taken
+              and not any(word in taken for word in ("snr=", "flat=", "jack=")))
+
+        # And which north, which no line in these files currently does. The dial
+        # is a true azimuth, as a compass is; the DEM is on the grid; around here
+        # the two are 0.4 to 1.0 degrees apart. Small against everything else on
+        # these traces, and a number whose reference is written down can be
+        # argued with later where one without cannot.
+        check("and which north it is measured from, with the convergence",
+              "north=true" in taken and "converg=+" in taken,
+              taken.strip()[-46:])
+
+        # The line still parses, which is the assertion all of the above rests
+        # on: a plane spliced into a slot is only worth anything if the file
+        # reads back saying it.
+        fitting.panel.apply_block()
+        QtWidgets.QApplication.processEvents()
+
+        kept = fitting.document.dataset.structures[rows["VEE"]].fits
+
+        check("Apply takes it, and it reads back as the plane that was steered",
+              any(
+                  abs(one.plane.dip_dir - 140.5) < 0.05
+                  and abs(one.plane.dip - 31.0) < 0.05
+                  and one.attrs.get("from") == "plane-dem"
+                  for one in kept
+              ),
+              f"{len(kept)} fit(s) on VEE")
+
+        # Switched off, nothing of it is left on the map. The claim's band is not
+        # its to take away -- that belongs to the line, not to the dial.
+        steering.on.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        check("switching it off takes the cut off the map and leaves the claim",
+              len(fitting.cutting.get_xdata()) == 0
+              and len(fitting.pin.get_xdata()) == 0
+              and len(fitting.claimed.get_xdata()) > 0)
+
+        # And all the way to the file, which is the only assertion that says the
+        # number survived every hand it passed through: the dial, the splice into
+        # a line, the parser, the document, and a save that rewrites one block.
+        before_steered = traced.read_text(encoding="utf-8")
+        fitting.save()
+
+        added = changed_lines(before_steered, traced.read_text(encoding="utf-8"))
+
+        check("and the steered plane reaches the file, one line and no others",
+              len(added) == 1
+              and added[0].startswith("+  fit plane")
+              and "140.5/31.0" in added[0]
+              and "from=plane-dem" in added[0],
+              f"{len(added)} line(s) changed")
 
         fitting.close()
 

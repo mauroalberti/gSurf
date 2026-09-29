@@ -54,6 +54,7 @@ hemisphere and looks like a result.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -836,6 +837,206 @@ def interval_of(line, path):
             return None
 
     return tuple(ends)
+
+
+# Where a line keeps its plane, counted from the keyword: `fit <kind> <start>
+# <end> <plane>` and `attitude <anchor> plane <plane>`. Two keywords and two
+# different places, which is why this is a table and `ENDS_AT` is a constant --
+# the ends happen to coincide and the planes do not, and writing the second as
+# though it were the first is how a plane would land in an anchor's slot.
+#
+# `span` is deliberately absent. Its fourth slot holds a vocabulary word --
+# `rejected`, `inferred`, `exposed` -- and a plane written there would parse:
+# `value_at` reads any string, so the file would carry `use 140.5/31` and mean
+# nothing by it, silently.
+PLANE_AT = {"fit": 4, "attitude": 3}
+
+# What the format's own two keywords are between the anchor and the plane, and
+# the reason the table above is not enough on its own: a `fit` that does not say
+# `plane` is a fit of something else, and `attitude @x,y 140/31` is a line the
+# parser reads as having no plane at all (`pos[1] == "plane"` is its test).
+PLANE_KIND_AT = {"fit": 1, "attitude": 2}
+
+# How a plane is written back into a line. One decimal, which is `fits`' own
+# choice and for its reason: a number that came off a calculation should not be
+# rounded as it is written, or the only thing separating one answer from the
+# next is thrown away. Here the calculation is a hand on a dial, and the dial
+# steps by a tenth.
+PLANE_DECIMALS = 1
+
+
+def _tokens_of(line):
+    """The line's whitespace-separated tokens, each with where it sits."""
+
+    return [(m.group(), m.start(), m.end()) for m in re.finditer(r"\S+", line)]
+
+
+def plane_of(line):
+    """
+    The plane a `fit` or an `attitude` line carries, as `(dip dir, dip)`, or None.
+
+    For a control that has to show what is already written before it offers to
+    change it. Reading a line this way is the same trade `interval_of` makes and
+    is sound for the same reason: the slot can hold `140.5/31` or a template's
+    `000/00`, neither of which can be quoted or hold a space, so the tokens up
+    to the fourth are the ones `loads` would find.
+
+    A slot holding something that is not a plane comes back None rather than
+    guessed at -- which includes the half-typed `140/`, since a line being
+    written passes through every prefix of itself.
+    """
+
+    tokens = [token for token, _, _ in _tokens_of(line)]
+    at = PLANE_AT.get(tokens[0] if tokens else None)
+
+    if at is None or len(tokens) <= at:
+        return None
+
+    if tokens[PLANE_KIND_AT[tokens[0]]] != "plane":
+        return None
+
+    try:
+        dip_dir, dip = tokens[at].split("/")
+
+        return float(dip_dir), float(dip)
+    except ValueError:
+        return None
+
+
+# The keywords whose first positional token is a single anchor rather than a
+# pair: `attitude @x,y ...` and `lineation @x,y ...`. A place and not a stretch,
+# which is why `interval_of` answers None for both and this exists beside it.
+ANCHOR_AT = {"attitude": 1, "lineation": 1}
+
+
+def anchor_of(line):
+    """
+    The coordinate an `attitude` or a `lineation` line is pinned at, or None.
+
+    `interval_of`'s other half, for the lines that claim a place instead of a
+    stretch. Same reading and same refusals: `*` is not a coordinate here but
+    the format's word for an end of the path, and a line carrying one is a
+    record whose anchor nobody has picked yet -- so it comes back None rather
+    than as the start of the trace, which would be a place somebody would have
+    to be told was not chosen.
+    """
+
+    tokens = [token for token, _, _ in _tokens_of(line)]
+    at = ANCHOR_AT.get(tokens[0] if tokens else None)
+
+    if at is None or len(tokens) <= at or not tokens[at].startswith("@"):
+        return None
+
+    try:
+        x, y = tokens[at][1:].split(",")
+
+        return float(x), float(y)
+    except ValueError:
+        return None
+
+
+def with_plane(line, dip_dir, dip, decimals=PLANE_DECIMALS):
+    """
+    The same line with its plane slot rewritten, or None if it has no plane slot.
+
+    **A splice and not a rebuild**, which is `Document`'s own rule one line
+    further down: joining the tokens back together would write the line in this
+    function's spacing rather than in the file's, so a line somebody had lined
+    up under its neighbours would come back single-spaced, and a `fit` written
+    by `as_line` would lose the two-space indent that puts it inside its
+    structure. Every byte outside the slot is left where it was.
+
+    The line is not checked for being complete. A template with its anchors
+    still `*` takes a plane perfectly well -- that is the normal way round here,
+    the number being the thing chosen last -- and a line that would not parse is
+    refused by Apply, with the parser's words, which is the one place in this
+    tool that refuses anything.
+    """
+
+    tokens = _tokens_of(line)
+    word = tokens[0][0] if tokens else None
+    at = PLANE_AT.get(word)
+
+    if at is None or len(tokens) <= at:
+        return None
+
+    if tokens[PLANE_KIND_AT[word]][0] != "plane":
+        return None
+
+    _, start, end = tokens[at]
+
+    return (
+        line[:start]
+        + f"{float(dip_dir) % 360.0:.{decimals}f}/{float(dip):.{decimals}f}"
+        + line[end:]
+    )
+
+
+def with_attrs(line, attrs):
+    """
+    The same line with `key=value` filled in where it is missing or empty.
+
+    **Missing or empty, and never over a value somebody wrote.** The one thing
+    this is for is saying where a number came from -- `from=`, and what north it
+    was measured against -- and the templates arrive carrying `from=` with
+    nothing after it, which is the format's way of leaving a slot open rather
+    than a value of its own (`_kw` does not write an empty one at all). So an
+    empty value is an invitation and a filled one is a decision, and the
+    difference matters enough to be the rule.
+
+    Appended in the order given, at the end of the line, which is where
+    attributes go: the grammar is positional tokens first, then `key=value`, and
+    a pair inserted in the middle would be read as positional by anything
+    counting from the keyword -- `interval_of` and `with_plane` above, for two.
+
+    Quoting is gstruct's own `_q` and not a rule reimplemented here. The DEM's
+    file name is the value that needs it -- `dem=Monte Alpi.tif` reads back as a
+    `dem` of `Monte` and a stray token the parser has no reason to refuse, so
+    the file would not say what it appears to say. `fits.as_line` borrows the
+    same two helpers for the same reason.
+    """
+
+    gstruct = module()
+    tokens = _tokens_of(line)
+
+    held = {
+        token.partition("=")[0] for token, _, _ in tokens
+        if "=" in token and token.partition("=")[2] not in ("", '""')
+    }
+
+    wanted = {
+        key: value for key, value in attrs.items()
+        if key not in held and value not in (None, "")
+    }
+
+    if not wanted:
+        return line
+
+    # The empty ones come out rather than being left beside the filled ones:
+    # `from= from=plane-dem` on one line is two tokens the parser reads in
+    # order, so the second wins and the first sits there looking like a
+    # contradiction of it.
+    #
+    # Cut out by where they sit, back to front, rather than by rebuilding the
+    # line from its tokens -- which is `with_plane`'s rule, and it bites harder
+    # here: joining on single spaces would also close up the runs of spaces
+    # inside a quoted value, and `reason="la traccia qui ricalca"` is four
+    # tokens to anything splitting on whitespace.
+    out = line
+
+    for at in reversed(range(len(tokens))):
+        token, start, end = tokens[at]
+
+        if "=" not in token or token.partition("=")[0] not in wanted:
+            continue
+
+        # From the end of the token before it, so the space that separated the
+        # two goes with it. Cutting the token alone would leave the two spaces
+        # either side of it as one gap of two, which the parser does not mind
+        # and a reader does.
+        out = out[: tokens[at - 1][2] if at else start] + out[end:]
+
+    return out.rstrip() + gstruct._kw(wanted)
 
 
 def provenance_of(structure, samples=400, max_gap=DEFAULT_MAX_GAP):

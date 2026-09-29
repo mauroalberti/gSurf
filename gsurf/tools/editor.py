@@ -43,6 +43,39 @@ like a decision while holding over no part of the trace at all. There is nothing
 to draw for it -- an empty highlight is what no ground looks like -- so that one
 is said in words.
 
+**And the plane that would make that stretch true.** `fit off the DEM` reads the
+trace and answers, and on most traces its answer is nothing: 27 of 185 attempts
+pass the gate on the AOI, and three of the four synthetic traces in the check
+carry a fit only because they were built to. The gate is right to be that quiet
+-- a plane through a straight trace is arbitrary and not merely imprecise -- but
+a curator looking at a bend that carries nothing still has the topography in
+front of them, and the other tool in this program has been steering a plane
+across it by hand since before this one existed. What that tool has never had is
+anything to aim at: the point goes wherever you click, and the answer is read out
+loud into a notebook.
+
+Here the fault is on screen, the stretch being decided is drawn under it, and the
+file that wants the number is open beside it. So the plane hangs at **the middle
+of the claim** -- not an end, where it would be exactly right and free to swing
+away over the rest, which is the error this exists to show -- at the elevation
+the DEM has there, because the trace is a contact somebody walked. Turn the dial
+until the cut runs along the trace, and the button writes that attitude into the
+line. On an `attitude` the pin is the anchor instead, which is the same rule read
+at a place, and the loop also runs backwards: click into a `fit` somebody
+computed and the dial shows it cutting the ground it was computed over.
+`conflicts.py` asks whether a plane agrees with the ground arithmetically. This
+asks it by looking.
+
+**Where it goes wrong is where the geology says it should.** The cut passes
+through the pin within half a cell -- 1.5 m over four attitudes on the check's
+5 m DEM -- until the plane lies down on the slope, and then it wanders: 6 m at
+ten degrees from the ground's own attitude, 23 m at under three. That is not
+slack to be tightened. Two nearly parallel planes barely determine the line they
+share, and a plane nearly parallel to the hillside is exactly the case FORMAT.md
+writes `drape` for -- a fit reproducing the topography is not evidence about the
+fault. The number says so in an attribute; this says so by making the curves
+unsteerable.
+
 **Three windows.** The map is the tool; the panel and the net are windows beside
 it. The panel used to be one frame split down the middle with the map, and a
 splitter cannot be dragged across a screen boundary, so the map could not be
@@ -169,16 +202,21 @@ from gsurf.curation import (
     SUFFIX,
     UNCONSTRAINED,
     Document,
+    anchor_of,
     degrees_not_metres,
     interval_of,
     is_gstruct,
     nearest_structure,
     place_on,
+    plane_of,
     point_on,
     provenance_of,
     stretch,
+    with_attrs,
+    with_plane,
 )
 from gsurf.fits import AT_THE_END, as_line, dem_refusal, fits_along, gate_for
+from gsurf.planes import FROM_STEERED, broken_path, laid_on, side_for
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.stereonet import StereonetView
 from gsurf.traces import draped_length
@@ -237,6 +275,26 @@ CLAIMED_TINT = "#762a83"
 # somebody picked, which at this width is metres of trace nobody asked for.
 CLAIMED_WIDTH = 8.0
 CLAIMED_ALPHA = 0.45
+
+# And where the plane being steered cuts the topography, which is the second
+# thing on this map that is not in the file. The same purple, and that is now
+# the rule here rather than a coincidence: everything drawn that nobody has
+# applied yet is purple, and the two are told apart by weight, as the two
+# weights of trace are. The band is the ground being claimed; the line is what
+# is being claimed about it.
+#
+# Thin, and over everything rather than under. A match is the intersection
+# running along the trace, so at the moment the answer is right the two are on
+# top of each other -- under the 2.6 of the highlight it would vanish exactly
+# then, and "hidden because it agrees" is not distinguishable by eye from "not
+# computed". At 1.2 over 2.6 a match reads as a purple core down the orange.
+CUTTING_WIDTH = 1.2
+
+# Where the plane is pinned, drawn because the picture is meaningless without
+# it: an intersection is a plane *through a point*, and every curve on screen
+# turns about that one. Hollow, so the trace under it stays readable.
+PIN_SIZE = 9
+
 
 # What the provenance band is sampled at. The band's edges are therefore good to
 # one four-hundredth of the trace -- nine metres on a 3.5 km fault -- which is a
@@ -371,6 +429,12 @@ PANEL_WINDOW_PX = (PANEL_WIDTH_PX, 940)
 # a fault runs, so the map takes the screen and the panel comes up over it.
 MAP_WINDOW_PX = (1080, 880)
 MAP_FLOOR_PX = 700
+
+# The column on the map's own frame, which used to hold the legend's two
+# controls and now holds the steering above them. Wide enough for a dial worth
+# turning -- 132 px of dial is a degree every 1.2 px at the rim -- and no wider,
+# because every pixel here comes off the map.
+MAP_COLUMN_PX = 190
 
 # What is left between them, and what is left for the map window's own frame.
 # The gap is a gap; the allowance is a guess and has to be -- right after
@@ -1143,6 +1207,12 @@ class EditorPanel(QtWidgets.QWidget):
     # window is the only thing that knows what the ground looks like.
     covering = QtCore.pyqtSignal(object)
 
+    # And the plane that line carries, as `(dip dir, dip)` or None. A separate
+    # signal and a separate guard, because the two change apart: typing digits
+    # into the plane moves this and not the stretch, and picking an anchor moves
+    # the stretch and not this.
+    holding = QtCore.pyqtSignal(object)
+
     def __init__(self, document, dem=None, crs=None, parent=None):
         super().__init__(parent)
 
@@ -1160,6 +1230,11 @@ class EditorPanel(QtWidgets.QWidget):
         # of them starts at zero -- and then moving between them would report no
         # change and leave the stretch drawn on the one being left.
         self._covering = (None, None)
+
+        # And the same for the plane, keyed the same way and for the same
+        # reason: two traces can carry the same attitude, and moving between
+        # them has to re-aim what the steering is hanging on.
+        self._holding = (None, None)
 
         # The topography, and whether it may be sampled for these traces at all.
         # The refusal is a fact about the pair and not about the click, so it is
@@ -1234,8 +1309,9 @@ class EditorPanel(QtWidgets.QWidget):
         # implies the other: typing an anchor moves the text without moving the
         # caret off the line, and clicking from one line to the next moves the
         # caret without touching a character.
-        self.text.cursorPositionChanged.connect(self._covering_changed)
-        self.text.textChanged.connect(self._covering_changed)
+        for moved in (self.text.cursorPositionChanged, self.text.textChanged):
+            moved.connect(self._covering_changed)
+            moved.connect(self._holding_changed)
 
         self.problem = QtWidgets.QLabel()
         self.problem.setWordWrap(True)
@@ -1873,6 +1949,103 @@ class EditorPanel(QtWidgets.QWidget):
         if interval is not None and interval[0] > interval[1]:
             self.said.emit(self.claim_said())
 
+    # -- and the plane that line carries ------------------------------------
+
+    def _line_now(self):
+        """The text of the line the caret is on."""
+
+        return self.text.textCursor().block().text()
+
+    def _holding_changed(self):
+        """Reports the caret's plane when it becomes a different one."""
+
+        reported = (self.index, plane_of(self._line_now()))
+
+        if reported == self._holding:
+            return
+
+        self._holding = reported
+        self.holding.emit(reported[1])
+
+    def has_plane_slot(self):
+        """Whether the caret's line has somewhere to write a plane."""
+
+        return with_plane(self._line_now(), 0.0, 0.0) is not None
+
+    def pinned_at(self):
+        """
+        Where a plane steered against the caret's line hangs, and over how much
+        ground -- `((x, y), metres)` in the file's own projection, or None.
+
+        **The middle of the stretch, for a line that claims one.** Not an end:
+        the judgement is whether the cut runs *along* the claim, and a plane
+        pinned at one end of it is exactly right there and free to swing away
+        over the rest, which is the error this is meant to show rather than
+        hide.
+
+        For an `attitude` it is the anchor, which is the same rule read at a
+        place instead of over a stretch, and it is the more useful half on a
+        file that already has readings in it: it puts a compass measurement on
+        the topography and asks whether the ground agrees. `conflicts.py` asks
+        that arithmetically. This asks it by looking.
+
+        A pair written the wrong way round pins nothing, for the reason it draws
+        nothing: `covers` holds it over no ground, so there is no middle of it.
+        """
+
+        if self.index is None:
+            return None
+
+        line = self._line_now()
+        path = self.document.dataset.structures[self.index].path
+        interval = interval_of(line, path)
+
+        if interval is None:
+            anchor = anchor_of(line)
+
+            return None if anchor is None else (anchor, 0.0)
+
+        s0, s1 = interval
+
+        if s0 > s1:
+            return None
+
+        return point_on(path, (s0 + s1) / 2.0), s1 - s0
+
+    def take_plane(self, dip_dir, dip, attrs=None):
+        """
+        Writes a steered attitude into the caret's line. Returns it, or None.
+
+        One replacement of one line, so it is one step of the undo stack: a
+        dial that wrote as it turned would have put ninety of them there, which
+        is the reason nothing here is written until this is pressed.
+
+        The attributes go on with it and are not decoration. FORMAT.md's rule
+        for a derived plane is that it says which producer made it and does not
+        borrow another's diagnostics -- so this writes `from=` and what the
+        number is referenced to, and writes none of `snr`, `flat` or `jack`,
+        having no gate and no residual to put in them. What it has instead is a
+        person who looked, and `from=plane-dem` is the honest name for that.
+        """
+
+        written = with_plane(self._line_now(), dip_dir, dip)
+
+        if written is None:
+            return None
+
+        if attrs:
+            written = with_attrs(written, attrs)
+
+        edit = self.text.textCursor()
+        edit.movePosition(QtGui.QTextCursor.MoveOperation.StartOfBlock)
+        edit.movePosition(
+            QtGui.QTextCursor.MoveOperation.EndOfBlock,
+            QtGui.QTextCursor.MoveMode.KeepAnchor,
+        )
+        edit.insertText(written)
+
+        return written
+
     def _aim_at_anchor(self, start, same_line=False):
         """Selects the next `*`, so that a picked anchor replaces it."""
 
@@ -1925,6 +2098,211 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setFocus()
 
 
+class PlaneSteering(QtWidgets.QWidget):
+    """
+    A dial, a slider, and the number they are both saying: the plane on the DEM.
+
+    `tools/intersection.py`'s panel, cut down to what is left once the tool has
+    something to aim at. Gone are the source point's three boxes and the
+    compute-window spinner, and neither is a simplification: there the point is
+    put wherever you click, because the tool has no idea what you are looking
+    at, and the window is a cost dial because the plane is unbounded. Here the
+    point is the middle of the stretch being decided and the window is sized
+    from that stretch, so both were answers to questions this tool can already
+    answer for itself.
+
+    What is left is the pair of controls that *are* the tool -- turn it, watch
+    the curves move, stop when they run along the fault -- plus the one button
+    that was missing from the other tool entirely: the number going into the
+    file.
+
+    **It reports into its own label and not into the status bar.** The bar is
+    one line and shared with everything the panel says, and this fires on every
+    step of a dial: a per-frame report there would be the mistake the claimed
+    stretch already made once, scaled up by a factor of ninety.
+    """
+
+    steered = QtCore.pyqtSignal(float, float)
+    take_asked = QtCore.pyqtSignal()
+    armed_changed = QtCore.pyqtSignal(bool)
+
+    # QDial puts its minimum at six o'clock, not at twelve, and it runs
+    # clockwise like an azimuth -- so between its scale and dip direction there
+    # is exactly half a turn. Measured in the other tool by grabbing the widget
+    # and hunting for the needle, and repeated here rather than imported,
+    # because importing it would make this window depend on that one.
+    DIAL_NORTH_OFFSET = 180
+
+    def __init__(self, refusal=None, parent=None):
+        super().__init__(parent)
+
+        self.on = QtWidgets.QCheckBox("plane on the DEM")
+        self.on.setToolTip(
+            "Lay a plane through the middle of the stretch the line in the box "
+            "claims, and draw where it cuts the topography. Turn the dial until "
+            "the cut runs along the trace: that attitude is the one the ground "
+            "is telling you, and the button below writes it into the line."
+        )
+
+        self.dial = QtWidgets.QDial()
+        self.dial.setRange(0, 359)
+        self.dial.setWrapping(True)
+        self.dial.setNotchesVisible(True)
+        self.dial.setMinimumSize(132, 132)
+
+        # The dial alone steps by a whole degree and the convergence here is
+        # 0.8, so without the tenth the correction would be finer than the
+        # control meant to apply it. The box is what commands; the dial follows.
+        self.dip_dir = QtWidgets.QDoubleSpinBox()
+        self.dip_dir.setRange(0.0, 359.9)
+        self.dip_dir.setDecimals(1)
+        self.dip_dir.setSingleStep(0.1)
+        self.dip_dir.setWrapping(True)
+        self.dip_dir.setSuffix("°  dip dir")
+
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 90)
+        self.slider.setTickInterval(15)
+        self.slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
+
+        self.dip = QtWidgets.QDoubleSpinBox()
+        self.dip.setRange(0.0, 90.0)
+        self.dip.setDecimals(1)
+        self.dip.setSingleStep(0.1)
+        self.dip.setSuffix("°  dip")
+
+        self.dip_dir.setValue(90.0)
+        self.dip.setValue(30.0)
+        self._sync_dial()
+        self._sync_slider()
+
+        self.label = QtWidgets.QLabel()
+        self.label.setWordWrap(True)
+        self.label.setStyleSheet("color: #6a6a6a; font-size: 10px;")
+        self.label.setMinimumHeight(48)
+        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+
+        self.take = QtWidgets.QPushButton("write it in the line")
+        self.take.clicked.connect(lambda: self.take_asked.emit())
+
+        self.dial.valueChanged.connect(self._dial_moved)
+        self.dip_dir.valueChanged.connect(self._dip_dir_typed)
+        self.slider.valueChanged.connect(self._slider_moved)
+        self.dip.valueChanged.connect(self._dip_typed)
+        self.on.toggled.connect(self._toggled)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.on)
+        layout.addWidget(self.dial)
+        layout.addWidget(self.dip_dir)
+        layout.addWidget(self.slider)
+        layout.addWidget(self.dip)
+        layout.addWidget(self.take)
+        layout.addWidget(self.label)
+
+        # The refusal is a fact about the session and not about the gesture --
+        # the same one the `fit off the DEM` button is disabled by -- so it is
+        # settled once, at the door, and shown as the reason the controls are
+        # grey. A control that looks available and answers with a message box
+        # would be offering something this session cannot do.
+        self.refusal = refusal
+
+        if refusal:
+            self.setEnabled(False)
+            self.setToolTip(refusal)
+        else:
+            self._steering(False)
+
+    # -- what it is saying -------------------------------------------------
+
+    def armed(self):
+        return self.isEnabled() and self.on.isChecked()
+
+    def plane(self):
+        return float(self.dip_dir.value()), float(self.dip.value())
+
+    def show_plane(self, dip_dir, dip):
+        """
+        Puts the controls on a plane without answering.
+
+        Silent because this is the caret's doing and not the hand's: clicking
+        into a line that already carries `140.5/31` should show that plane, and
+        a control that emitted on being set would then redraw once per keystroke
+        typed into the box. The caller recomputes if it wants to.
+        """
+
+        for box, value in ((self.dip_dir, float(dip_dir) % 360.0), (self.dip, float(dip))):
+            with QtCore.QSignalBlocker(box):
+                box.setValue(value)
+
+        self._sync_dial()
+        self._sync_slider()
+
+    def note(self, said):
+        self.label.setText(said or "")
+
+    def set_writable(self, may, why=None):
+        """Whether there is a plane slot under the caret for the button to fill."""
+
+        self.take.setEnabled(bool(may) and self.armed())
+        self.take.setToolTip(
+            why or "Write this attitude into the plane slot of the line the "
+                   "caret is on, and say where it came from. Nothing reaches "
+                   "the file until Apply, and then Save."
+        )
+
+    # -- the two controls, each following the other ------------------------
+
+    def _sync_dial(self):
+        with QtCore.QSignalBlocker(self.dial):
+            self.dial.setValue(
+                int(round(self.dip_dir.value() - self.DIAL_NORTH_OFFSET)) % 360
+            )
+
+    def _sync_slider(self):
+        with QtCore.QSignalBlocker(self.slider):
+            self.slider.setValue(int(round(self.dip.value())))
+
+    def _dial_moved(self, value):
+        with QtCore.QSignalBlocker(self.dip_dir):
+            self.dip_dir.setValue(float((value + self.DIAL_NORTH_OFFSET) % 360))
+
+        self._answer()
+
+    def _dip_dir_typed(self, value):
+        self._sync_dial()
+        self._answer()
+
+    def _slider_moved(self, value):
+        with QtCore.QSignalBlocker(self.dip):
+            self.dip.setValue(float(value))
+
+        self._answer()
+
+    def _dip_typed(self, value):
+        self._sync_slider()
+        self._answer()
+
+    def _steering(self, on):
+        for widget in (self.dial, self.dip_dir, self.slider, self.dip, self.take):
+            widget.setEnabled(on)
+
+    def _toggled(self, on):
+        self._steering(on)
+
+        if not on:
+            self.note("")
+
+        self.armed_changed.emit(bool(on))
+        self._answer()
+
+    def _answer(self):
+        if self.armed():
+            self.steered.emit(*self.plane())
+
+
 class EditorWindow(QtWidgets.QMainWindow):
     """The map with the file's traces on it, and the file beside them."""
 
@@ -1945,6 +2323,16 @@ class EditorWindow(QtWidgets.QMainWindow):
         # remembered about them, which is what `build` reads to know that the
         # map has already been given a size.
         self.tiled = False
+
+        # Where the steered plane is laid, as `(x, y, z)` in the file's own
+        # projection, and the crop of DEM it is being cut against. The window is
+        # kept rather than re-read per frame: reading one costs 4.9 ms on
+        # 1000x1000 and the pin only moves when the claim does, which is a
+        # gesture and not a dial step. `_cut_for` is what it was read for, so
+        # that "has the pin moved" is a comparison and not a raster read.
+        self._pin = None
+        self._cut_window = None
+        self._cut_for = None
 
         # Which trace the framing is on its way to, and the timer it waits on.
         self._framing = None
@@ -2085,6 +2473,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.panel.framing_asked.connect(self.frame_on)
         self.panel.said.connect(self.say)
         self.panel.covering.connect(self._show_claimed)
+        self.panel.holding.connect(self._show_held)
 
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(
@@ -2141,12 +2530,58 @@ class EditorWindow(QtWidgets.QMainWindow):
         map_layout = QtWidgets.QHBoxLayout(central)
         map_layout.setContentsMargins(0, 0, 0, 0)
         map_layout.addWidget(self.map_view, stretch=1)
-        map_layout.addWidget(LegendControls(self.map_view, placement=legend))
+        map_layout.addWidget(self._beside_the_map(legend))
 
         self.setCentralWidget(central)
 
         self._build_menu()
         self._build_shortcuts()
+
+    def _beside_the_map(self, legend):
+        """
+        The narrow column on the map's own frame: the steering, and the legend.
+
+        The steering goes here and not in the panel, and the two windows can be
+        on different screens, so this is a choice about where the hand has to
+        be. What it steers is a picture -- curves swinging about a pin -- and
+        the judgement it serves is made by looking at them against the trace.
+        The number it produces lands in the box, which is a thing read
+        afterwards; the curves are the thing watched while the hand moves. A
+        dial on the other monitor would be steering by feel.
+        """
+
+        self.steering = PlaneSteering(refusal=self._steering_refusal())
+        self.steering.steered.connect(self._steer)
+        self.steering.take_asked.connect(self._take_plane)
+        self.steering.armed_changed.connect(self._steering_armed)
+
+        beside = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(beside)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.steering)
+        layout.addStretch(1)
+        layout.addWidget(LegendControls(self.map_view, placement=legend))
+
+        beside.setMaximumWidth(MAP_COLUMN_PX)
+
+        return beside
+
+    def _steering_refusal(self):
+        """Why no plane can be laid on this session's topography, or None.
+
+        The same refusal the `fit off the DEM` button is disabled by, and it is
+        settled once at the door rather than per gesture, because it is a fact
+        about the pair -- this DEM, these traces -- and not about the click.
+        """
+
+        if self.session.dem is None:
+            return (
+                "No DEM in this session, and a plane laid on the topography "
+                "needs one. The traces draw without it; this is the one thing "
+                "here that does not."
+            )
+
+        return self.panel.dem_said
 
     def _build_menu(self):
         """The way back to the panel and the net, once they have been closed."""
@@ -2386,6 +2821,35 @@ class EditorWindow(QtWidgets.QMainWindow):
             )
         )
 
+        # And the plane the hand is steering, where it cuts the ground. Over
+        # everything rather than under, which is the opposite of the band above
+        # and for a reason the band does not have: a match *is* the cut running
+        # along the trace, so at the moment the answer comes right the two lie
+        # on top of each other. Underneath, it would disappear exactly then --
+        # and "hidden because it agrees" is not something the eye can tell from
+        # "not computed". Thin over thick, so a match reads as a purple core
+        # down the middle of the orange.
+        self.cutting = self.map_view.add_animated(
+            axes.add_line(
+                Line2D([], [], color=CLAIMED_TINT, lw=CUTTING_WIDTH, zorder=9.5)
+            )
+        )
+
+        # And where it is pinned, without which the picture means nothing: an
+        # intersection is a plane *through a point*, every curve on screen turns
+        # about that one, and it is the one thing here nobody chose directly --
+        # it is the middle of the claim, which is a consequence and reads as an
+        # arbitrary spot until it is drawn.
+        self.pin = self.map_view.add_animated(
+            axes.add_line(
+                Line2D(
+                    [], [], color=CLAIMED_TINT, marker="o", markersize=PIN_SIZE,
+                    markerfacecolor="none", markeredgewidth=1.6,
+                    linestyle="none", zorder=9.6,
+                )
+            )
+        )
+
         # Built here and not left to the placement combo, which is what used to
         # happen: the other three tools ask for the legend once the map is drawn
         # and this one never did, so its four entries were made on every rebuild
@@ -2513,6 +2977,15 @@ class EditorWindow(QtWidgets.QMainWindow):
                 [], [], color=CLAIMED_TINT, lw=CLAIMED_WIDTH,
                 alpha=CLAIMED_ALPHA, label="claimed in the box",
             ),
+            # The same purple as the entry above it, and that is the point:
+            # everything on this map that is not in the file yet is this colour,
+            # and the two are told apart by weight, as the two weights of trace
+            # are. One is the ground being claimed, the other is what is being
+            # claimed about it.
+            Line2D(
+                [], [], color=CLAIMED_TINT, lw=CUTTING_WIDTH,
+                label="that plane, on the DEM",
+            ),
         ]
 
     def _opening(self):
@@ -2608,7 +3081,192 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             self.claimed.set_data([x for x, _ in drawn], [y for _, y in drawn])
 
+        # And the plane hangs off the middle of that stretch, so a stretch that
+        # moved is a plane that has to be laid again. Through here rather than a
+        # blit of its own, because a blit is the expensive half of a frame and
+        # two of them for one change is one too many.
+        self._resteer()
+
+    def _resteer(self):
+        """Lays the steered plane again if there is one, and puts the frame up."""
+
+        if self.steering.armed():
+            self._steer(*self.steering.plane())
+        else:
+            self.map_view.blit()
+
+    def _show_held(self, plane):
+        """
+        Puts the caret's own plane on the dial, and says whether it can take one.
+
+        This is the half of the loop that runs backwards, and it is the more
+        useful half on a file that already has planes in it: clicking into a
+        `fit` somebody computed shows that plane cutting the ground it was
+        computed over. Whether it runs along the trace is the question the
+        diagnostics answer with a number, asked by looking instead.
+
+        Silent on the way in -- `show_plane` does not emit -- and then laid
+        again here, deliberately: a control that answered on being set would
+        redraw once per character typed into the plane, which is four redraws to
+        write `140.5`, three of them of numbers nobody meant.
+        """
+
+        self.steering.set_writable(self.panel.has_plane_slot())
+
+        if plane is not None:
+            self.steering.show_plane(*plane)
+
+        if self.steering.armed():
+            self._steer(*self.steering.plane())
+
+    def _steering_armed(self, on):
+        """The box turning the steering on and off."""
+
+        self.steering.set_writable(self.panel.has_plane_slot())
+
+        if on:
+            self._steer(*self.steering.plane())
+            return
+
+        self.cutting.set_data([], [])
+        self.pin.set_data([], [])
         self.map_view.blit()
+
+    def _repin(self):
+        """
+        Where the plane hangs and the crop it is cut against. True if there is one.
+
+        The elevation comes off the DEM, which is the one choice this makes for
+        the curator and the right one here: the trace is a contact somebody
+        walked on the ground, so the plane through it passes through the ground.
+        The other tool can lift a plane off the topography onto a projected
+        horizon and needs a box to say so; here that would be a plane through a
+        point the trace does not pass through, which is not what any of this is
+        being asked.
+
+        On nodata there is no pin. Refusing is right rather than falling back on
+        a median elevation: the cut would be drawn, would look like an answer,
+        and would be a plane through a point nobody chose.
+        """
+
+        dem = self.session.dem
+        asked = None if dem is None else self.panel.pinned_at()
+
+        if asked is None:
+            self._pin = self._cut_window = self._cut_for = None
+
+            return False
+
+        (x, y), span = asked
+        z = dem.elevation_at(x, y)
+
+        if z is None:
+            self._pin = self._cut_window = self._cut_for = None
+
+            return False
+
+        self._pin = (x, y, z)
+
+        wanted = (x, y, side_for(span, max(dem.res_x, dem.res_y)))
+
+        if wanted != self._cut_for:
+            self._cut_window = dem.window_at(*wanted)
+            self._cut_for = wanted
+
+        return True
+
+    def _steer(self, dip_dir, dip):
+        """One frame of the plane on the topography: the kernel, and the blit."""
+
+        if not self.steering.armed():
+            return
+
+        if not self._repin():
+            self.cutting.set_data([], [])
+            self.pin.set_data([], [])
+            self.map_view.blit()
+            self.steering.note(
+                "nothing to lay a plane on: put the caret on a line that claims "
+                "a stretch, or on an attitude with an anchor"
+            )
+
+            return
+
+        laid = laid_on(
+            self._cut_window,
+            self._pin,
+            dip_dir,
+            dip,
+            nodata=self.session.dem.nodata,
+            convergence=self.session.convergence.at(*self._pin[:2]),
+        )
+
+        if laid.chords:
+            xs, ys = laid.points[:, 0], laid.points[:, 1]
+
+            # Reprojected before the NaNs go in and not after: pyproj turns a
+            # NaN into an infinity, so a path already broken into chords cannot
+            # make this crossing. In this session it is almost always the
+            # identity -- a DEM is refused unless it is in the traces' own
+            # projection -- but "almost always" is not a thing to draw on.
+            if self._forward is not None:
+                xs, ys = self._forward.transform(xs, ys)
+
+            self.cutting.set_data(*broken_path(xs, ys, laid.segments))
+        else:
+            self.cutting.set_data([], [])
+
+        at = self.on_map([self._pin[:2]])[0]
+        self.pin.set_data([at[0]], [at[1]])
+
+        self.map_view.blit()
+
+        # Into the steering's own label and never the status bar. This fires on
+        # every step of a dial, the bar is one line, and the bar is where the
+        # panel answers for what was last pressed -- a per-frame report there is
+        # the mistake the claimed stretch already made once, ninety times a turn.
+        self.steering.note(laid.describe())
+
+    def _take_plane(self):
+        """
+        The steered attitude, into the line the caret is on.
+
+        What goes with it is the provenance, and that is not decoration:
+        FORMAT.md's rule for a derived plane is that it names the producer that
+        made it and does not fill in another's diagnostics. This one has no gate,
+        no residual and no window swept, so it writes none of `snr`, `flat` or
+        `jack`; what it has is somebody who looked at two lines and judged them
+        to run together, and `from=plane-dem` is the honest name for that.
+
+        **And it writes which north the number is measured from**, which no line
+        in these files currently does. The dial is a true azimuth, as a compass
+        is and as the other tool's is; the DEM is on the grid; and around here
+        the two are 0.4 to 1.0 degrees apart. That is small against everything
+        else on these traces and it is not nothing, and a number whose reference
+        is written down can be argued with later, where one without cannot.
+        """
+
+        if not self.steering.armed() or self._pin is None:
+            return
+
+        dip_dir, dip = self.steering.plane()
+        convergence = self.session.convergence.at(*self._pin[:2])
+
+        written = self.panel.take_plane(dip_dir, dip, {
+            "from": FROM_STEERED,
+            "src": "gsurf",
+            "dem": self.session.dem.path.name,
+            "north": "true",
+            "converg": f"{convergence:+.2f}",
+            "at": f"@{self._pin[0]:.2f},{self._pin[1]:.2f}",
+        })
+
+        if written is None:
+            self.say("the line the caret is on has no plane to write into")
+
+            return
+
+        self.say(f"written: {written.strip()} -- Apply to keep it, then Save")
 
     def _mark_refusals(self, structure):
         """The stretches somebody has rejected, drawn where they are."""
