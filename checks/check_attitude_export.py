@@ -193,14 +193,57 @@ def main():
                   f"{int(back['span_m'].notna().sum())} of {len(back)} rows spanned")
 
             row = back[back["fitted"]].iloc[0]
-            gap = separation((row["dipdir"], row["dip"]), (DIP_DIRECTION, DIP))
 
+            # Against `dipdir_grd` and not against `dipdir`, because the ground
+            # this was fitted to is a plane built out of eastings and northings:
+            # `DIP_DIRECTION` is a *grid* bearing, and the tolerance that used to
+            # cover the difference was covering the bug. The half degree it hides
+            # is the whole of what this change is about, so the grid column is
+            # asserted tight and the true one is asserted to differ by exactly
+            # the convergence and in the right direction.
+            gap = separation((row["dipdir_grd"], row["dip"]), (DIP_DIRECTION, DIP))
+
+            # 0.9 and not 1.5: the fit's own error against this DEM is 0.61
+            # degrees -- the V is discretised on 5 m cells -- and the
+            # convergence is another 0.75, so a correction dropped or applied
+            # backwards lands at 1.19 or 1.97. The old tolerance had room for
+            # all three and told them apart from none of them.
             check(f"{suffix}: the plane read back is the one the ground was built on",
-                  gap < 1.5, f"{row['dipdir']:.1f}/{row['dip']:.1f}, {gap:.2f} deg off")
+                  gap < 0.9,
+                  f"{row['dipdir_grd']:.1f}/{row['dip']:.1f}, {gap:.2f} deg off")
+
+            check(f"{suffix}: and the two bearings differ by the convergence written beside them",
+                  abs((row["dipdir"] - row["converg"] - row["dipdir_grd"] + 180.0)
+                      % 360.0 - 180.0) < 0.01,
+                  f"{row['dipdir']:.2f} true - {row['converg']:+.3f} "
+                  f"= {row['dipdir_grd']:.2f} grid")
+
+            # East of the central meridian of zone 33 and so positive, which is
+            # the one fact that tells a correction from its negative: a sign slip
+            # would land within a degree of the right answer and look like data.
+            check(f"{suffix}: east of the central meridian the true bearing is the larger",
+                  0.4 < row["converg"] < 1.1 and row["dipdir"] > row["dipdir_grd"],
+                  f"convergence {row['converg']:+.3f} at "
+                  f"{row.geometry.x:.0f}, {row.geometry.y:.0f}")
+
+            # A row that came off the layer's own columns is a compass reading
+            # and is already true: it must come back untouched, convergence or
+            # no convergence.
+            table = back[~back["fitted"]]
+            table = table[table["dipdir"].notna()]
+
+            check(f"{suffix}: a bearing read off the layer is not turned",
+                  len(table) and all(
+                      abs(float(r["dipdir"]) - float(r["converg"])
+                          - float(r["dipdir_grd"])) < 0.01
+                      for _, r in table.iterrows()
+                  ),
+                  f"{len(table)} row(s) off the table")
 
             check(f"{suffix}: the point read back is still on the trace",
                   off_trace((row.geometry.x, row.geometry.y), plan) < 0.01,
                   f"{off_trace((row.geometry.x, row.geometry.y), plan):.2e} m off")
+
 
     print()
     if FAILURES:

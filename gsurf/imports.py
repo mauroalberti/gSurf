@@ -1831,6 +1831,7 @@ def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
     of it, the cancel, and the counting.
     """
 
+    from .convergence import MeridianConvergence
     from .dem import Dem
 
     dem = Dem(mapping.dem_path)
@@ -1854,6 +1855,19 @@ def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
             )
         )
 
+        # One for the whole sheet, and evaluated per fit inside `fits_along`:
+        # building it is a pair of pyproj transformers and asking it is eight
+        # microseconds, so twelve thousand traces pay for the object once and
+        # for the answer only where a plane actually came out.
+        convergence = MeridianConvergence(frame_crs)
+
+        report.notes.append(
+            "immersioni in azimut vero (north=true, converg= sulla riga)"
+            if convergence.available
+            else "immersioni in azimut di griglia (north=grid): "
+                 "convergenza non calcolabile senza CRS"
+        )
+
         sweep = mapping.sweep
         found, total = {}, len(dataset.structures)
 
@@ -1863,7 +1877,8 @@ def _fit_every(gstruct, dataset, frame_crs, mapping, report, progress=None):
                 break
 
             reading = fits_along(
-                structure, dem, gate, sweep=sweep, gstruct=gstruct
+                structure, dem, gate, sweep=sweep, gstruct=gstruct,
+                convergence=convergence,
             )
 
             if reading.fits:

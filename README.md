@@ -1207,20 +1207,53 @@ about a point half a cell from the one that was asked for. Left as it is, becaus
 the judgement being made is whether a cut runs along a trace drawn from 1:25000
 mapping, where the line itself is 25 m wide.
 
-**The north these files do not declare.** Steering needs a grid azimuth and a
+**The north these files did not declare.** Steering needs a grid azimuth and a
 compass reads a true one, so this subtracts meridian convergence before the kernel
 — which is what *real-time intersection* has always done, and it is where the
 question surfaced. `traces.mean_attitude` fits in projected coordinates and
 averages normals, so the dip direction it produces is measured from **grid** north,
-and `fits_along` writes it into the file unchanged: `convergence` appears nowhere
-in `traces.py`, `fits.py` or `imports.py`. An `attitude … src=field` is a compass
-reading corrected for declination, so it is measured from **true** north. FORMAT.md
-does not mention north at all. In the AOI the gap runs +0.41° to +1.04°, which is
-far below everything else on these traces — S22 and S25 are 16 m apart and diverge
-by 14° — so this is a missing line of documentation and not a wrong number. This
-button writes `north=true` and `converg=` beside its plane, which makes its own
-lines the only unambiguous ones in the file; what to do about the fits already
-written is a decision, and not one a button should make quietly.
+and `fits_along` used to write it into the file unchanged. An `attitude … src=field`
+is a compass reading corrected for declination, so it is measured from **true**
+north. In the AOI the gap runs +0.41° to +1.04°, far below everything else on these
+traces — S22 and S25 are 16 m apart and diverge by 14° — so it was a missing line of
+documentation rather than a wrong number, right up until somebody averaged the two
+kinds of line together.
+
+So the rule is now one rule, and it is the raster's edge: **inside a raster
+everything is grid, in a file everything is true.** `convergence.to_grid` on the
+way in, `convergence.to_true` on the way out, and the correction written down
+beside the number — `north=true converg=+0.83` — so `dip_dir - converg` returns
+the value the fit actually produced. The grid bearing is not written beside it: a
+third token saying what two already say is a third token that can go stale.
+`north=grid` is legal and means the convergence was not computable, which is an
+honest label rather than an embarrassment. The defect was never that the numbers
+were grid bearings; it was that nothing said which.
+
+Three producers were on the wrong side of that edge and are not any more:
+`fits.fits_along` (both callers — the import over a whole sheet, and this
+button), `profiles.attitudes_frame`, and `export_geology.py` in the AOI
+repository. The point layer is the one that had it worst: it wrote fitted
+bearings and bearings read off the layer's own columns into one `dipdir` column,
+distinguishable only by a `fitted` flag — and the first thing anybody does with
+that layer is symbolise it by rotation, which asks the column and not the flag.
+It now carries `dipdir` (true), `dipdir_grd`, and `converg` on every row, which
+is the scheme `fold_axes.field_frame` already used for axes.
+
+The check that had to change is the one worth naming. `check_attitude_export`
+asserted the exported plane against the attitude the fixture DEM was *built* at —
+and that raster is generated from eastings and northings, so its `DIP_DIRECTION`
+is a grid bearing. The assertion had 1.5° of slack and the convergence is 0.75°,
+so it passed before and after: the tolerance was hiding exactly the quantity
+under test. It now tests `dipdir_grd` at 0.9°, which is above the fit's own 0.61°
+error against that raster and below the 1.19° a dropped correction costs.
+
+And in `check_editor`, the sign is pinned against the same fit computed with
+`convergence=None` rather than against the raster's own number. Against the
+raster would have looked like the obvious test and would have been an accident:
+VEE's raw fit misses 90° by 0.76° — the sampling of a V, nothing to do with north
+— so correcting it lands on 90.00 exactly, and a check built on that coincidence
+would have passed for the wrong reason. ZIG, fitted identically, comes back at
+90.10°.
 
 The line is built in `fits.as_line` rather than taken from `dumps`, for the same
 reason the whole tool splices: the format's own writer prints whole degrees, and

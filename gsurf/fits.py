@@ -265,7 +265,7 @@ def reach_of(runs, index, length, ends):
     return max(s0 - length / 2.0, before), min(s1 + length / 2.0, after)
 
 
-def fits_along(structure, dem, gate, sweep=None, gstruct=None):
+def fits_along(structure, dem, gate, sweep=None, gstruct=None, convergence=None):
     """
     Every stretch of one path whose plane the topography determines, as a `Reading`.
 
@@ -295,6 +295,26 @@ def fits_along(structure, dem, gate, sweep=None, gstruct=None):
     trace is 172 m, so keeping to 250 m would refuse two thirds of the sheet on
     the strength of a number nobody typed. Which window was used is in the file
     as `window=`, so the scale a plane was read at is never in doubt.
+
+    **And the plane comes back in true azimuth, saying so.** `mean_attitude`
+    averages normals built out of coordinates in metres east and metres north,
+    so what it computes is a bearing from *grid* north; a compass reading beside
+    it in the same file is a bearing from true north. Around here the two are
+    0.41 to 1.04 degrees apart -- far below the scatter of the readings
+    themselves, and still a systematic offset between two kinds of line that a
+    reader has every reason to average together. `rotations` already says what
+    that costs when it accumulates.
+
+    So the convergence comes off at the middle of the run whose windows held --
+    where the attitude was averaged, not where it is anchored, the reach being
+    wider than the evidence -- and `north=` and `converg=` go on the line. Given
+    no `convergence` the plane is left as it was computed and the line says
+    `north=grid`, which is the honest label for it: the fault this fixes is not
+    that the number was in grid azimuth, it is that nothing said which.
+
+    The grid value is not written beside it. `converg` is to two decimals and
+    the plane to one, so `dip_dir - converg` recovers it exactly, and a third
+    token saying what two already say is a third token that can go stale.
     """
 
     from .traces import (
@@ -373,6 +393,20 @@ def fits_along(structure, dem, gate, sweep=None, gstruct=None):
 
         covered = int(((spans.progressive >= s0) & (spans.progressive <= s1)).sum())
 
+        # Taken at the middle of the held run and not at the anchors: the
+        # anchors are the reach, widened by half a window at each end into
+        # ground no window was centred on, and this is the number the average
+        # was formed at. It moves by a ten-thousandth of a degree either way --
+        # which is exactly why it costs nothing to take it in the right place.
+        dip_dir, dip = float(attitude[0]), float(attitude[1])
+        north, converged = "grid", None
+
+        if convergence is not None and getattr(convergence, "available", False):
+            middle = gstruct.point_at(structure.path, (s0 + s1) / 2.0)
+            converged = convergence.at(*middle)
+            dip_dir = convergence.to_true(dip_dir, *middle)
+            north = "true"
+
         start, end = reach_of(runs, index, length, ends)
 
         # Anchors and not the progressives, which is the format's rule and not a
@@ -381,13 +415,21 @@ def fits_along(structure, dem, gate, sweep=None, gstruct=None):
         # would migrate.
         start, end = anchors_of(gstruct, structure.path, start, end, span)
 
+        attrs = {
+            "from": FROM_DEM,
+            "src": "gsurf",
+            "north": north,
+        }
+
+        if converged is not None:
+            attrs["converg"] = f"{converged:+.2f}"
+
         out.append(gstruct.Fit(
-            plane=gstruct.Plane(attitude[0], attitude[1]),
+            plane=gstruct.Plane(dip_dir, dip),
             start=start,
             end=end,
             attrs={
-                "from": FROM_DEM,
-                "src": "gsurf",
+                **attrs,
                 # The two FORMAT.md names for this producer's diagnostic, and
                 # no third: `nvert` counts digitised vertices and this counts
                 # DEM samples, so it is not a number this has.

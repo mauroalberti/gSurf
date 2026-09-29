@@ -215,6 +215,7 @@ from gsurf.curation import (
     with_attrs,
     with_plane,
 )
+from gsurf.convergence import MeridianConvergence
 from gsurf.fits import AT_THE_END, as_line, dem_refusal, fits_along, gate_for
 from gsurf.planes import FROM_STEERED, broken_path, laid_on, side_for
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
@@ -1244,6 +1245,13 @@ class EditorPanel(QtWidgets.QWidget):
         self.dem = dem
         self.dem_said = None if dem is None else dem_refusal(dem, crs)
 
+        # Built from the file's own CRS rather than taken off the session, which
+        # the panel has never had: the convergence a fit is corrected by has to
+        # be the one for the projection the coordinates on the line are written
+        # in, and that is the `crs` this panel was opened against. See
+        # `fits.fits_along`.
+        self.convergence = MeridianConvergence(crs)
+
         # The gate, measured off every path in the file the first time a fit is
         # asked for, and the sentence about it said once. See `_gate`.
         self._gate_measured = None
@@ -1807,7 +1815,9 @@ class EditorPanel(QtWidgets.QWidget):
         structure = self.document.dataset.structures[self.index]
 
         gate, sigma = self._gate()
-        reading = fits_along(structure, self.dem, gate)
+        reading = fits_along(
+            structure, self.dem, gate, convergence=self.convergence
+        )
 
         self.add_written([as_line(fit) for fit in reading.fits])
 

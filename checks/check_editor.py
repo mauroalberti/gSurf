@@ -1917,7 +1917,7 @@ def main():
         print("\n-- the fit off the DEM --\n")
 
         from gsurf import traces as traces_module
-        from gsurf.fits import FROM_DEM, PLANE_DECIMALS, as_line
+        from gsurf.fits import FROM_DEM, PLANE_DECIMALS, as_line, fits_along
 
         # The session this check has been driving all along has no DEM, the slot
         # being optional here, and that is the first of the three answers the
@@ -2112,11 +2112,69 @@ def main():
         # The DEM is one plane and the trace lies on it, so this is the
         # arithmetic that built the raster. Two degrees of slack for the DEM's
         # own cell quantisation, which is 1.4 m of height over 5 m of ground.
+        #
+        # Against the *grid* bearing, and that is not a detail: `RELIEF_DIP_DIR`
+        # is the number the raster was generated from, out of eastings and
+        # northings, so it is measured from grid north -- while what the fit now
+        # writes is a true azimuth. Comparing the two directly would be the
+        # original bug, restated as a test and hidden by the same slack that hid
+        # it in the file.
+        converged = float(fit.attrs["converg"])
+        grid = (fit.plane.dip_dir - converged) % 360.0
+
         check("and the plane written is the one the DEM was built from",
               abs(fit.plane.dip - RELIEF_DIP) <= 2.0
-              and abs(fit.plane.dip_dir - RELIEF_DIP_DIR) <= 2.0,
-              f"{fit.plane.dip_dir:.1f}/{fit.plane.dip:.1f} against "
+              and abs(grid - RELIEF_DIP_DIR) <= 2.0,
+              f"{grid:.1f}/{fit.plane.dip:.1f} grid against "
               f"{RELIEF_DIP_DIR:.0f}/{RELIEF_DIP:.0f}")
+
+        # And the line says which north it is in, which is the whole point: a
+        # bearing without its reference cannot be argued with later, only
+        # believed or not.
+        check("and it says which north it is measured from, with the correction",
+              fit.attrs.get("north") == "true" and 0.4 < converged < 1.1,
+              f"north={fit.attrs.get('north')} converg={fit.attrs.get('converg')}")
+
+        # The sign, against the same fit computed without a convergence -- the
+        # only independent number available here. Comparing the written plane
+        # against `dip_dir - converg` would be comparing an expression with
+        # itself: it cannot fail, whichever way `to_true` runs.
+        #
+        # Not against `RELIEF_DIP_DIR` either, which would look like the obvious
+        # test and is an accident of this fixture: VEE's raw fit misses the
+        # raster's own 90 by 0.76 degrees -- the sampling of a V, nothing to do
+        # with north -- so correcting it lands on 90.00 exactly and a backwards
+        # correction would land 1.5 away. ZIG, fitted the same way, comes back
+        # at 90.10 raw. A check that passes because two unrelated quantities
+        # happen to agree on one trace is a check that will pass wrongly later.
+        from gsurf.convergence import MeridianConvergence
+        from gsurf.curation import module as gstruct_module
+
+        uncorrected = fits_along(
+            fitting.document.dataset.structures[rows["VEE"]],
+            panel.dem, panel._gate()[0], convergence=None,
+        ).fits[0]
+
+        turned = (fit.plane.dip_dir - uncorrected.plane.dip_dir + 180.0) % 360.0 - 180.0
+
+        check("and the plane was turned east by the convergence, not west by it",
+              abs(turned - converged) < 0.005 and uncorrected.attrs["north"] == "grid",
+              f"{uncorrected.plane.dip_dir:.2f} grid -> "
+              f"{fit.plane.dip_dir:.2f} true, {turned:+.2f}")
+
+        # At the apex, which is where the run that held is centred -- the next
+        # block asserts that. Five thousandths of a degree of slack: the
+        # convergence moves by about a ten-thousandth over the whole of this
+        # trace, so this pins the value without pinning the exact progressive,
+        # and it is two orders of magnitude tighter than a sign error.
+        apex = gstruct_module().point_at(
+            fitting.document.dataset.structures[rows["VEE"]].path, APEX_S
+        )
+
+        check("and the correction is the convergence where the run held",
+              abs(converged
+                  - MeridianConvergence("EPSG:25833").at(*apex)) < 0.005,
+              f"{converged:+.2f} written, apex at {apex[0]:.0f}, {apex[1]:.0f}")
 
         # The whole of `as_line`'s contract in one assertion: the anchors, the
         # attributes and their quoting, and the decimals. Read back rather than

@@ -66,6 +66,26 @@ class MeridianConvergence:
     def to_grid(self, true_azimuth, x, y):
         return (true_azimuth - self.at(x, y)) % 360.0
 
+    def to_true(self, grid_azimuth, x, y):
+        """
+        The other way: a bearing computed on the grid, said from true north.
+
+        The direction a tool travels in says which kind of tool it is. Everything
+        that hands a field bearing to a kernel goes `to_grid` -- the intersection
+        dial, the fold-axis export. Everything that *computes* a bearing out of
+        projected coordinates comes back this way, because a plane fitted through
+        points in metres east and metres north knows only the grid, and the file
+        it is written into is read beside compass readings.
+
+        Spelling it rather than writing `+ self.at(...)` at the call sites is the
+        whole reason it is here: the sign was checked once, against three points
+        to four decimals, and a second derivation of it is a second chance to get
+        it backwards -- an error of twice the convergence, which is still small
+        enough to look like data.
+        """
+
+        return (grid_azimuth + self.at(x, y)) % 360.0
+
     def geographic(self, x, y):
         """
         Longitude and latitude of the point, or None without a usable CRS.

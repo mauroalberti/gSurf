@@ -1170,10 +1170,30 @@ def attitudes_frame(records, crs, gate=None, dem=None):
     the DEM is the surface the plane was actually fitted against. Left empty
     where there is no DEM or the point falls off it, rather than filled with a
     zero that would plot.
+
+    **`dipdir` is a true azimuth in every row, whoever produced it**, and that
+    costs a column to say. The two kinds of record here do not arrive in the
+    same frame: one was read off a layer where somebody wrote down a compass
+    bearing, the other was fitted through coordinates in metres east and metres
+    north and is therefore measured from grid north. Writing both into one
+    column and distinguishing them by `fitted` would be a column that means two
+    things -- and the thing anybody does with this layer first is symbolise it
+    by rotation, which asks the column and not the flag.
+
+    So the fit is turned, and `dipdir_grd` and `converg` travel beside it, which
+    is exactly the scheme `field_frame` already uses for axes: the grid bearing
+    is derived *from* the convergence that is written, so `dipdir - converg` is
+    the column and not nearly the column. `converg` is filled on a field row
+    too, where it converts nothing -- it is a property of the ground, not of the
+    producer, and a reader wanting the grid bearing of a compass reading has it.
     """
 
     import geopandas as gpd
     from shapely.geometry import Point
+
+    from gsurf.convergence import MeridianConvergence
+
+    convergence = MeridianConvergence(crs)
 
     rows, points = [], []
 
@@ -1190,12 +1210,24 @@ def attitudes_frame(records, crs, gate=None, dem=None):
         s0, s1 = record.span if record.span is not None else (None, None)
         elevation = dem.elevation_at(x, y) if dem is not None else None
 
+        fitted = bool(record.attrs.get("fitted", False))
+        here = convergence.at(x, y) if convergence.available else None
+
+        dipdir = float(record.plane.dipazim)
+
+        if fitted and here is not None:
+            dipdir = (dipdir + here) % 360.0
+
         row = {
             "category": record.category,
-            "dipdir": round(float(record.plane.dipazim), 2),
+            "dipdir": round(dipdir, 2),
+            "dipdir_grd": (
+                None if here is None else round((dipdir - here) % 360.0, 2)
+            ),
+            "converg": None if here is None else round(here, 3),
             "dip": round(float(record.plane.dipang), 2),
             "elev_m": elevation,
-            "fitted": bool(record.attrs.get("fitted", False)),
+            "fitted": fitted,
             "src": record.attrs.get("src"),
             "verdict": record.attrs.get("span_verdict"),
             "window_m": record.attrs.get("window"),
