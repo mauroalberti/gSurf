@@ -155,6 +155,7 @@ from gsurf.curation import (
 from gsurf.fits import as_line, dem_refusal, fits_along, gate_for
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.stereonet import StereonetView
+from gsurf.traces import draped_length
 from gsurf.windows import SatelliteWindow, WindowGroup
 
 # The file is the subject, so it is the one thing this cannot run without. The
@@ -206,6 +207,18 @@ SAMPLES = 400
 # column is 39 ms, against 250 at the band's own rate. What it buys is a
 # fraction good to a percent and a half, which is the precision of a word.
 HOLDS_SAMPLES = 64
+
+# How much of a trace has to be on the DEM before its `length_3d` is quoted as
+# the trace's own. Not 100%: the draping walks a part in a whole number of steps
+# and the last one lands short of the end, so an exact demand would mark every
+# trace in the file. At the 5 m cell that slack is metres on a kilometre, and
+# what is left over the line is the two traces of `merid_faults` that genuinely
+# run off the edge of the DTM.
+WHOLE_TRACE = 0.97
+
+# And where the column sorts the traces that have no DEM under them. Below every
+# real length rather than at zero, which is a length a trace could have.
+UNMEASURED = -1.0
 
 # How a trace is drawn, by whether anything has been read off it. The difference
 # is weight and darkness rather than hue, because every hue on this map already
@@ -447,6 +460,24 @@ def runs_of(sampled):
     return [tuple(run) for run in runs]
 
 
+class _Ranked(QtWidgets.QTableWidgetItem):
+    """
+    A cell sorted on a number it does not show.
+
+    `_number` can set the integer as the display role and let Qt compare it,
+    because there the text *is* the number. Here it is not: `~1784` is a length
+    with a caveat in front of it, and an empty cell is no length at all, and
+    neither of those compares as the metres it stands for.
+    """
+
+    def __init__(self, text, key):
+        super().__init__(text)
+        self._key = float(key)
+
+    def __lt__(self, other):
+        return self._key < getattr(other, "_key", self._key)
+
+
 class StructureTable(QtWidgets.QTableWidget):
     """
     Every structure in the file as a row: what is written on it, and what holds.
@@ -469,7 +500,13 @@ class StructureTable(QtWidgets.QTableWidget):
     under whatever the panel has on screen.
     """
 
-    COLUMNS = ("ident", "m", "att", "fit", "span", "holds")
+    COLUMNS = ("ident", "length_2d", "length_3d", "att", "fit", "span", "holds")
+
+    # Derived and not typed, because it is the one column written from two
+    # places -- the fill and the reach dial -- and a number that had to be kept
+    # in step with the tuple by hand is a number that would be tinting `span` the
+    # first time a column was inserted.
+    HOLDS_COLUMN = COLUMNS.index("holds")
 
     chosen = QtCore.pyqtSignal(int)
     framing_asked = QtCore.pyqtSignal(int)
@@ -479,6 +516,14 @@ class StructureTable(QtWidgets.QTableWidget):
 
         self._filling = False
         self._open = None
+
+        # What the topography came to, per structure index: `(metres, the metres
+        # they cover)`, or absent where there was no DEM under the trace. Held
+        # here rather than recomputed per row because it costs a raster read per
+        # trace -- 1.1 s over the 393 of `merid_faults` -- and because nothing in
+        # this window edits a path: the spans, fits and attitudes move, the line
+        # they are written against does not.
+        self._draped = {}
 
         self.setHorizontalHeaderLabels(self.COLUMNS)
         self.verticalHeader().setVisible(False)
@@ -494,10 +539,11 @@ class StructureTable(QtWidgets.QTableWidget):
         )
         self.setSortingEnabled(True)
         self.setToolTip(
-            "Click a header to sort: `att` and `fit` are what has been read off "
-            "the trace, `span` what has been said about it, `holds` the class "
-            "covering most of it. Double-click a row to bring its trace into "
-            "view."
+            "Click a header to sort: `length_2d` is the trace in plan and "
+            "`length_3d` the same trace over the topography, `att` and `fit` "
+            "are what has been read off it, `span` what has been said about it, "
+            "`holds` the class covering most of it. Double-click a row to bring "
+            "its trace into view."
         )
 
         # `Interactive` and widths fitted once per fill, rather than
@@ -582,8 +628,18 @@ class StructureTable(QtWidgets.QTableWidget):
 
     # -- filling -----------------------------------------------------------
 
-    def fill(self, structures, max_gap=DEFAULT_MAX_GAP):
+    def say_step(self, said):
+        """What the `length_3d` column was measured at, on its own header."""
+
+        header = self.horizontalHeaderItem(self.COLUMNS.index("length_3d"))
+
+        if header is not None:
+            header.setToolTip(said)
+
+    def fill(self, structures, max_gap=DEFAULT_MAX_GAP, draped=None):
         """Every structure as a row, in the order the file has them."""
+
+        self._draped = draped or {}
 
         with self._hold_open():
             self.setRowCount(len(structures))
@@ -677,9 +733,10 @@ class StructureTable(QtWidgets.QTableWidget):
         self.setItem(row, 0, ident)
 
         self._number(row, 1, round(structure.length))
-        self._number(row, 2, len(structure.attitudes))
-        self._number(row, 3, len(structure.fits))
-        self._number(row, 4, len(structure.spans))
+        self._over_topography(row, 2, structure, self._draped.get(index))
+        self._number(row, 3, len(structure.attitudes))
+        self._number(row, 4, len(structure.fits))
+        self._number(row, 5, len(structure.spans))
         self._holds(row, structure, max_gap)
 
     def _number(self, row, column, value):
@@ -693,6 +750,53 @@ class StructureTable(QtWidgets.QTableWidget):
 
         item = QtWidgets.QTableWidgetItem()
         item.setData(QtCore.Qt.ItemDataRole.DisplayRole, int(value))
+        item.setTextAlignment(
+            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
+
+        self.setItem(row, column, item)
+
+    def _over_topography(self, row, column, structure, draped):
+        """
+        The trace's length over the DEM, and how much of the trace that is.
+
+        The `~` is the whole point of the cell. A trace that runs off the edge of
+        the DEM is measured over the part that is on it, and that length printed
+        beside a plan length measured over all of it comes out *shorter* --
+        F0168 is 2547 m in plan and on the 5 m DTM for 70% of them, so its
+        `length_3d` is the smaller number of the two. Without the mark that is a
+        subtraction anybody would read as a bug in the draping; with it, it is
+        the sentence "this is 70% of a trace", which is what it is.
+
+        Empty and not zero where there is no DEM under the trace at all, because
+        zero is a length and this is the absence of one. Empty sorts to the
+        bottom either way round, by the key rather than by the text -- a column
+        sorted on "" would put the unmeasured traces between 999 and 1000.
+        """
+
+        if draped is None:
+            item = _Ranked("", UNMEASURED)
+            item.setToolTip(
+                "no DEM under this trace"
+                if self._draped
+                else "no DEM in this session, or not one these traces may be "
+                     "sampled against"
+            )
+        else:
+            metres, covered = draped
+            fraction = covered / structure.length if structure.length else 0.0
+            whole = fraction >= WHOLE_TRACE
+
+            item = _Ranked(f"{round(metres)}" if whole else f"~{round(metres)}",
+                           metres)
+            item.setToolTip(
+                f"{round(metres)} m over the topography"
+                if whole
+                else f"{round(metres)} m over the topography, but measured on "
+                     f"{round(covered)} m of {round(structure.length)} -- "
+                     f"{fraction:.0%} of the trace is on the DEM"
+            )
+
         item.setTextAlignment(
             QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
         )
@@ -719,7 +823,7 @@ class StructureTable(QtWidgets.QTableWidget):
                 QtGui.QColor("#6a6a6a" if kind == "assente" else "white")
             )
 
-        self.setItem(row, 5, item)
+        self.setItem(row, self.HOLDS_COLUMN, item)
 
 
 class ProvenanceView(QtWidgets.QWidget):
@@ -1181,7 +1285,10 @@ class EditorPanel(QtWidgets.QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(split)
 
-        self.table.fill(self.document.dataset.structures, self.max_gap)
+        self.table.say_step(self._step_said())
+        self.table.fill(
+            self.document.dataset.structures, self.max_gap, self._drape_all()
+        )
         self._apply_filter()
 
         if self.document.dataset.structures:
@@ -1191,6 +1298,78 @@ class EditorPanel(QtWidgets.QWidget):
             self.show_index(0)
 
     # -- the list ----------------------------------------------------------
+
+    def _step(self):
+        """What the traces are walked at over the DEM, or None if they cannot be."""
+
+        if self.dem is None or self.dem_said:
+            return None
+
+        return max(self.dem.res_x, self.dem.res_y)
+
+    def _step_said(self):
+        """
+        The `length_3d` header's tooltip: the step, or why there is no column.
+
+        The step is said and not assumed, because the number depends on it and
+        does not converge -- see `traces.draped_length`. A reader comparing a
+        3D length here against one computed elsewhere is comparing two different
+        measurements unless both say what they were walked at.
+        """
+
+        step = self._step()
+
+        if step is None:
+            return (
+                self.dem_said
+                or "No DEM in this session, so there is nothing to hang the "
+                   "traces on and the column is empty."
+            )
+
+        return (
+            f"The trace over the topography, walked at {step:g} m -- the DEM's "
+            f"own cell. The number depends on that step and gets no truer below "
+            f"the cell: sampling finer only counts the same cells' edges as "
+            f"relief. A `~` means the trace runs off the DEM and the length is "
+            f"over the part that is on it."
+        )
+
+    def _drape_all(self):
+        """
+        Every path over the DEM, once, as `{index: (metres, metres covered)}`.
+
+        Once and up front rather than per row, because it is a raster read per
+        trace: 1.13 s over the 393 of `merid_faults` against the 5 m DTM, which
+        is a wait at the door and would be a stutter on every sort, filter and
+        Apply if it were left to `_write_row`. Nothing in this window edits a
+        path, so the answer cannot go stale while the window is open.
+
+        The traces with no DEM under them are absent rather than present as
+        `None`: 13 of those 393 are, and the column reads the difference between
+        a missing key and an empty dictionary -- the first is this trace, the
+        second is this session.
+        """
+
+        step = self._step()
+
+        if step is None:
+            return {}
+
+        drapes = {}
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtGui.QCursor(QtCore.Qt.CursorShape.WaitCursor)
+        )
+        try:
+            for index, structure in enumerate(self.document.dataset.structures):
+                metres, covered = draped_length(structure.path, self.dem, step=step)
+
+                if metres is not None:
+                    drapes[index] = (metres, covered)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        return drapes
 
     def _apply_filter(self):
         """

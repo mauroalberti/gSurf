@@ -26,6 +26,7 @@ the reach -- the fit takes it back. Any other answer is a number to explain.
 """
 
 import difflib
+import math
 import os
 import shutil
 import sys
@@ -705,6 +706,25 @@ def main():
               table.index_of(table.currentRow()) == window.panel.index == 0,
               f"row {table.currentRow()} -> "
               f"{table.index_of(table.currentRow())}")
+
+        # The two lengths are two columns and say which is which in their names.
+        # `m` said neither, and a plan length and a draped one differ by a sixth
+        # on the real sheet -- 654 km against 613 -- which is not a rounding
+        # anybody would spot in a column headed `m`.
+        check("the lengths are named, in plan and over the topography",
+              tool.StructureTable.COLUMNS[1:3] == ("length_2d", "length_3d"),
+              str(tool.StructureTable.COLUMNS))
+
+        # This session has no DEM, and the column is empty rather than zero:
+        # zero is a length a trace could have and this is the absence of one.
+        # The header says so, which is where a reader looks when a whole column
+        # is blank.
+        drapes = [table.item(row, 2).text() for row in range(4)]
+
+        check("with no DEM the draped column is blank, and the header says why",
+              drapes == ["", "", "", ""]
+              and "No DEM" in table.horizontalHeaderItem(2).toolTip(),
+              table.horizontalHeaderItem(2).toolTip()[:52])
 
         table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)
 
@@ -1676,6 +1696,115 @@ def main():
             for n, structure in enumerate(fitting.document.dataset.structures)
         }
 
+        # -- the trace over the topography ---------------------------------
+
+        # The arithmetic, on the one trace whose answer is a closed form: EAST
+        # runs straight down the dip of a plane at 30 degrees, so hanging it on
+        # that plane lengthens it by exactly 1/cos(30) and by nothing else. The
+        # agreement is to six figures, which is what says the draping is
+        # measuring the ground rather than the grid -- nearest-cell sampling on
+        # a 5 m cell at a 5 m step would show as a staircase in this digit.
+        east = fitting.document.dataset.structures[rows["EAST"]]
+        down_dip, _ = traces_module.draped_length(east.path, panel.dem)
+
+        check("a trace straight down a 30 degree dip is longer by 1/cos(30)",
+              abs(down_dip / east.length - 1.0 / math.cos(math.radians(30.0)))
+              < 1e-6,
+              f"{east.length:.2f} m in plan, {down_dip:.3f} m draped, "
+              f"ratio {down_dip / east.length:.6f}")
+
+        # And the cell is that number, rounded to the metre. Separate from the
+        # assertion above because they are two different claims: that the
+        # arithmetic is right, and that the column is showing this arithmetic
+        # and not some second one of its own.
+        east_row = next(
+            row for row in range(panel.table.rowCount())
+            if panel.table.item(row, 0).text() == "EAST"
+        )
+
+        check("and the cell is that, to the metre, beside the plan length",
+              panel.table.item(east_row, 2).text() == str(round(down_dip))
+              and panel.table.item(east_row, 1).text() == str(round(east.length)),
+              f"{panel.table.item(east_row, 1).text()} / "
+              f"{panel.table.item(east_row, 2).text()}")
+
+        # And the other end of the same statement: along the strike of that
+        # plane there is no rise, so the draped length is the plan length to the
+        # metre. A draping that invented relief where the ground is level -- by
+        # counting the cell edges it steps over -- would fail here and pass the
+        # check above, since a staircase inflates both.
+        strike = [(X0 + 500.0, Y0 + n * 10.0) for n in range(101)]
+        level, level_over = traces_module.draped_length(strike, panel.dem)
+
+        check("and along the strike of it there is no rise, so no extra length",
+              abs(level - 1000.0) < 0.5 and abs(level_over - 1000.0) < 0.5,
+              f"{level:.4f} m over {level_over:.1f} m of a 1000 m trace")
+
+        # A trace that runs off the DEM, which is the case the `~` exists for:
+        # half of this one is on the raster, so its draped length comes back
+        # *shorter* than its plan length. Printed bare that is a subtraction
+        # anybody would read as a bug in the draping, so the metres never travel
+        # without the metres they cover.
+        edge = [(X0 + 2000.0, Y0), (X0 + 3400.0, Y0)]
+        part, part_over = traces_module.draped_length(edge, panel.dem)
+
+        check("a trace running off the DEM is measured on the part that is on it",
+              part < 1400.0 and abs(part_over - 695.0) < 10.0
+              and abs(part / part_over - 1.0 / math.cos(math.radians(30.0))) < 1e-3,
+              f"{part:.1f} m over {part_over:.1f} m of 1400")
+
+        # Dropped and not closed up. `trace_points` hands back the samples it
+        # kept, so the two either side of a hole are neighbours in the array and
+        # the straight line between them is gap and not trace. Counting it would
+        # put the whole 1400 m in the answer, which is the number this is not.
+        check("and the stretch it is off the DEM for is dropped, not spanned",
+              part_over < 1400.0 * tool.WHOLE_TRACE,
+              f"covers {part_over / 1400.0:.0%}")
+
+        check("a trace with no DEM under it at all comes back with nothing",
+              traces_module.draped_length(
+                  [(X0 + 5000.0, Y0), (X0 + 5400.0, Y0)], panel.dem
+              ) == (None, 0.0))
+
+        # The step is the DEM's own cell, and the header says which -- because
+        # the number depends on it and does not converge. On `merid_faults`
+        # against the 5 m DTM the total is 634 km at a 50 m step and 685 km at
+        # 2.5 m, so a draped length quoted without its step is not reproducible.
+        check("the header says what the column was walked at",
+              f"{CELL:g} m" in panel.table.horizontalHeaderItem(2).toolTip(),
+              panel.table.horizontalHeaderItem(2).toolTip()[:60])
+
+        # Sorted on the metres, not on the text: `~802` is a length with a
+        # caveat in front of it and an empty cell is no length at all, and
+        # neither compares as the number it stands for. The empties go below
+        # every real length rather than to zero, which is a length.
+        panel.table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
+        order = [
+            panel.table.item(row, 2).text().lstrip("~")
+            for row in range(panel.table.rowCount())
+        ]
+
+        check("the draped column sorts on the metres behind the text",
+              order == sorted(order, key=int),
+              str(order))
+
+        # The three kinds of cell against each other, which no one file puts in
+        # one column: a plain length, a length with the `~` of a trace that runs
+        # off the DEM, and the blank of a trace with no DEM under it at all.
+        # Sorted on their text `~802` would follow `1848` and `` would lead, and
+        # every one of the three would be in the wrong place.
+        mixed = sorted([
+            tool._Ranked("1848", 1847.5),
+            tool._Ranked("", tool.UNMEASURED),
+            tool._Ranked("~802", 802.5),
+        ])
+
+        check("blank last and `~` in its place, whatever the text would do",
+              [cell.text() for cell in mixed] == ["", "~802", "1848"],
+              str([cell.text() for cell in mixed]))
+
+        panel.table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)
+
         # The floor, end to end, and the reason this file is the case that found
         # it: every vertex in the format is written to two decimals, so these
         # densified traces report their own storage -- four millimetres -- as the
@@ -1747,6 +1876,24 @@ def main():
               panel.apply_block()
               and len(fitting.document.dataset.structures[rows["VEE"]].fits) == 1,
               fitting.document.text_of(rows["VEE"]).splitlines()[2][:58])
+
+        # Apply rewrites the row, and the draped length has to come back with
+        # it. It is the one cell on the row that is not read off the structure
+        # -- it was measured once at the door, because it is a raster read per
+        # trace -- so a rewrite that forgot it would blank the column one row at
+        # a time, on exactly the traces being worked on.
+        vee_row = next(
+            row for row in range(panel.table.rowCount())
+            if panel.table.item(row, 0).text() == "VEE"
+        )
+
+        check("and the rewritten row keeps the length nobody recomputed",
+              panel.table.item(vee_row, 2).text()
+              == str(round(traces_module.draped_length(
+                  fitting.document.dataset.structures[rows["VEE"]].path,
+                  panel.dem,
+              )[0])),
+              f"VEE: {panel.table.item(vee_row, 2).text()} m")
 
         held = fitting.document.dataset.structures[rows["VEE"]].fits[0]
 

@@ -645,6 +645,78 @@ def trace_points(lines, dem, step=10.0, margin=50.0):
     return out
 
 
+def draped_length(path, dem, step=None, margin=50.0):
+    """
+    A path's length over the topography, as `(metres, the metres they cover)`.
+
+    **The number is not a property of the trace.** It is a property of the trace
+    and the step it was walked at, and it does not converge: measured on the 393
+    faults of `merid_faults` against the 5 m DTM, the total comes to 634 km at a
+    50 m step, 654 km at 5 m, and 685 km at 2.5 m. The last of those is not finer
+    relief, it is the same cells counted twice -- `_elevations` reads the nearest
+    cell, so below the cell size every sample pair straddling a cell boundary
+    adds a staircase riser that is an artefact of the grid. Which is why the step
+    defaults to the DEM's own cell and the caller is expected to say so: a
+    3D length quoted without its step is a number nobody can reproduce.
+
+    The second number is the other half of the answer and not a diagnostic. 13 of
+    those 393 traces fall off the DTM entirely and 2 more run off its edge --
+    F0168 is on it for 70% of its 2547 m -- and a length measured over 70% of a
+    trace, printed beside a 2D length measured over all of it, comes out
+    *shorter*, which reads as a bug rather than as a hole in the coverage.
+    Whoever prints the metres has to print what they cover.
+
+    Metres and not a fraction, because the denominator is not this function's to
+    pick: the caller holds the structure, and the structure's own `length` is
+    what the `2d` beside it will be showing. Dividing here by a plan length
+    measured again in here would put a second opinion in the ratio.
+
+    Segments across a hole are dropped rather than closed up, which is the same
+    choice for the same reason: `trace_points` returns the samples it kept, so
+    two points either side of a gap are consecutive in the array and the straight
+    line between them is not trace, it is the gap. Counting it would quietly
+    invent length; the progressives are what tell the two apart.
+    """
+
+    if step is None:
+        step = max(dem.res_x, dem.res_y)
+
+    parts = trace_points([path], dem, step=step, margin=margin)
+
+    if not parts:
+        return None, 0.0
+
+    metres = 0.0
+    covered = 0.0
+
+    for coords, progressive in parts:
+        gaps = np.diff(progressive)
+
+        # Half a step of slack: the resampler lands its samples on a spacing
+        # just under `step` (a part is divided into a whole number of intervals),
+        # so an exact comparison would reject every segment on the trace.
+        along = gaps <= step * 1.5
+
+        if not along.any():
+            continue
+
+        # The slope leg is the chord between the two samples, the covered leg is
+        # the progressive between them. They differ by the corner a sample pair
+        # cuts off at a vertex, and each is the right one for its own question:
+        # how far the walk went in three dimensions, and how much of the trace
+        # the walk was over.
+        rise = np.diff(coords[:, 2])[along]
+        chord = np.hypot(*np.diff(coords[:, :2], axis=0).T)[along]
+
+        metres += float(np.hypot(chord, rise).sum())
+        covered += float(gaps[along].sum())
+
+    if covered <= 0.0:
+        return None, 0.0
+
+    return metres, covered
+
+
 # -- one trace, cut into stretches ---------------------------------------
 
 

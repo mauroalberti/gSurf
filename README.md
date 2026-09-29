@@ -777,9 +777,10 @@ on the news — the map reports what a click found, the panel what `Apply` and
 plane; the other 348 are mapped contacts nobody has read one off yet. So the
 first question the window has to answer is which forty-five, and it answers it
 twice. The table lists every structure with what is written on it — `att`, `fit`
-and `span` as counts, the length in metres, and one word for what holds over
-most of the trace, tinted as the band tints it — and the columns sort, so the
-way to the forty-five is a click on a header rather than a scroll. The map draws
+and `span` as counts, `length_2d` and `length_3d` in metres, and one word for
+what holds over most of the trace, tinted as the band tints it — and the columns
+sort, so the way to the forty-five is a click on a header rather than a scroll.
+The map draws
 a trace carrying something firmly and one carrying nothing faintly, which is the
 same question answered where you have to aim at it. Both go through one
 predicate, `carries`, so the two cannot disagree; and the legend entry for the
@@ -792,6 +793,36 @@ find before you could look at it. A click on the *map* never moves the view: you
 are already looking at what you clicked. The framing is deferred by 140 ms, so
 arrow-keying down the table costs one move rather than one a row, and the bar's
 back arrow is the way out of it — the same as out of a zoom made by hand.
+
+**The two lengths are two columns because they are two measurements.**
+`length_2d` is the trace in plan, which is a property of the line and of nothing
+else. `length_3d` is the same trace hung on the DEM, and it is *not* a property
+of the trace: it depends on the step it was walked at, and it does not converge.
+Over these 393 faults against the 5 m DTM the total comes to 634 km at a 50 m
+step, 654 km at 5 m and 685 km at 2.5 m — and the last of those is not finer
+relief, it is the same cells counted twice, because the sampling reads the
+nearest cell and below the cell size every sample pair straddling a boundary
+adds a riser that is an artefact of the grid. So the step is the DEM's own cell
+and the header says which: a draped length quoted without its step is a number
+nobody can reproduce. Across the whole sheet the difference between the two
+columns is 6.6%.
+
+The column also has to say where it could not measure. 13 of the 393 fall off
+the DTM entirely and their cell is empty — empty and not zero, zero being a
+length a trace could have. Two more run off its edge, and those are the awkward
+ones: F0168 is 2547 m in plan and on the raster for 70% of them, so its
+`length_3d` is 1883 m, *shorter* than its plan length. Printed bare that is a
+subtraction anybody would read as a bug in the draping, so it is printed `~1883`
+and the cell says on how much of the trace it was measured. The stretch off the
+DEM is dropped rather than closed up, for the same reason: the straight line
+between the two samples either side of a hole is gap and not trace, and counting
+it would quietly invent length.
+
+The whole column is measured once, at the door: it is a raster read per trace,
+1.13 s over these 393, which is a wait on opening and would be a stutter on
+every sort, filter and Apply if it were left to the row writer. Nothing in this
+window edits a path — the spans, fits and attitudes move, the line they are
+written against does not — so the answer cannot go stale while it is open.
 
 Two measurements decided how that was built. The `holds` column is
 `provenance_of` run over every structure, which at 64 samples is 39 ms for the
