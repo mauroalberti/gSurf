@@ -1074,6 +1074,42 @@ the map fills the first one and selects the next. What gets written is the point
 back to get its progressive, so a point fifty metres off the line would read the
 same and say something false about where anybody stood.
 
+**And what the two anchors enclose is drawn.** The clicks were always there; what
+was missing is that nothing showed the stretch they made. A `span` or a `fit`
+decides a piece of ground, and until the block was applied that piece existed on
+screen only as two coordinates on a line — so the thing `Apply` was being asked
+about was the one thing not shown. It is drawn on the trace now, as a pale band
+under it in a colour nothing else on this map uses, and it follows the caret
+rather than the selection: click into a line already in the file and it lights
+what that line covers. A template arrives claiming the whole trace, which is not
+a placeholder being misread — `* *` *is* the whole trace, and applying the line
+unchanged would claim exactly that.
+
+Both halves of that sentence are the second try, and the first one shipped. The
+band was a dashed line drawn *over* the orange highlight, so what showed through
+the gaps was the selection underneath: the claim read as a purple-and-orange
+stripe running along the trace — a texture, where what was meant was an extent.
+And nothing was said in words, because `pick` writes its own report into the same
+one-line status bar afterwards and took the panel's away. So `+ fit` and each
+shift-click now report what they claimed — *`this line claims 300 to 700 m — 400
+m of 1000`* — and the caret moving reports nothing, since a sentence written on
+every keystroke overwrites whichever sentence was answering the last button
+pressed. That is not hypothetical: it was overwriting `fit off the DEM`'s report
+of which of two fits will answer, published and gone in the same gesture.
+
+It is read off the text and not off the model, because the model does not have
+the half-written line in it. `interval_of` splits on whitespace, which is the
+wrong way to read this format everywhere else — values are quoted and a quoted
+value holds spaces — and is right in these two slots, which can hold `@x,y` or
+`*` and nothing else.
+
+The pair is never sorted, and that is the case that argued for building this.
+`Span.covers` is `s0 <= s <= s1`, so a line whose ends are the wrong way round
+parses, applies, and sits in the file looking like a decision while holding over
+no part of the trace. Nothing is drawn for it — an empty highlight is what no
+ground looks like — and the panel says it in words instead, which is the half a
+picture cannot carry.
+
 **`fit off the DEM` is the fourth button and not a fourth template.** The three
 above write a line for somebody to finish; this one sweeps a window along the
 selected trace and writes a `fit` for every stretch whose plane the topography

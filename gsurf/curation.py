@@ -780,6 +780,64 @@ def stretch(path, s0, s1):
     return out
 
 
+# Where a `span` and a `fit` keep their two ends: `span <axis> <start> <end>
+# <value>` and `fit <kind> <start> <end> <plane>` put them in the same pair of
+# places counted from the keyword, which is why one reader serves both.
+ENDS_AT = slice(2, 4)
+
+
+def interval_of(line, path):
+    """
+    The progressives a `span` or `fit` line claims, as written, or None.
+
+    What the line in the box is about to say, before it is applied: an anchor is
+    a coordinate and a stretch is a piece of ground, and the box can only show
+    the first. Two clicks put two coordinates on a line and nothing anywhere
+    says what they enclose.
+
+    **Split on whitespace, which is the wrong way to read this format** --
+    values are quoted and a quoted value holds spaces. It is right in these two
+    slots and nowhere else, because of the only two things they can hold: `@x,y`
+    or `*`, neither of which can be quoted or contain a space. So the tokens up
+    to the fourth are the ones `loads` would find, and a slot holding anything
+    else is not an end, which comes back None rather than guessed at.
+
+    `*` is read as the format reads it -- the end of the path -- including the
+    one a template arrives with. That is not a compromise over an unfilled
+    placeholder: a template applied as it stands *does* claim the whole trace,
+    and a curator who can see that has been told something true.
+
+    Returned as written and never sorted, because `covers` is `s0 <= s <= s1`
+    and a pair the wrong way round covers nothing at all. Sorting them here
+    would draw a stretch the file would not honour, which is the one kind of
+    wrong a picture can be.
+    """
+
+    tokens = line.split()
+
+    if len(tokens) < 4 or tokens[0] not in ("span", "fit") or len(path) < 2:
+        return None
+
+    gstruct = module()
+    ends = []
+
+    for token, otherwise in zip(tokens[ENDS_AT], (0.0, gstruct.path_length(path))):
+        if token == "*":
+            ends.append(otherwise)
+            continue
+
+        if not token.startswith("@"):
+            return None
+
+        try:
+            x, y = token[1:].split(",")
+            ends.append(place_on(path, float(x), float(y))[0])
+        except ValueError:
+            return None
+
+    return tuple(ends)
+
+
 def provenance_of(structure, samples=400, max_gap=DEFAULT_MAX_GAP):
     """
     What holds along a whole trace, sampled: `(s, plane, said, kind)` each.

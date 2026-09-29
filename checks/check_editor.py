@@ -240,7 +240,7 @@ def changed_lines(before, after):
 
 
 def main():
-    from PyQt6 import QtCore, QtWidgets
+    from PyQt6 import QtCore, QtGui, QtWidgets
 
     import gstruct
     import mplstereonet
@@ -248,6 +248,7 @@ def main():
 
     from gsurf.curation import (
         Document,
+        interval_of,
         nearest_structure,
         place_on,
         point_on,
@@ -471,6 +472,51 @@ def main():
               [round(x) for x, _ in stretch(alpha.path, 200.0, 400.0)]
               == [600200, 600300, 600400],
               str(stretch(alpha.path, 200.0, 400.0)))
+
+        # -- what the line in the box claims ------------------------------
+        #
+        # Two picked anchors put two coordinates on a line and nothing said what
+        # they enclosed. `interval_of` is the answer read straight off the text,
+        # because the text is what Apply will be given -- not off the model,
+        # which does not have the half-written line in it at all.
+
+        print("\n-- the stretch a line claims --\n")
+
+        check("a span's two anchors read back as the ground between them",
+              interval_of(
+                  '  span use @600200.00,4420000.00 @600400.00,4420000.00 '
+                  'rejected reason="prova"',
+                  alpha.path,
+              ) == (200.0, 400.0))
+
+        check("`*` is read as the format reads it: the end of the path",
+              interval_of("  fit plane * * 100/40 from=trace-dem", alpha.path)
+              == (0.0, 1000.0))
+
+        # Which is the answer to the template, and it is not a placeholder being
+        # misread: `+ fit` arrives claiming the whole trace, and applied as it
+        # stands that is exactly what it would claim.
+        check("so a template claims everything until an end is picked",
+              interval_of("  fit plane @600400.00,4420000.00 * 100/40 from=",
+                          alpha.path) == (400.0, 1000.0))
+
+        # Never sorted. `Span.covers` is `s0 <= s <= s1`, so this line parses,
+        # applies, sits in the file looking like a decision and holds over
+        # nothing -- and a reader that tidied the pair would draw a stretch the
+        # file does not honour.
+        check("a pair the wrong way round comes back the wrong way round",
+              interval_of(
+                  "  span use @600400.00,4420000.00 @600200.00,4420000.00 rejected",
+                  alpha.path,
+              ) == (400.0, 200.0))
+
+        check("a line that is not a span or a fit claims nothing",
+              interval_of("  attitude @600800.00,4420000.00 plane 90/30 station=S1",
+                          alpha.path) is None)
+
+        check("nor does one whose slots hold something that is not an end",
+              interval_of("  fit plane 100/40 * from=", alpha.path) is None
+              and interval_of("  kind fault", alpha.path) is None)
 
         # -- the tool -----------------------------------------------------
 
@@ -1107,6 +1153,121 @@ def main():
               seen["hovered"] == 1 and seen["off"] == 2, f"{dict(seen)}")
 
         window._tip_on(None)
+
+        # -- the stretch under the caret, on the map ------------------------
+        #
+        # The two clicks that write an interval have always worked: `+ fit` puts
+        # `fit plane * * 000/00 from=` in the box with the first `*` selected,
+        # and a shift-click fills it in and aims at the next. What was missing is
+        # that nothing showed what the pair enclosed -- the box holds two
+        # coordinates and the ground between them is the thing Apply is actually
+        # being asked about.
+
+        print("\n-- what the caret's line claims --\n")
+
+        window.select(0)
+
+        def caret_onto(fragment):
+            """Puts the caret on the box's first line holding `fragment`."""
+
+            cursor = window.panel.text.textCursor()
+            cursor.setPosition(window.panel.text.toPlainText().index(fragment))
+            window.panel.text.setTextCursor(cursor)
+
+        def claimed_now():
+            return list(
+                zip(window.claimed.get_xdata(), window.claimed.get_ydata())
+            )
+
+        caret_onto("span use @600200")
+
+        check("the caret on a span lights the ground that span covers",
+              [round(x) for x, _ in claimed_now()] == [600200, 600300, 600400],
+              str(claimed_now()))
+
+        check("and it is drawn along the trace, not as a chord across it",
+              {round(y) for _, y in claimed_now()} == {4420000},
+              str(sorted({round(y) for _, y in claimed_now()})))
+
+        caret_onto("attitude @600800")
+
+        check("a line that claims no stretch leaves none drawn",
+              claimed_now() == [], str(claimed_now()))
+
+        caret_onto("fit plane * *")
+
+        check("and the template's `* *` lights the whole kilometre",
+              [round(x) for x, _ in claimed_now()][::10] == [600000, 601000],
+              f"{len(claimed_now())} point(s), "
+              f"{[round(x) for x, _ in claimed_now()][:1]}..")
+
+        # The failure this picture is here to catch, and the one case where the
+        # picture cannot: reversed, the line parses and applies and holds over
+        # nothing, because `covers` is `s0 <= s <= s1`. An empty highlight is
+        # what no ground looks like, so the words have to carry it.
+        said = []
+        window.panel.said.connect(said.append)
+
+        cursor = window.panel.text.textCursor()
+        cursor.select(QtGui.QTextCursor.SelectionType.LineUnderCursor)
+        window.panel.text.setTextCursor(cursor)
+        window.panel.text.insertPlainText(
+            "  fit plane @600400.00,4420000.00 @600200.00,4420000.00 100/40 from="
+        )
+
+        check("a stretch written backwards draws nothing at all",
+              claimed_now() == [], str(claimed_now()))
+
+        check("and is said out loud instead, with what makes it empty",
+              any("covers no part" in one and "s0 <= s <= s1" in one
+                  for one in said),
+              str(said[-1:]))
+
+        window.panel.said.disconnect(said.append)
+        window.panel._redraw()
+
+        # The flow as a hand does it, which is what the checks above do not
+        # cover: they move the caret and read the picture, and this presses the
+        # button and clicks the map. It shipped once without this, and what got
+        # through was the half no picture could have caught -- `say` is one bar,
+        # so the click's own report was written over the panel's and two
+        # shift-clicks moved the band while saying nothing about it.
+        window.panel.add_line("  fit plane * * 000/00 from=")
+
+        check("`+ fit` arrives claiming the whole trace, and says so",
+              len(claimed_now()) == 11
+              and "whole trace" in window.statusBar().currentMessage(),
+              window.statusBar().currentMessage())
+
+        window.pick(600300.0, 4420000.0, anchor=True)
+
+        check("the first shift-click moves the near end, and reports the claim",
+              [round(x) for x, _ in claimed_now()][:1] == [600300]
+              and "300 to 1000 m" in window.statusBar().currentMessage(),
+              window.statusBar().currentMessage())
+
+        window.pick(600700.0, 4420000.0, anchor=True)
+
+        check("and the second closes it: the anchor and the extent in one line",
+              [round(x) for x, _ in claimed_now()]
+              == [600300, 600400, 600500, 600600, 600700]
+              and "@600700.00,4420000.00" in window.statusBar().currentMessage()
+              and "400 m of 1000" in window.statusBar().currentMessage(),
+              window.statusBar().currentMessage())
+
+        # A band and not a line over the trace, which is the other half of what
+        # went wrong: dashed and on top, what showed through the gaps was the
+        # orange highlight, and the claim read as a stripe rather than an extent.
+        check("and it is drawn under the selection, as a band",
+              window.claimed.get_linestyle() == "-"
+              and window.claimed.get_linewidth() > window.highlight.get_linewidth()
+              and window.claimed.get_zorder() < window.highlight.get_zorder(),
+              f"lw {window.claimed.get_linewidth()} at z "
+              f"{window.claimed.get_zorder()}, against the highlight's "
+              f"{window.highlight.get_linewidth()} at "
+              f"{window.highlight.get_zorder()}")
+
+        window.panel._redraw()
 
         # -- the planes on the net -----------------------------------------
         #
@@ -1959,6 +2120,16 @@ def main():
               any("already carries" in one for one in said)
               and any("first" in one for one in said),
               (said[-1] if said else "nothing said")[:76])
+
+        # And it is still the last thing said. `any` above was true the whole
+        # time the bar was showing something else: writing lines into the box
+        # moves the caret, and the caret's stretch was being announced on every
+        # change -- so this report was published and overwritten in the same
+        # gesture, every time. One bar, one message, and the one that answers
+        # the button press has to be the one left in it.
+        check("and it is what the bar is left holding, not an aside after it",
+              "fit(s)" in said[-1] and "claims" not in said[-1],
+              said[-1][:76])
 
         # And the file, which is the invariant every other assertion here rests
         # on: the lines of the structures that were edited, and not one byte more.

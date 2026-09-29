@@ -18,6 +18,31 @@ place; the band at the top of the panel asks it everywhere. On F0055 of
 over for the last 354, with the dip stepping from 31 to 35 where they meet. That
 is one line of the file beating another, and neither line says so.
 
+**And what two anchors enclose.** A picked anchor is a coordinate; what a `span`
+or a `fit` decides is the ground between two of them. Two shift-clicks put two
+coordinates on a line and nothing showed the stretch they made, so the thing
+`Apply` was being asked about was on screen only as a pair of numbers. It is
+drawn now, as a pale band under the trace in the one colour this map had left,
+and it follows the caret rather than the selection -- click into a line already
+in the file and it lights what that line covers. Read off the text and not off
+the model, because the model does not have the half-written line in it and the
+half-written line is what `Apply` will be handed.
+
+**A band under, and not a line over**, which took two tries. Dashed and on top
+it was drawn across the orange highlight, and what showed through the gaps was
+the selection: the claim read as a purple-and-orange stripe along the trace,
+which is a texture. A texture is a thing a line can be; an extent is what this
+is. And **the words go on the gesture, never on the keystroke** -- `+ fit` and a
+shift-click each report what they claimed, and the caret moving does not, because
+the status bar is one line and a sentence written on every change overwrites
+whichever sentence was answering the last thing somebody pressed.
+
+The case that argues for it is the pair written the wrong way round. `covers` is
+`s0 <= s <= s1`, so such a line parses, applies, and sits in the file looking
+like a decision while holding over no part of the trace at all. There is nothing
+to draw for it -- an empty highlight is what no ground looks like -- so that one
+is said in words.
+
 **Three windows.** The map is the tool; the panel and the net are windows beside
 it. The panel used to be one frame split down the middle with the map, and a
 splitter cannot be dragged across a screen boundary, so the map could not be
@@ -145,6 +170,7 @@ from gsurf.curation import (
     UNCONSTRAINED,
     Document,
     degrees_not_metres,
+    interval_of,
     is_gstruct,
     nearest_structure,
     place_on,
@@ -152,7 +178,7 @@ from gsurf.curation import (
     provenance_of,
     stretch,
 )
-from gsurf.fits import as_line, dem_refusal, fits_along, gate_for
+from gsurf.fits import AT_THE_END, as_line, dem_refusal, fits_along, gate_for
 from gsurf.mapview import LegendControls, MapView, fit_to_screen
 from gsurf.stereonet import StereonetView
 from gsurf.traces import draped_length
@@ -195,6 +221,22 @@ PROVENANCE_TINT = {
 # them would put them in competition with the band above for the eye.
 USE_TINT = {"rejected": "#b2182b", "accepted": "#1b7837", "unknown": "#9a9a9a"}
 SPAN_TINT = "#6a7f95"
+
+# The stretch the line under the caret claims, which is the one thing drawn on
+# this map that is not in the file yet. Purple because every other hue here is
+# already spoken for and the nearest free one would lie: green is a measurement,
+# red a refusal, blue a fit, orange the selection. Kept beside them rather than
+# inlined twice, since the artist and the legend entry have to be the same
+# colour or the legend is a caption for something else.
+CLAIMED_TINT = "#762a83"
+
+# And wide and pale, because it is a band and not a line. Wider than the
+# selection's 2.6 and the refusal's 3.4 so that it shows on both sides of them
+# rather than competing with either, and `butt` caps so the ends fall where the
+# anchors are: a round cap puts half a linewidth of claim past the coordinate
+# somebody picked, which at this width is metres of trace nobody asked for.
+CLAIMED_WIDTH = 8.0
+CLAIMED_ALPHA = 0.45
 
 # What the provenance band is sampled at. The band's edges are therefore good to
 # one four-hundredth of the trace -- nine metres on a 3.5 km fault -- which is a
@@ -1095,11 +1137,29 @@ class EditorPanel(QtWidgets.QWidget):
     # is read from the map as often as from the box.
     said = QtCore.pyqtSignal(str)
 
+    # The stretch the line under the cursor claims, as `(s0, s1)` or None. Asked
+    # of the window for `framing_asked`'s reason turned the other way round: the
+    # panel is the only thing that knows which line is being worked on, and the
+    # window is the only thing that knows what the ground looks like.
+    covering = QtCore.pyqtSignal(object)
+
     def __init__(self, document, dem=None, crs=None, parent=None):
         super().__init__(parent)
 
         self.document = document
         self.index = None
+
+        # The last stretch reported, as `(which structure, the interval)`, so
+        # that moving the caret along one line does not re-emit it: every
+        # emission costs the window a blit, and a caret crossing a
+        # forty-character line would spend forty of them redrawing a picture
+        # that did not change.
+        #
+        # The index is in the key and not only the interval, because two traces
+        # can be claimed over the same pair of progressives -- `* *` on any two
+        # of them starts at zero -- and then moving between them would report no
+        # change and leave the stretch drawn on the one being left.
+        self._covering = (None, None)
 
         # The topography, and whether it may be sampled for these traces at all.
         # The refusal is a fact about the pair and not about the click, so it is
@@ -1169,6 +1229,13 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         self.text.setTabStopDistance(28)
         self.text.setMinimumHeight(120)
+
+        # Both, because a stretch changes under either gesture and neither
+        # implies the other: typing an anchor moves the text without moving the
+        # caret off the line, and clicking from one line to the next moves the
+        # caret without touching a character.
+        self.text.cursorPositionChanged.connect(self._covering_changed)
+        self.text.textChanged.connect(self._covering_changed)
 
         self.problem = QtWidgets.QLabel()
         self.problem.setWordWrap(True)
@@ -1565,6 +1632,14 @@ class EditorPanel(QtWidgets.QWidget):
         Above the path because that is where an assertion goes: `dumps` puts the
         geometry last, so a line written after it would sit among the vertices
         and read as one of them.
+
+        And it says what it just claimed, which is the other half of the band
+        turning on. A template arrives with both ends `*`, so pressing this
+        lights the whole trace -- correctly, since applied unchanged that is
+        exactly what the line would claim, and unexplained it reads as the map
+        having been coloured in. The words go here and not in
+        `_covering_changed`, for the reason written there: a button press is a
+        gesture asking for an answer, and a keystroke is not.
         """
 
         if self.index is None:
@@ -1577,6 +1652,11 @@ class EditorPanel(QtWidgets.QWidget):
 
         self.text.setPlainText("\n".join(lines))
         self._aim_at_anchor(sum(len(line) + 1 for line in lines[:at]))
+
+        claim = self.claim_said()
+
+        if claim is not None:
+            self.said.emit(f"{claim} -- shift-click the map to pick an end")
 
     def add_written(self, written):
         """
@@ -1701,6 +1781,97 @@ class EditorPanel(QtWidgets.QWidget):
         cursor.setPosition(max(sum(len(line) + 1 for line in lines[:at]) - 1, 0))
 
         self.text.setTextCursor(cursor)
+
+    # -- the stretch the caret's line claims ---------------------------------
+
+    def _covering_now(self):
+        """The interval the line under the caret says it covers, or None."""
+
+        if self.index is None:
+            return None
+
+        return interval_of(
+            self.text.textCursor().block().text(),
+            self.document.dataset.structures[self.index].path,
+        )
+
+    def claim_said(self):
+        """
+        What the caret's line claims, in words, or None if it claims nothing.
+
+        The band shows where and the sentence shows how much, and the second is
+        not a caption for the first: on an AOI-wide framing the whole of a
+        kilometre of fault is a few pixels, so *how much of it* is a question
+        the picture cannot answer at the scale the work is done at.
+
+        Read off `self._covering` and not off the box, so that the sentence is
+        always about the stretch that was last reported -- `pick` asks for this
+        after `insert_anchor` has run, and the two have to be the same claim.
+        """
+
+        index, interval = self._covering
+
+        if interval is None or index is None:
+            return None
+
+        s0, s1 = interval
+
+        # There is no drawing for this one, and that is why it is here rather
+        # than left to the picture: reversed, `Span.covers` holds the line over
+        # no part of the trace, so it parses, applies, and sits in the file
+        # looking like a decision while doing nothing.
+        if s0 > s1:
+            return (
+                f"this line runs from {s0:.0f} m back to {s1:.0f} m: written "
+                f"this way round it covers no part of the trace, because a "
+                f"stretch is `s0 <= s <= s1`"
+            )
+
+        whole = self.document.dataset.structures[index].length
+
+        if s1 - s0 >= whole - AT_THE_END:
+            return f"this line claims the whole trace, {whole:.0f} m"
+
+        return (
+            f"this line claims {s0:.0f} to {s1:.0f} m -- "
+            f"{s1 - s0:.0f} m of {whole:.0f}"
+        )
+
+    def _covering_changed(self):
+        """
+        Reports the caret's stretch when it becomes a different one.
+
+        **On change and not on every gesture**, which is what `self._covering`
+        is for: the caret moves character by character and the stretch does not
+        move with it.
+
+        **The band always, the words almost never.** Saying the claim on every
+        change was tried and is wrong: the status bar is one line, this fires on
+        every keystroke, and `fit off the DEM` writes its report into that same
+        bar by typing into this same box -- so the sentence that says a trace
+        already carries a fit and which of the two will answer was overwritten
+        by a generic extent, immediately and every time. A picture can sit beside
+        other things on the map; a sentence cannot sit beside another sentence.
+
+        So the words are left to the gesture that asks for them -- `pick` puts
+        the claim in its own report, where it is about the click somebody just
+        made -- and the one case kept here is the pair written the wrong way
+        round, which has no band, because `covers` holds it over no part of the
+        trace. That one has to speak: there is nothing to look at.
+        """
+
+        reported = (self.index, self._covering_now())
+
+        if reported == self._covering:
+            return
+
+        self._covering = reported
+        interval = reported[1]
+
+        self.covering.emit(interval)
+
+        if interval is not None and interval[0] > interval[1]:
+            self.said.emit(self.claim_said())
 
     def _aim_at_anchor(self, start, same_line=False):
         """Selects the next `*`, so that a picked anchor replaces it."""
@@ -1913,6 +2084,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.panel.applied.connect(self._on_applied)
         self.panel.framing_asked.connect(self.frame_on)
         self.panel.said.connect(self.say)
+        self.panel.covering.connect(self._show_claimed)
 
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(
@@ -2194,6 +2366,26 @@ class EditorWindow(QtWidgets.QMainWindow):
             )
         )
 
+        # A band under everything else rather than a line over it, and that is
+        # the second try. Dashed and on top it was drawn over the orange
+        # highlight, so what showed through the gaps was the selection: the
+        # claimed stretch read as a purple-and-orange stripe along the trace --
+        # a texture, which is a thing a line can be, and not an extent, which is
+        # what this is. Thick, solid, pale and underneath, it is a highlighter
+        # stroke and the trace still runs over it in its own colour.
+        #
+        # Lowest of the four steering artists for the same reason read the other
+        # way: a refusal and a selection are about the trace, and this is about a
+        # piece of ground the trace happens to cross.
+        self.claimed = self.map_view.add_animated(
+            axes.add_line(
+                Line2D(
+                    [], [], color=CLAIMED_TINT, lw=CLAIMED_WIDTH,
+                    alpha=CLAIMED_ALPHA, solid_capstyle="butt", zorder=5.5,
+                )
+            )
+        )
+
         # Built here and not left to the placement combo, which is what used to
         # happen: the other three tools ask for the legend once the map is drawn
         # and this one never did, so its four entries were made on every rebuild
@@ -2313,6 +2505,14 @@ class EditorWindow(QtWidgets.QMainWindow):
                 [], [], color=PROVENANCE_TINT["misurata"], marker="o",
                 markersize=5, linestyle="none", label="measured",
             ),
+            # The only entry here for something that is not in the file, and the
+            # one the legend has to carry hardest: every other colour on this map
+            # means a decision somebody made, and this one means a line nobody
+            # has applied yet.
+            Line2D(
+                [], [], color=CLAIMED_TINT, lw=CLAIMED_WIDTH,
+                alpha=CLAIMED_ALPHA, label="claimed in the box",
+            ),
         ]
 
     def _opening(self):
@@ -2375,6 +2575,40 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view.blit()
 
         self._fill_net(index)
+
+    def _show_claimed(self, interval):
+        """
+        The stretch the line being written claims, drawn on the ground it claims.
+
+        Two picked anchors put two coordinates on a line, and what they enclose
+        is the thing being decided -- so it is the thing Apply should be asked
+        about, and until now nothing showed it. A coordinate is not a stretch,
+        and neither is a pair of them until somebody walks the path between.
+
+        **The panel's index and not this window's**, which is not
+        interchangeable here: `select` asks the panel first and sets its own
+        index afterwards, so a block redrawn on the way in emits this while
+        `self.index` still names the trace being left. The interval was measured
+        against the panel's path, and it has to be drawn on the same one or it
+        is drawn on a different fault -- which would look like an answer.
+
+        Nothing is drawn for a reversed pair. `Span.covers` holds it over no
+        ground at all, and an empty highlight is what no ground looks like; the
+        panel says so in words, because that is the one thing a picture here
+        cannot.
+        """
+
+        index = self.panel.index
+
+        if interval is None or index is None or interval[0] > interval[1]:
+            self.claimed.set_data([], [])
+        else:
+            path = self.document.dataset.structures[index].path
+            drawn = self.on_map(stretch(path, *interval))
+
+            self.claimed.set_data([x for x, _ in drawn], [y for _, y in drawn])
+
+        self.map_view.blit()
 
     def _mark_refusals(self, structure):
         """The stretches somebody has rejected, drawn where they are."""
@@ -2882,6 +3116,17 @@ class EditorWindow(QtWidgets.QMainWindow):
                     f"is nearer, at {nearer[2]:.0f} m; anchors go on the selected "
                     f"trace"
                 )
+
+            # What the anchor did to the line it landed in, which is what the
+            # click was for. `insert_anchor` has already run, so the panel's
+            # claim is the one this click just made -- and without this the
+            # report would end here: `say` is one bar, so a message written after
+            # the panel's own takes the panel's away, and a shift-click would
+            # answer with a coordinate and silently drop the extent.
+            claim = self.panel.claim_said()
+
+            if claim is not None:
+                said += f"; {claim}"
 
             self.say(said)
             return
