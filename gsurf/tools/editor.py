@@ -2278,9 +2278,9 @@ class EditorPanel(QtWidgets.QWidget):
 
         return "; ".join(told) if told else "the block was already that"
 
-    def drop_line(self, at, line):
+    def _which_line(self, lines, at, line):
         """
-        One line out of the block, applied. Why it would not go, or None.
+        Which line of the box a row is pointing at, as `(index, why not)`.
 
         `at` is where the line sat when the row showing it was read, and the
         text is what decides: the box can have been typed in since, and an index
@@ -2290,6 +2290,69 @@ class EditorPanel(QtWidgets.QWidget):
         because this file has two fits written byte for byte alike, the index
         that no longer matches is not guessed at.
 
+        Shared by the two gestures that rewrite one line of a block from a table,
+        and shared deliberately: a removal and a detachment that disagreed about
+        which line a row means would be two ways of hitting the wrong one.
+        """
+
+        wanted = line.strip()
+
+        if 0 <= at < len(lines) and lines[at].strip() == wanted:
+            return at, None
+
+        alike = [n for n, one in enumerate(lines) if one.strip() == wanted]
+
+        if len(alike) == 1:
+            return alike[0], None
+
+        if not alike:
+            return None, (
+                "that line is not in the box any more -- Apply what is "
+                "there, or Revert, and the row will be read again"
+            )
+
+        return None, (
+            f"{len(alike)} lines in the box read exactly alike and the "
+            f"row no longer says which of them it is: Apply or Revert "
+            f"first"
+        )
+
+    def _rewrite_line(self, at, line, into, refusal):
+        """One line of the block replaced by `into`, or dropped where it is None."""
+
+        if self.index is None:
+            return refusal
+
+        was = self.text.toPlainText()
+        lines = was.splitlines()
+        which, why = self._which_line(lines, at, line)
+
+        if why is not None:
+            return why
+
+        self.remember()
+
+        if into is None:
+            del lines[which]
+        else:
+            lines[which : which + 1] = into.splitlines()
+
+        self.text.setPlainText("\n".join(lines))
+
+        if not self.apply_block():
+            # The parser's own words are on `problem`; this puts the text and the
+            # stack back, so a refused edit costs nothing at all.
+            self._before.pop()
+            self.text.setPlainText(was)
+
+            return "the block will not parse like that: see the message"
+
+        return None
+
+    def drop_line(self, at, line):
+        """
+        One line out of the block, applied. Why it would not go, or None.
+
         **Removing a `fit` is allowed where emptying a block is not**, and
         `Document.replace` is where the other half of that is written. A
         structure that does not hold is *said* not to hold, so that tomorrow a
@@ -2298,47 +2361,34 @@ class EditorPanel(QtWidgets.QWidget):
         the producer and its window written on it, and a file with it removed
         says what the file said before it was computed: nothing is claimed here.
         What the line said is in the status bar and on the undo stack.
+
+        A **reading** does carry that distinction, which is why it goes out
+        through `comment_out` and not through here.
         """
 
-        if self.index is None:
-            return "nothing is open to take a line out of"
+        return self._rewrite_line(
+            at, line, None, "nothing is open to take a line out of"
+        )
 
-        was = self.text.toPlainText()
-        lines = was.splitlines()
-        wanted = line.strip()
+    def comment_out(self, at, line, note):
+        """
+        One line turned into the comment that records it going. Why not, or None.
 
-        if 0 <= at < len(lines) and lines[at].strip() == wanted:
-            which = at
-        else:
-            alike = [n for n, one in enumerate(lines) if one.strip() == wanted]
+        `drop_line` for a reading, and the difference is the whole argument of
+        `detachment_note`: a fit removed leaves a file that says what it said
+        before the computation, and a reading removed leaves a file that cannot
+        tell a measurement somebody decided against from ground nobody walked.
+        So the line does not vanish, it becomes a `#` holding itself.
 
-            if len(alike) == 1:
-                which = alike[0]
-            elif not alike:
-                return (
-                    "that line is not in the box any more -- Apply what is "
-                    "there, or Revert, and the row will be read again"
-                )
-            else:
-                return (
-                    f"{len(alike)} lines in the box read exactly alike and the "
-                    f"row no longer says which of them it is: Apply or Revert "
-                    f"first"
-                )
+        Comments survive this and survive the Save behind it, both for the same
+        reason -- the box holds the block as text, and `Document` replaces the
+        lines of one structure rather than dumping the file. `dumps` would eat
+        them, and nothing here calls it.
+        """
 
-        self.remember()
-        del lines[which]
-        self.text.setPlainText("\n".join(lines))
-
-        if not self.apply_block():
-            # The parser's own words are on `problem`; this puts the text and the
-            # stack back, so a refused removal costs nothing at all.
-            self._before.pop()
-            self.text.setPlainText(was)
-
-            return "the block will not parse without that line: see the message"
-
-        return None
+        return self._rewrite_line(
+            at, line, note, "nothing is open to take a reading out of"
+        )
 
     # -- the topography, read along this trace ------------------------------
 

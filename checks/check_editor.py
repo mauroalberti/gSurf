@@ -249,12 +249,17 @@ def main():
 
     from gsurf.curation import (
         Document,
+        detachment_note,
+        fits_in,
+        from_a_file,
         interval_of,
         nearest_structure,
         place_on,
         plane_of,
         point_on,
         provenance_of,
+        reading_said,
+        readings_in,
         rows_of,
         stretch,
         with_attrs,
@@ -1564,6 +1569,83 @@ def main():
               and commented[0].note == "said on the phone",
               str(commented))
 
+        # -- the readings, told from the fits ------------------------------
+
+        print("\n-- the readings, told from the fits --\n")
+
+        gamma_path = document.dataset.structures[2].path
+        gamma_text = document.text_of(2)
+        readings = readings_in(gamma_text, gamma_path)
+
+        # The division `fits_in` argues for, from the other side. Gamma is the
+        # block built to make this answerable: it holds one attitude, three
+        # lineations and a rejected span, and no fit at all.
+        check("a reading is what somebody measured, and a span is not one",
+              [row.word for row in readings]
+              == ["attitude", "lineation", "lineation", "lineation"],
+              str([row.word for row in readings]))
+
+        check("and the fits of the same block are none of them",
+              fits_in(gamma_text, gamma_path) == [])
+
+        # A lineation is listed although nothing in the project holds one, which
+        # is the whole reason it is: a window counting only `attitude` would say
+        # "1 reading" over a block that states four.
+        check("a lineation is a reading, with the plane it has no slot for empty",
+              [row.plane for row in readings[1:]] == [None, None, None],
+              str([row.plane for row in readings[1:]]))
+
+        alpha_reading = next(
+            row for row in readings_in(document.text_of(0), document.dataset.structures[0].path)
+        )
+
+        check("a reading says itself by its station and its plane",
+              reading_said(alpha_reading) == "S1 90/30", reading_said(alpha_reading))
+
+        check("and one with no plane this tool reads says that instead",
+              "no plane" in reading_said(readings[1]), reading_said(readings[1]))
+
+        # `raw=` is the format's first rule, so it is also the test for whether
+        # a detachment loses anything: the import that wrote it can write it
+        # again, and a line without one is the only copy of itself.
+        check("a reading typed here carries no source string",
+              not from_a_file(alpha_reading), str(alpha_reading.attrs))
+
+        check("and one an importer wrote does",
+              from_a_file(rows_of(
+                  '  attitude @600800.00,4420000.00 plane 140/35 station=S26 '
+                  'src=points raw="dip_dir=140 dip=35" off=7.4\n',
+                  gamma_path,
+              )[0]))
+
+        # The note keeps the whole line and not a reading of it: `off=` and the
+        # importer's comments are the only record of what was put there.
+        note = detachment_note(alpha_reading, "belongs to the thrust", "01.10.2026")
+
+        check("the note names the reading, the day and the why",
+              "01.10.2026" in note and "S1 90/30" in note
+              and "belongs to the thrust" in note, note.splitlines()[0].strip())
+
+        check("and carries the line itself, every attribute of it",
+              alpha_reading.line.strip() in note)
+
+        check("every line of it is a comment, so the block still parses",
+              all(one.strip().startswith("#") for one in note.splitlines()),
+              note)
+
+        check("a reading with no raw= says this note is the last copy of it",
+              "only copy" in note)
+
+        check("and one an importer could write again does not",
+              "only copy" not in detachment_note(
+                  rows_of(
+                      '  attitude @600800.00,4420000.00 plane 140/35 '
+                      'station=S26 src=points raw="dip_dir=140 dip=35"\n',
+                      gamma_path,
+                  )[0],
+                  "belongs to the thrust", "01.10.2026",
+              ))
+
         # -- the same block, as a table ------------------------------------
 
         print("\n-- the same block, as a table --\n")
@@ -2147,6 +2229,72 @@ def main():
 
         window._forward = window._back = None
 
+        # -- a reading taken off a trace -----------------------------------
+
+        print("\n-- a reading taken off a trace --\n")
+
+        # F001's own compass reading, the shape of S26 on `Mt. Alpi faults.2`:
+        # one measurement whose plane the trace cannot have. Taking it out is a
+        # splice like the fit's, and what it leaves behind is the difference.
+        window.select(0)
+        QtWidgets.QApplication.processEvents()
+
+        alpha_before = window.document.text_of(0)
+        reading = next(
+            row for row in readings_in(alpha_before, document.dataset.structures[0].path)
+        )
+        detaching = detachment_note(reading, "belongs to the thrust", "01.10.2026")
+
+        refused = window.panel.comment_out(reading.at, reading.line, detaching)
+        QtWidgets.QApplication.processEvents()
+
+        alpha_after = window.document.text_of(0)
+
+        check("the reading's line is not in the block any more",
+              refused is None
+              and reading.line.strip() not in [
+                  one.strip() for one in alpha_after.splitlines()
+              ],
+              str(refused))
+
+        # The point of the whole choice: `attitude_at` already answers *assente*
+        # where nobody measured, so a line deleted silently would read tomorrow
+        # as ground nobody walked.
+        check("and what stands there says what went, and why",
+              all(
+                  one in alpha_after for one in detaching.splitlines()
+              ), detaching.splitlines()[0].strip())
+
+        # Applied in the press, which is what the fit's delete established and
+        # the same argument: the map and the tables read the model beside the
+        # text, so a splice that left the model alone would leave the reading
+        # drawn on a trace the file no longer carries it on.
+        alpha_model = window.document.dataset.structures[0]
+
+        check("applied in the press, so the model agrees with the text",
+              readings_in(alpha_after, alpha_model.path) == []
+              and alpha_model.attitudes == [],
+              f"{len(alpha_model.attitudes)} attitude(s) left in the model")
+
+        check("and the block still parses, a comment claiming nothing",
+              len(gstruct.loads("\n".join(window.document.lines)).structures) == 4)
+
+        # Undo, because a detachment is a judgement and judgements are revised.
+        check("and the detachment is on the undo stack", window.panel.may_undo())
+
+        window.panel.undo_applied()
+        QtWidgets.QApplication.processEvents()
+
+        check("Undo puts the reading back and takes the comment away",
+              reading.line.strip() in [
+                  one.strip() for one in window.document.text_of(0).splitlines()
+              ]
+              and detaching.splitlines()[0] not in window.document.text_of(0))
+
+        # Then done again, so that the Save below has it to carry.
+        window.panel.comment_out(reading.at, reading.line, detaching)
+        QtWidgets.QApplication.processEvents()
+
         # -- saving -------------------------------------------------------
 
         print("\n-- saving --\n")
@@ -2155,12 +2303,21 @@ def main():
         window.save()
         saved = path.read_text(encoding="utf-8")
 
-        check("saving writes the line that was added and nothing else",
+        check("saving writes the lines that changed and nothing else",
               changed_lines(before, saved) == [
+                  '-  attitude @600800.00,4420000.00 plane 90/30 station=S1 src=field',
+                  '+  # 01.10.2026: detached S1 90/30 -- belongs to the thrust',
+                  '+  #   was: attitude @600800.00,4420000.00 plane 90/30 '
+                  'station=S1 src=field',
+                  '+  #   typed here, with no `raw=`: this comment is the only '
+                  'copy left of it',
                   '+  span use @603000.00,4420200.00 @603000.00,4420600.00 '
                   'rejected reason="check"'
               ],
               str(changed_lines(before, saved))[:70])
+
+        check("and the detachment is on the disk, not only in the box",
+              detaching.splitlines()[1] in saved)
 
         check("and the file still reads as what it was",
               len(gstruct.loads(saved).structures) == 4)

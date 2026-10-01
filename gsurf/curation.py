@@ -1151,6 +1151,118 @@ def fits_in(text, path):
     return [row for row in rows_of(text, path) if row.word == "fit"]
 
 
+# The complement of `fit` among the lines that state an orientation, named for
+# what they have in common rather than for the keyword: somebody measured these.
+# `lineation` is in here although no file in this project holds one, and that is
+# deliberate -- a window that listed only `attitude` would show "1 reading" over
+# a block holding two, and a curator cannot be asked to know that the tool reads
+# one keyword and not the other. What cannot be read of a lineation comes out
+# empty, which is the honest answer and not a hidden row.
+READING_WORDS = ("attitude", "lineation")
+
+
+def readings_in(text, path):
+    """
+    The lines of a block that state something somebody measured, in order.
+
+    `fits_in`'s sibling, and the division between them is the one that function
+    argues for: a fit is what a computation returned and a reading is what a
+    compass was pointed at, and one table over both would offer a single gesture
+    across two kinds of claim with different grounds behind them. So there are
+    two functions, and above them there will be two windows.
+
+    Order is the block's, unsorted, for `rows_of`'s reason -- though unlike fits
+    the order of readings does not decide who answers where: `attitude_at` takes
+    the *nearest* reading, not the first. Kept unsorted anyway, because the index
+    into this list is the index a splice needs, and a table sorted on a header
+    click is how that correspondence gets quietly broken.
+    """
+
+    return [row for row in rows_of(text, path) if row.word in READING_WORDS]
+
+
+def reading_said(row):
+    """
+    One reading in a few words, for a sentence rather than for a table.
+
+    The plane and who measured it, which is what distinguishes one row of a
+    readings table from the next -- and `station=` first among the attributes
+    because in these files that is the name a geologist knows the measurement
+    by. Falls back to the keyword where there is no station, so that a line
+    typed by hand and not yet named still says what it is.
+    """
+
+    attrs = row.attrs or {}
+    named = attrs.get("station") or row.word
+    plane = row.plane
+
+    return (
+        f"{named} {plane[0]:.0f}/{plane[1]:.0f}"
+        if plane is not None
+        else f"{named} (no plane this tool can read)"
+    )
+
+
+def from_a_file(row):
+    """
+    Whether a reading carries the source string an import would write again.
+
+    The whole of the difference between taking a reading off a trace and losing
+    it. `raw=` is the format's first rule -- the source string is always kept
+    beside the normalised value -- so a line that has one came out of a file that
+    still holds it, and detaching it undoes an importer's guess at which
+    structure the point belongs to. A line without one was typed here, is the
+    only copy there is, and nothing but this file remembers it.
+    """
+
+    return any(
+        key == "raw" or key.startswith("raw.") for key in (row.attrs or {})
+    )
+
+
+def detachment_note(row, why, today, indent="  "):
+    """
+    The comment lines that stand where a detached reading stood.
+
+    Chosen over a new keyword in the format, and the trade is stated rather than
+    hidden: a `#` costs nothing in `FORMAT.md`, in the parser or in the
+    precedence, survives a Save because `Document` replaces lines and never
+    rewrites a file, and is read by the only reader that needs it -- the next
+    person to open the block. What it buys is exactly what deleting the line
+    silently would throw away: `attitude_at` already answers *assente* where
+    nobody measured, and without this a reading somebody decided against reads
+    the same as ground nobody ever walked.
+
+    What `attitude_at` will not do is see it. That is the cost of the choice and
+    not an oversight: a detachment this file should compute with is a 0.3
+    conversation about vocabulary, and this is the line that makes the decision
+    legible in the meantime.
+
+    The whole original line goes in, not a summary of it. A note saying `S26
+    140/35` would be a reading of the row by this tool, and the row is what is
+    being removed -- `off=`, `raw.comments.station=` and the rest are the only
+    record that survives of what the importer put there and why it was wrong.
+    """
+
+    said = reading_said(row)
+    stripped = row.line.strip()
+    lines = [
+        f"{indent}# {today}: detached {said} -- {why}".rstrip(" -"),
+        f"{indent}#   was: {stripped}",
+    ]
+
+    if not from_a_file(row):
+        # Said on the line itself and not only in the window that asked, because
+        # the window closes. A reading with no `raw=` was typed here, and these
+        # two comment lines are then the only place its numbers still exist.
+        lines.append(
+            f"{indent}#   typed here, with no `raw=`: this comment is the only "
+            f"copy left of it"
+        )
+
+    return "\n".join(lines)
+
+
 def covered_metres(ends, earlier):
     """
     How many metres of a stretch are already claimed by the fits before it.
