@@ -2831,10 +2831,48 @@ class PlaneSteering(QtWidgets.QWidget):
         self.dip_dir.setWrapping(True)
         self.dip_dir.setSuffix("°  dip dir")
 
+        # Beside 132 px of dial, a slider at its natural height is a 20 px bar
+        # between two spin boxes, which is the shape of a progress bar: it reads
+        # as something being reported rather than something to take hold of. The
+        # dial says what it is by being round and says its scale with notches
+        # all the way round; this said neither. So it is given the height its
+        # ticks need in order to draw at all -- at the natural 20 px there is no
+        # room under the groove for them and they come out not drawn, which is
+        # why setting `TicksBelow` here had been doing nothing -- and a page step
+        # of a tick, so that clicking the groove lands on one.
         self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.slider.setRange(0, 90)
         self.slider.setTickInterval(15)
         self.slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
+        self.slider.setMinimumHeight(26)
+        self.slider.setPageStep(15)
+
+        # And the ends of the range written under it, which is the other half of
+        # what the notches do: a dial with no numbers on it is still obviously a
+        # bearing, and a bar with no numbers could be running to 90 or to 360.
+        #
+        # The middle label sits at the middle of the groove and is exact; the
+        # outer two are off by half a handle, the groove being inset by that
+        # much at each end. That is the price of not reimplementing
+        # `QStyle.sliderPositionFromValue` to place three labels, and it is
+        # affordable because of what they are for: which end is which, and where
+        # the range stops. Neither is a reading taken off the bar -- the number
+        # is in the box below, to a tenth.
+        self.scale = QtWidgets.QWidget()
+
+        marks = QtWidgets.QHBoxLayout(self.scale)
+        marks.setContentsMargins(2, 0, 2, 0)
+        marks.setSpacing(0)
+
+        for degrees, side in (
+            (0, QtCore.Qt.AlignmentFlag.AlignLeft),
+            (45, QtCore.Qt.AlignmentFlag.AlignHCenter),
+            (90, QtCore.Qt.AlignmentFlag.AlignRight),
+        ):
+            mark = QtWidgets.QLabel(f"{degrees}°")
+            mark.setStyleSheet("color: #6a6a6a; font-size: 10px;")
+            mark.setAlignment(side | QtCore.Qt.AlignmentFlag.AlignTop)
+            marks.addWidget(mark, 1)
 
         self.dip = QtWidgets.QDoubleSpinBox()
         self.dip.setRange(0.0, 90.0)
@@ -2883,7 +2921,15 @@ class PlaneSteering(QtWidgets.QWidget):
         layout.addWidget(self.on)
         layout.addWidget(self.dial)
         layout.addWidget(self.dip_dir)
+
+        # A gap between the two, because the stack is four controls making two
+        # pairs -- each a thing to take hold of with its number under it -- and
+        # at an even spacing the slider sits as near the box above it as the one
+        # it belongs to. Six pixels is what it takes to read as a pair.
+        layout.addSpacing(6)
+
         layout.addWidget(self.slider)
+        layout.addWidget(self.scale)
         layout.addWidget(self.dip)
         layout.addWidget(self.take)
         layout.addWidget(self.release)

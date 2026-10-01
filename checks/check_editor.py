@@ -2605,6 +2605,26 @@ def main():
               and "25833" in crossed_steering,
               (crossed_steering or "nothing said")[:58])
 
+        # The dial carries its scale on its own face; the slider carries it in
+        # three labels under the groove, and labels can go on saying 0 and 90
+        # long after somebody has moved the range. Asserted against the slider
+        # rather than against the numbers, because what would be wrong then is
+        # not the typo but the disagreement.
+        marked = [
+            steering.scale.layout().itemAt(at).widget().text()
+            for at in range(steering.scale.layout().count())
+        ]
+        ends = (f"{steering.slider.minimum()}°", f"{steering.slider.maximum()}°")
+
+        check("the dip slider says where its range starts and stops",
+              (marked[0], marked[-1]) == ends and len(marked) == 3,
+              f"{marked} against {list(ends)}")
+
+        check("and a click on the groove lands on a tick",
+              steering.slider.pageStep() == steering.slider.tickInterval(),
+              f"{steering.slider.pageStep()} against ticks every "
+              f"{steering.slider.tickInterval()}")
+
         fitting.select(rows["VEE"])
 
         # Put something on the dial first, so that the template arriving under
