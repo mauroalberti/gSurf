@@ -1328,6 +1328,40 @@ like pointing at one in the reading does, and one band with two tables having an
 opinion about it is why picking in either clears the other. The row that has no
 band — the backwards pair — says in words what there is nothing to look at.
 
+**And a row can be taken out again.** `Delete this fit` removes the selected line
+from the structure and puts the block through the parser in the same press, which
+is `Keep`'s rule for `Keep`'s reason: Apply stands for having looked, and a row
+saying which stretch it claims, which producer made it and that nothing ever
+reads it has been that. Removing a `fit` is allowed where `Document.replace`
+refuses to empty a block, and the difference is what would be lost — a structure
+that does not hold is *said* not to hold, `span use * * rejected reason=…`, so
+that tomorrow a rejected fault can be told from one nobody ever mapped. A `fit`
+carries no such distinction: it is a plane a producer computed, with the producer
+and its window written on it, and removed, the file says what it said before it
+was computed. The line itself goes in the status bar either way.
+
+The row carries the index of the line it was read from and that index is a
+**hint**: the box can have been typed in since, and an index into a block that has
+moved is an index at somebody else's line. So it is checked against the text
+first, with a search by content behind it — and where the content is ambiguous,
+which this file manages by holding the same `fit` twice, the row that no longer
+matches is refused rather than guessed at. The reading goes with the delete, the
+file having moved under those candidates: which of them an earlier line still
+covers is a different answer now. Said rather than left to be noticed, a list that
+empties itself quietly being indistinguishable from one that crashed.
+
+**And `Undo`, because the box's own `Ctrl+Z` cannot reach any of this.** Applying
+re-reads the block and puts it back with `setPlainText`, which clears a
+`QTextDocument`'s history — so every change made *for* somebody, by a Keep or a
+Delete, lands in a box whose undo stack has just been emptied. What goes back is a
+**snapshot of the block** and not the gesture reversed: `put that line back at
+index 3` has to be right about a file that has moved under it, where the text that
+was there cannot be wrong about anything and has been through this parser once
+already. A stack and not a slot, so two presses can be walked back; restored
+through `Document.replace`, because the model beside the text is what the map and
+the tables read; and it selects what it restored, an undo you cannot see being
+indistinguishable from one that did nothing.
+
 One thing the second surface made visible. The panel's stretch band is fed by a
 guard that remembers what the panel last *emitted*, so a caret crossing a line
 does not cost a blit per character — sound while the panel is the only thing
@@ -1385,8 +1419,8 @@ controls sat on the map's own frame, on the argument that what is being steered 
 a picture — curves swinging about a pin — and a dial on the other monitor is
 steering by feel. That argument was not wrong and it was outweighed twice. A dial
 bolted to the frame is 190 px of map gone whether or not anybody is steering; and
-what it produces is a `fit` line, which the fit window above now lists, marks and
-will delete — so a `from=plane-dem` line was reached through a window named after
+what it produces is a `fit` line, which the fit window above lists, marks and
+deletes — so a `from=plane-dem` line was reached through a window named after
 another producer. It moves in, between the file's own fits and the sweep, and the
 window reads downwards as what is claimed here, then the two ways to add to it.
 The cost is left standing: that window can be dragged to the other screen, and
@@ -1449,6 +1483,38 @@ that click produced while the line underneath it was being corrupted. Now the
 plane re-aims at the next `*` on its own line, so either order works and both
 give 816 to 6901 m on L0071; and a click with nowhere to go is refused with the
 way out in it, rather than guessing which of two written ends was meant.
+
+**And the window says what to do next.** Four windows, two tables, a dial and a
+box, and a sequence written down nowhere: the person this was built for wrote *non
+sono ancora riuscito ad aggiungere un fit da plane-dem* having already saved one —
+onto a line whose two ends were written the wrong way round, which is legal, keeps
+in one press, saves, and holds over no ground. So the steering carries a line of
+its own, under the buttons and above the per-frame report, saying the one gesture
+that would take this nearer the file: switch the steering on, ctrl-click to pin,
+put the caret on a line with a plane slot, turn the dial and press `Keep this
+plane`, shift-click the two ends, press again, `Ctrl+S`.
+
+Worked out from the state every time it is asked, and not a counter stepped on by
+each press — which would be wrong within two gestures of anybody working in the
+order this tool allows, the pin coming before the stretch and a fit already in the
+file being something to click into and re-steer. There is no sequence to be at
+step three of; there is a line, a pin and a dial. It is asked in the order the
+work goes in, so the answer is always the earliest thing still missing:
+`shift-click the two ends` is useless advice to somebody whose caret is on a
+`path` line, and both are useless to somebody who has not switched the steering
+on. A line of its own and not a sentence appended to the report, which moves
+ninety times a turn of the dial — and which is empty exactly where the first step
+is.
+
+Two of its branches were written twice. *The file has it* was being decided by
+`Document.dirty`, which is a fact about unsaved changes and not about this line
+having been through the parser, so a line finished in the box and kept by nothing
+was told the file had it — two clicks from the end of the sequence this exists
+for. And a pair the wrong way round is asked about **before** the pin, because a
+reversed pair has no middle: `pinned_at` answers None for it, so the advice about
+pinning would have arrived first, true and useless and about the wrong line. On
+`Mt. Alpi faults.2` the line now reads *turn this line's ends round — written as
+they are it runs from 2689 m back to 791 m and holds over no ground*.
 
 **Where it goes wrong is where the geology says it should.** The cut passes
 through the pin within half a cell of the DEM — 1.5 m over four attitudes on the

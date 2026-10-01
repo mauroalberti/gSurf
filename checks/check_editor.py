@@ -1461,8 +1461,8 @@ def main():
               str([round(x) for x, _ in claimed_now()]))
 
         check("the line itself is turned round, not the picture over it",
-              interval_of(window.panel._line_now(), alpha.path) == (300.0, 700.0),
-              window.panel._line_now())
+              interval_of(window.panel.line_now(), alpha.path) == (300.0, 700.0),
+              window.panel.line_now())
 
         # Said, because it is a change to what the hand did. The claim is said
         # in the same breath: without the turn this bar read "covers no part".
@@ -1477,9 +1477,9 @@ def main():
         window.panel.text.undo()
 
         check("and a click that turned the pair undoes in one step",
-              window.panel._line_now()
+              window.panel.line_now()
               == "  fit plane @600700.00,4420000.00 * 000/00 from=",
-              window.panel._line_now())
+              window.panel.line_now())
 
         window.panel._redraw()
 
@@ -1611,8 +1611,8 @@ def main():
 
         check("picking a row puts the caret on the line it stands for",
               window.panel.text.textCursor().blockNumber() == claims[2].at
-              and "station=S1" in window.panel._line_now(),
-              window.panel._line_now().strip()[:40])
+              and "station=S1" in window.panel.line_now(),
+              window.panel.line_now().strip()[:40])
 
         caret_onto("fit plane * * 100/40")
         QtWidgets.QApplication.processEvents()
@@ -2627,6 +2627,15 @@ def main():
         check("a DEM these traces can be read against arms it",
               steering.refusal is None and not steering.armed())
 
+        # And with it unarmed the next step is the switch, which is the first
+        # thing a hand gets stuck on and the one state where there is no frame and
+        # so nothing else saying anything at all: the per-frame report is empty
+        # here, and this line is not.
+        check("and with the steering off, the step is the switch",
+              "plane on the DEM" in steering.step.text()
+              and not steering.label.text(),
+              f"{steering.step.text()!r} beside {steering.label.text()!r}")
+
         check("and a DEM in another projection refuses it in the same words",
               crossed_steering is not None
               and "25832" in crossed_steering
@@ -2851,6 +2860,16 @@ def main():
         # a claim over all of VEE in one press with the band on the map looking
         # exactly as it does -- which is the one thing this button must not be
         # able to do by itself.
+        # And the line that says what to do next says the missing half of it. It
+        # is worked out from the state rather than stepped on by each press,
+        # which is the only arrangement that survives this tool being used in the
+        # order it allows: the pin can be put before the stretch is chosen, and a
+        # fit already in the file can be clicked into and re-steered.
+        check("and the next step is the click the line is waiting for",
+              "shift-click" in steering.step.text()
+              and steering.step.text().startswith("next:"),
+              steering.step.text())
+
         check("but a line whose ends are still `*` is written and not kept",
               len(fitting.document.dataset.structures[rows["VEE"]].fits)
               == before_keeping,
@@ -2893,6 +2912,15 @@ def main():
               and not any(one.startswith("@") for one in tokens[5:]),
               clicked.strip()[:92])
 
+        # The state that had this line saying `the file has it` about a line the
+        # file had never seen: finished in the box, kept by nothing. `dirty` was
+        # being asked, which is a fact about the file having unsaved changes, and
+        # the question is whether *this line* has been through the parser.
+        check("and with both ends clicked it names the press that is left",
+              "Keep this plane" in steering.step.text()
+              and "puts it in" in steering.step.text(),
+              steering.step.text())
+
         # Pressed again, on a line that is now finished, and this time it keeps:
         # the looking has been done -- steered by hand, with the band saying where
         # the agreement ran out -- and a second window asking the same question
@@ -2906,6 +2934,9 @@ def main():
         check("and pressing it on a finished line keeps it, with no Apply",
               len(kept_now) == before_keeping + 1,
               f"{len(kept_now)} fit(s), was {before_keeping}")
+
+        check("and once it is in, the step left is the one that writes the file",
+              "Ctrl+S" in steering.step.text(), steering.step.text())
 
         # Over the ground that was clicked, which is the assertion the whole fix
         # rests on: the quarter points and not 0 to the whole length. Found by the
@@ -3965,6 +3996,163 @@ def main():
               and inert_now == inert_before + 1,
               f"{before_kept} row(s) before Keep, {fit_ui.carried.rowCount()} "
               f"after -- {fit_ui.carries.text()}")
+
+        # -- and taking one out again ---------------------------------------
+        #
+        # The press this window has been read for since the file's own fits went
+        # into it: a row that says it answers nowhere, and a way to be rid of it
+        # that is not hunting for its coordinates in the box. The first case in
+        # the AOI is `Mt. Alpi faults.2`, whose `from=plane-dem` line runs from
+        # 2689 m back to 791 m and so holds over no metre of anything.
+        inert_row = next(
+            row for row in range(fit_ui.carried.rowCount())
+            if fit_ui._inert(row) is not None
+        )
+        doomed = fit_ui._in_file[inert_row].line.strip()
+        carried_before = fit_ui.carried.rowCount()
+        block_before = fitting.document.text_of(rows["TAKEN"])
+
+        def how_many(line, text=None):
+            """How many lines of the block read exactly like this one."""
+
+            source = block_before if text is None else text
+
+            return sum(1 for one in source.splitlines() if one.strip() == line)
+
+        # Which here is two, and that is the case the index is carried for rather
+        # than a search by text: this block holds the same `fit` line twice, as
+        # `montealpi_01.gstruct` holds one of its three times, and the row says
+        # which of them it is where the text cannot.
+        copies = how_many(doomed)
+
+        # With a reading on screen, because the delete takes it with it: the file
+        # has moved under those candidates, and which of them an earlier line
+        # still covers is a different answer now.
+        fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        had_read = fit_ui._read is not None
+
+        fit_ui.carried.selectRow(inert_row)
+        QtWidgets.QApplication.processEvents()
+
+        check("a row has to be picked before there is a fit to delete",
+              fit_ui.delete_button.isEnabled()
+              and doomed in fit_ui.delete_button.toolTip(),
+              fit_ui.delete_button.toolTip().split("\n")[-1][:60])
+
+        fit_ui.delete_carried()
+        QtWidgets.QApplication.processEvents()
+
+        in_file_now = fitting.document.text_of(rows["TAKEN"])
+
+        # Removed from the document and not only from the table, which is the
+        # whole of it: the model beside the text is what the map and the tables
+        # read, so a delete that spliced lines and left the model alone would
+        # leave the fit drawn on a trace the file no longer claims it on.
+        check("and deleting it takes that one line out of the file's own block",
+              fit_ui.carried.rowCount() == carried_before - 1
+              and copies == 2
+              and how_many(doomed, in_file_now) == copies - 1
+              and how_many(doomed, fitting.panel.text.toPlainText()) == copies - 1,
+              f"{copies} line(s) written alike before, "
+              f"{how_many(doomed, in_file_now)} after")
+
+        # In the press, which is `keep`'s rule: Apply stands for having looked,
+        # and a row saying which stretch it claims, which producer made it and
+        # that nothing ever reads it has been that.
+        check("in one press, with no Apply, and it says what it removed",
+              "removed:" in fitting.statusBar().currentMessage()
+              and doomed[:40] in fitting.statusBar().currentMessage(),
+              fitting.statusBar().currentMessage()[:70])
+
+        # And the list goes, said rather than left to be noticed: a table that
+        # emptied itself quietly cannot be told from one that crashed.
+        check("and the reading goes with it, the file having changed under it",
+              had_read and fit_ui._read is None
+              and fit_ui.table.rowCount() == 0
+              and "the reading went with it"
+              in fitting.statusBar().currentMessage(),
+              f"{fit_ui.table.rowCount()} row(s) left")
+
+        # And what the next-step line says about a row like the one just deleted,
+        # which is the state the AOI was left in: a plane steered by hand onto a
+        # line whose two ends were already written the wrong way round, kept in
+        # one press because both ends *are* written, saved, and holding over no
+        # ground. Said from the caret, so it is there before the press rather
+        # than in a table afterwards.
+        turned_around = next(
+            fit_ui._in_file[row].line.strip()
+            for row in range(fit_ui.carried.rowCount())
+            if fit_ui._in_file[row].ends is not None
+            and fit_ui._in_file[row].ends[0] > fit_ui._in_file[row].ends[1]
+        )
+
+        caret_in_box(turned_around[:40])
+        steering.on.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        check("a pair the wrong way round is the next thing to do, not a Save",
+              "ends round" in steering.step.text()
+              and "holds over no ground" in steering.step.text(),
+              steering.step.text())
+
+        steering.on.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        fit_ui.undo_last()
+        QtWidgets.QApplication.processEvents()
+
+        # The block that was there, put back. A snapshot and not the gesture
+        # reversed: `put that line back at index 3` has to be right about a file
+        # that has moved under it, and the text that was there cannot be wrong
+        # about anything -- it went through this parser once already.
+        check("Undo puts the block back, byte for byte, and says what came back",
+              fit_ui.carried.rowCount() == carried_before
+              and fitting.document.text_of(rows["TAKEN"]) == block_before
+              and "put back:" in fitting.statusBar().currentMessage(),
+              fitting.statusBar().currentMessage()[:70])
+
+        # And the one under it, which is what makes it a stack rather than a slot:
+        # the press before the delete was the Keep above, and undoing twice has to
+        # reach it. The box's own Ctrl+Z reaches neither -- applying re-reads the
+        # block and puts it back with `setPlainText`, which empties the box's
+        # history -- so this is the only undo these two presses have.
+        fit_ui.undo_last()
+        QtWidgets.QApplication.processEvents()
+
+        check("and a second Undo reaches the press before it, not the same one",
+              fit_ui.carried.rowCount() == carried_before - 1
+              and fitting.document.text_of(rows["TAKEN"]) != block_before
+              and how_many(doomed, fitting.document.text_of(rows["TAKEN"]))
+              == copies - 1,
+              f"{fit_ui.carried.rowCount()} row(s) now, was {carried_before}")
+
+        # A row whose line the box no longer holds is refused rather than aimed
+        # at by index: `claim.at` is where the line sat when the row was read, and
+        # the box can have been typed in since -- an index into a block that has
+        # moved is an index at somebody else's line.
+        fit_ui.carried.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        edited = fit_ui._in_file[0]
+        fitting.panel.text.setPlainText(
+            fitting.panel.text.toPlainText().replace(edited.line.strip(), "")
+        )
+        QtWidgets.QApplication.processEvents()
+
+        was_carried = fit_ui.carried.rowCount()
+        refused_delete = fit_ui.delete_carried()
+        QtWidgets.QApplication.processEvents()
+
+        check("and a row the box no longer holds is refused, not aimed at by index",
+              refused_delete is False
+              and fit_ui.carried.rowCount() == was_carried
+              and "Apply" in fitting.statusBar().currentMessage(),
+              fitting.statusBar().currentMessage()[:70])
+
+        fitting.panel._redraw()
+        QtWidgets.QApplication.processEvents()
 
         # A trace with no fit on it says that, rather than showing an empty table
         # and leaving the reader to work out whether it was asked. EAST, which is

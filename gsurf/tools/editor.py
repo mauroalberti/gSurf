@@ -201,6 +201,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from gsurf.curation import (
     DEFAULT_MAX_GAP,
     ENDS_AT,
+    PLANE_DECIMALS,
     PROVENANCE,
     SUFFIX,
     UNCONSTRAINED,
@@ -1594,6 +1595,24 @@ class EditorPanel(QtWidgets.QWidget):
         # them has to re-aim what the steering is hanging on.
         self._holding = (None, None)
 
+        # Blocks as they were before a button wrote in them, newest last, as
+        # `(which structure, the text)`.
+        #
+        # **The box's own Ctrl+Z cannot reach any of these**, and that is the
+        # whole reason this exists rather than a preference for having an undo:
+        # applying re-reads the block out of the document and puts it back with
+        # `setPlainText`, which clears a QTextDocument's history -- so every
+        # change made *for* somebody, by a Keep or a Delete, lands in a box whose
+        # undo stack has just been emptied. What the box can undo is typing.
+        # What this undoes is a press.
+        #
+        # Snapshots and not inverse operations: what goes back is the block that
+        # was there, which cannot be wrong about anything, where an undo built
+        # out of `put the line back at index 3` has to be right about a file that
+        # has moved since. They are a block of text each -- twenty-six lines at
+        # the most in these files -- so there is no reason to bound the list.
+        self._before = []
+
         # The topography, and whether it may be sampled for these traces at all.
         # The refusal is a fact about the pair and not about the click, so it is
         # settled once here and shown as the disabled button's reason -- a button
@@ -2165,6 +2184,155 @@ class EditorPanel(QtWidgets.QWidget):
         )
         self._park_cursor()
 
+    # -- taking one out, and putting a press back ---------------------------
+
+    def remember(self):
+        """The block as the document has it, kept for an undo. See `self._before`."""
+
+        if self.index is None:
+            return
+
+        self._before.append((self.index, self.document.text_of(self.index)))
+
+    def may_undo(self):
+        """Whether there is a press to put back."""
+
+        return bool(self._before)
+
+    def undo_applied(self):
+        """
+        The block before the last press, put back. What changed, or None.
+
+        **The whole block and not the gesture reversed**, which is the one
+        decision in here. An undo built as `put that line back at index 3` has to
+        be right about a file that has moved under it -- lines added above it,
+        the same line written twice, a block re-serialised -- and when it is
+        wrong it writes a claim nobody made. A snapshot cannot be wrong about
+        anything: it is the text that was there, and it went through this
+        parser once already.
+
+        It goes back through `Document.replace` all the same, because the model
+        beside the text is what the map and the tables read: restoring the lines
+        and not the structure would leave a fit drawn on the map that the file no
+        longer holds. And the structure it restores is selected, through
+        `applied` -- an undo you cannot see is indistinguishable from one that
+        did nothing.
+        """
+
+        if not self._before:
+            return None
+
+        index, text = self._before.pop()
+        now = self.document.text_of(index)
+
+        try:
+            self.document.replace(index, text)
+        except ValueError as err:
+            # Not reachable through anything in this program: what is going back
+            # came out of `text_of`, so the parser has already accepted it. Kept
+            # on the stack rather than dropped, because a snapshot that cannot be
+            # restored now is the one thing in here nobody can retype.
+            self._before.append((index, text))
+            self.problem.setText(f"the block will not go back: {err}")
+            self.problem.setVisible(True)
+
+            return None
+
+        if index == self.index:
+            self._redraw()
+
+        self.table.update_row(
+            index, self.document.dataset.structures[index], self.max_gap
+        )
+        self._apply_filter()
+        self.applied.emit(index)
+
+        return self._difference(now, text)
+
+    @staticmethod
+    def _difference(before, after):
+        """What a block gained and lost, as a sentence a status bar can hold."""
+
+        back = Counter(after.splitlines()) - Counter(before.splitlines())
+        away = Counter(before.splitlines()) - Counter(after.splitlines())
+
+        told = []
+
+        for lines, how in ((back, "put back"), (away, "taken out")):
+            if not lines:
+                continue
+
+            how_many = sum(lines.values())
+
+            told.append(
+                f"{how}: {next(iter(lines)).strip()}" if how_many == 1
+                else f"{how_many} line(s) {how}"
+            )
+
+        return "; ".join(told) if told else "the block was already that"
+
+    def drop_line(self, at, line):
+        """
+        One line out of the block, applied. Why it would not go, or None.
+
+        `at` is where the line sat when the row showing it was read, and the
+        text is what decides: the box can have been typed in since, and an index
+        into a block that has moved is an index at somebody else's line. So the
+        index is a hint, checked against the text before it is used, with a
+        search by content behind it -- and where the content is ambiguous,
+        because this file has two fits written byte for byte alike, the index
+        that no longer matches is not guessed at.
+
+        **Removing a `fit` is allowed where emptying a block is not**, and
+        `Document.replace` is where the other half of that is written. A
+        structure that does not hold is *said* not to hold, so that tomorrow a
+        rejected fault can be told from one nobody ever mapped; a `fit` carries
+        no such distinction to lose. It is a plane some producer computed, with
+        the producer and its window written on it, and a file with it removed
+        says what the file said before it was computed: nothing is claimed here.
+        What the line said is in the status bar and on the undo stack.
+        """
+
+        if self.index is None:
+            return "nothing is open to take a line out of"
+
+        was = self.text.toPlainText()
+        lines = was.splitlines()
+        wanted = line.strip()
+
+        if 0 <= at < len(lines) and lines[at].strip() == wanted:
+            which = at
+        else:
+            alike = [n for n, one in enumerate(lines) if one.strip() == wanted]
+
+            if len(alike) == 1:
+                which = alike[0]
+            elif not alike:
+                return (
+                    "that line is not in the box any more -- Apply what is "
+                    "there, or Revert, and the row will be read again"
+                )
+            else:
+                return (
+                    f"{len(alike)} lines in the box read exactly alike and the "
+                    f"row no longer says which of them it is: Apply or Revert "
+                    f"first"
+                )
+
+        self.remember()
+        del lines[which]
+        self.text.setPlainText("\n".join(lines))
+
+        if not self.apply_block():
+            # The parser's own words are on `problem`; this puts the text and the
+            # stack back, so a refused removal costs nothing at all.
+            self._before.pop()
+            self.text.setPlainText(was)
+
+            return "the block will not parse without that line: see the message"
+
+        return None
+
     # -- the topography, read along this trace ------------------------------
 
     def _gate(self):
@@ -2326,9 +2494,15 @@ class EditorPanel(QtWidgets.QWidget):
         if self.index is None or not lines:
             return False
 
+        self.remember()
         self.add_written(lines)
 
-        return self.apply_block()
+        if self.apply_block():
+            return True
+
+        self._before.pop()
+
+        return False
 
     def fit_off_dem(self):
         """
@@ -2563,15 +2737,22 @@ class EditorPanel(QtWidgets.QWidget):
 
     # -- and the plane that line carries ------------------------------------
 
-    def _line_now(self):
-        """The text of the line the caret is on."""
+    def line_now(self):
+        """
+        The text of the line the caret is on.
+
+        Public because the window asks it: what to tell somebody to do next
+        depends on how far the caret's line has got, and the caret is this
+        panel's. Read and not interpreted here, the reading being `curation`'s
+        job and the window importing the same functions.
+        """
 
         return self.text.textCursor().block().text()
 
     def _holding_changed(self):
         """Reports the caret's plane when it becomes a different one."""
 
-        reported = (self.index, plane_of(self._line_now()))
+        reported = (self.index, plane_of(self.line_now()))
 
         if reported == self._holding:
             return
@@ -2579,10 +2760,30 @@ class EditorPanel(QtWidgets.QWidget):
         self._holding = reported
         self.holding.emit(reported[1])
 
+    def in_document(self, line):
+        """
+        Whether the open block holds this line as it stands.
+
+        What `dirty` cannot answer: that is a fact about the file having unsaved
+        changes, and this is a fact about one line having been through the
+        parser. A line finished in the box and kept by nothing sits in a document
+        that is perfectly clean.
+        """
+
+        if self.index is None:
+            return False
+
+        wanted = line.strip()
+
+        return any(
+            one.strip() == wanted
+            for one in self.document.text_of(self.index).splitlines()
+        )
+
     def has_plane_slot(self):
         """Whether the caret's line has somewhere to write a plane."""
 
-        return with_plane(self._line_now(), 0.0, 0.0) is not None
+        return with_plane(self.line_now(), 0.0, 0.0) is not None
 
     def pinned_at(self):
         """
@@ -2608,7 +2809,7 @@ class EditorPanel(QtWidgets.QWidget):
         if self.index is None:
             return None
 
-        line = self._line_now()
+        line = self.line_now()
         path = self.document.dataset.structures[self.index].path
         interval = interval_of(line, path)
 
@@ -2640,7 +2841,7 @@ class EditorPanel(QtWidgets.QWidget):
         person who looked, and `from=plane-dem` is the honest name for that.
         """
 
-        written = with_plane(self._line_now(), dip_dir, dip)
+        written = with_plane(self.line_now(), dip_dir, dip)
 
         if written is None:
             return None
@@ -2700,7 +2901,14 @@ class EditorPanel(QtWidgets.QWidget):
         if not anchors_written(written):
             return written, False
 
-        return written, self.apply_block()
+        self.remember()
+
+        if self.apply_block():
+            return written, True
+
+        self._before.pop()
+
+        return written, False
 
     def _aim_at_anchor(self, start, same_line=False):
         """Selects the next `*`, so that a picked anchor replaces it."""
@@ -2797,7 +3005,7 @@ class EditorPanel(QtWidgets.QWidget):
         if cursor.hasSelection() and cursor.selectedText() == "*":
             return None
 
-        if not anchors_written(self._line_now()):
+        if not anchors_written(self.line_now()):
             return None
 
         return (
@@ -2833,7 +3041,7 @@ class EditorPanel(QtWidgets.QWidget):
             return False
 
         path = self.document.dataset.structures[self.index].path
-        written = with_ends_in_order(self._line_now(), path)
+        written = with_ends_in_order(self.line_now(), path)
 
         if written is None:
             return False
@@ -2989,6 +3197,28 @@ class PlaneSteering(QtWidgets.QWidget):
         self.label.setMinimumHeight(48)
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
+        # What to do next, worked out from the state and not from the last thing
+        # pressed. Its own label, above the per-frame report and below the
+        # buttons it is about.
+        #
+        # **A line of its own and not a sentence appended to that report**,
+        # because the two are different kinds of writing and would spoil each
+        # other: the report changes ninety times a turn of the dial, so an
+        # instruction inside it is an instruction moving about under the eye, and
+        # a report with guidance stuck to it is read as one thing and skipped as
+        # one thing. This also lets it be said with the steering switched *off*,
+        # where there is no frame and no report -- which is where the first step
+        # is, and the step a hand gets stuck on.
+        #
+        # Darker than the report, and that is the whole of the styling argument:
+        # grey at ten pixels is what this window says about itself, and the one
+        # line here that is addressed to somebody has to not look like it.
+        self.step = QtWidgets.QLabel()
+        self.step.setWordWrap(True)
+        self.step.setStyleSheet("color: #30506a; font-size: 11px;")
+        self.step.setMinimumHeight(30)
+        self.step.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+
         # `Keep this plane`, and the word is borrowed on purpose from the button
         # six inches below it: `Keep the ticked ones`. Two producers in one window
         # and one verb between them, because what the two gestures do is the same
@@ -3060,6 +3290,7 @@ class PlaneSteering(QtWidgets.QWidget):
         layout.addWidget(self.on)
         layout.addLayout(turning)
         layout.addLayout(pressing)
+        layout.addWidget(self.step)
         layout.addWidget(self.label)
 
         # The refusal is a fact about the session and not about the gesture --
@@ -3145,6 +3376,19 @@ class PlaneSteering(QtWidgets.QWidget):
 
     def note(self, said):
         self.label.setText(said or "")
+
+    def tell_next(self, said):
+        """
+        The one gesture that would take a steered plane nearer the file.
+
+        Written as the imperative it is -- `next: ...` and then a thing to do --
+        and set from the state every time the state could have moved, so that it
+        is never the trace of a press that has already happened. `QLabel` drops
+        a `setText` with the text it already has, which is what makes calling
+        this per frame free.
+        """
+
+        self.step.setText(f"next: {said}" if said else "")
 
     def set_pinned(self, pinned):
         """
@@ -3398,6 +3642,38 @@ class FitFromDem(QtWidgets.QWidget):
         )
         self.carried.itemSelectionChanged.connect(self._carried_picked)
 
+        # The two presses the file's own table affords, on a row under it rather
+        # than in a menu behind a right-click: nothing else in this window is
+        # hidden that way, and a delete nobody finds is a window that looks as
+        # though it cannot delete. Both start dead -- one wants a row, the other
+        # wants something to have happened.
+        self.delete_button = QtWidgets.QPushButton("Delete this fit")
+        self.delete_button.setEnabled(False)
+        self.delete_button.clicked.connect(self.delete_carried)
+
+        # Named for the gesture and not for the thing -- `Undo` and not `put the
+        # line back` -- because what it undoes is either of the two presses in
+        # this window that write: a Keep and a Delete. Beside the delete because
+        # that is the press it will be wanted after, right-aligned because it is
+        # about the window rather than about the table.
+        self.undo_button = QtWidgets.QPushButton("Undo")
+        self.undo_button.setEnabled(False)
+        self.undo_button.setToolTip(
+            "Put the block back as it was before the last press that wrote in "
+            "it -- a Keep or a Delete. The box's own Ctrl+Z cannot: applying "
+            "re-reads the block and the box's history goes with it. Nothing "
+            "reaches the file until Save."
+        )
+        self.undo_button.clicked.connect(self.undo_last)
+
+        self.removing = QtWidgets.QWidget()
+
+        taking_out = QtWidgets.QHBoxLayout(self.removing)
+        taking_out.setContentsMargins(0, 0, 0, 0)
+        taking_out.addWidget(self.delete_button)
+        taking_out.addStretch(1)
+        taking_out.addWidget(self.undo_button)
+
         self.read_button = QtWidgets.QPushButton("Read the topography")
 
         # Kept, because the button's tooltip is either this or the refusal, and
@@ -3510,6 +3786,7 @@ class FitFromDem(QtWidgets.QWidget):
         # consulted, not sorted.
         layout.addWidget(self.carries)
         layout.addWidget(self.carried, stretch=1)
+        layout.addWidget(self.removing)
         layout.addLayout(pressing)
         layout.addWidget(self.outcome)
         layout.addWidget(self.elsewhere)
@@ -3535,7 +3812,7 @@ class FitFromDem(QtWidgets.QWidget):
         by hand, and a window swept along the trace.
         """
 
-        at = self.layout().indexOf(self.carried) + 1
+        at = self.layout().indexOf(self.removing) + 1
 
         for offset, widget in enumerate((self._rule(), steering, self._rule())):
             self.layout().insertWidget(at + offset, widget)
@@ -3647,6 +3924,7 @@ class FitFromDem(QtWidgets.QWidget):
 
         if structure is None:
             self.carries.setText("")
+            self._offer_removal()
             return
 
         self._in_file = fits_in(
@@ -3660,6 +3938,7 @@ class FitFromDem(QtWidgets.QWidget):
 
         self.carried.resizeColumnsToContents()
         self.carries.setText(self._carries_said())
+        self._offer_removal()
 
     def _carries_said(self):
         """What the file claims here, including the rule that orders the claims."""
@@ -3789,19 +4068,58 @@ class FitFromDem(QtWidgets.QWidget):
             or claim.line.strip()
         )
 
+    def _carried_row(self):
+        """Which fit the file's table is pointing at, or None."""
+
+        rows = {index.row() for index in self.carried.selectedIndexes()}
+
+        if len(rows) != 1:
+            return None
+
+        at = rows.pop()
+
+        return at if at < len(self._in_file) else None
+
+    def _offer_removal(self):
+        """
+        Whether there is a fit to take out, and a press to put back.
+
+        Both are facts about now and neither is about the last gesture, so they
+        are settled here and called from everywhere either could have moved --
+        the table being refilled under a selection is one of those, which is why
+        this is not hung on `itemSelectionChanged` alone.
+        """
+
+        at = self._carried_row()
+
+        self.delete_button.setEnabled(at is not None)
+        self.delete_button.setToolTip(
+            "Take the fit on the selected row out of this structure, through "
+            "the parser, in one press. A fit is a plane some producer computed, "
+            "with the producer written on it: removed, the file says what it "
+            "said before it was computed. Undo puts it back, and nothing "
+            "reaches the file until Save."
+            if at is None else
+            f"Take this line out of the structure:\n\n"
+            f"{self._in_file[at].line.strip()}\n\n"
+            f"Undo puts it back. Nothing reaches the file until Save."
+        )
+
+        self.undo_button.setEnabled(self.panel.may_undo())
+
     def _carried_picked(self):
         """The stretch of the selected file row, for the map to light."""
 
         if self._picking:
             return
 
-        rows = {index.row() for index in self.carried.selectedIndexes()}
+        self._offer_removal()
 
-        if len(rows) != 1 or not self._in_file:
+        at = self._carried_row()
+
+        if at is None or not self._in_file:
             self.showing.emit(None)
             return
-
-        at = rows.pop()
 
         self._only_here(self.table)
         self.showing.emit(
@@ -3818,6 +4136,64 @@ class FitFromDem(QtWidgets.QWidget):
 
         if inert is not None:
             self.said.emit(inert)
+
+    def delete_carried(self):
+        """
+        The fit on the selected row out of the file, through the parser at once.
+
+        The press the window has been read for since the file's own fits went
+        into it. `montealpi_01.gstruct` carries three fits over the same fifty
+        metres of `L0071`, two of them byte-identical, and one more whose ends
+        are written backwards so that it holds over no ground at all -- all four
+        legal, all four parsing, and until now the only way to be rid of one was
+        to find it among the coordinates in the box.
+
+        **Applied in the press**, which is `keep`'s rule and the same argument:
+        Apply stands for having looked, and a row that says which stretch it
+        claims, which producer made it and that nothing ever reads it has been
+        that. It takes the reading with it where there is one -- the file has
+        moved under those candidates, and which of them an earlier line still
+        covers is now a different answer -- and says so, a list that vanished
+        quietly being indistinguishable from one that crashed.
+        """
+
+        at = self._carried_row()
+
+        if at is None:
+            return False
+
+        claim = self._in_file[at]
+        reading = self._read is not None
+        refused = self.panel.drop_line(claim.at, claim.line)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        said = (
+            f"removed: {claim.line.strip()} -- Undo puts it back, Save writes "
+            f"the file"
+        )
+
+        if reading:
+            said += "; the reading went with it, the file having changed under it"
+
+        self.said.emit(said)
+
+        return True
+
+    def undo_last(self):
+        """The block before the last press that wrote in it, put back."""
+
+        said = self.panel.undo_applied()
+
+        if said is None:
+            return False
+
+        self.said.emit(f"{said} -- Save writes the file")
+
+        return True
 
     def _only_here(self, other):
         """Clears the other table's selection without it taking the band back."""
@@ -5140,6 +5516,10 @@ class EditorWindow(QtWidgets.QMainWindow):
         # a list lost to a click that changed nothing.
         self.fit_panel.retarget()
 
+        # Said last, because every line of it is about this trace: which one is
+        # open is the first thing the next step depends on.
+        self._tell_next()
+
     def _show_fitting(self, interval):
         """
         The stretch the fit window is pointing at, or back to what the block says.
@@ -5246,10 +5626,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         if self.steering.armed():
             self._steer(*self.steering.plane())
 
+        self._tell_next()
+
     def _steering_armed(self, on):
         """The box turning the steering on and off."""
 
         self.steering.set_writable(self.panel.has_plane_slot())
+        self._tell_next()
 
         if on:
             self._steer(*self.steering.plane())
@@ -5257,6 +5640,120 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self._clear_steering()
         self.map_view.blit()
+
+    def _tell_next(self):
+        """The next gesture, into the steering's own line. Cheap enough per frame."""
+
+        self.steering.tell_next(self._next_step())
+
+    def _next_step(self):
+        """
+        The one gesture that would take a steered plane nearer the file, or None.
+
+        **Worked out from the state, every time it is asked.** The alternative is
+        a counter stepped on by each press, and it would be wrong within two
+        gestures of anybody doing something out of order -- which is the whole
+        point of a tool where the plane can be pinned before the stretch is
+        decided, and where a `fit` already in the file can be clicked into and
+        re-steered. There is no sequence to be at step 3 of; there is a line, a
+        pin and a dial, and a next thing to do follows from the three of them.
+
+        Asked in the order the work goes in, so the answer is always the earliest
+        thing still missing. That ordering is the content: `shift-click the two
+        ends` is useless advice to somebody whose caret is on a `path` line, and
+        both are useless to somebody who has not switched the steering on.
+
+        None where there is nothing to say -- a session with no DEM, where the
+        controls are grey and carry the reason as a tooltip. A next step under
+        dead controls would be an instruction nobody can follow.
+        """
+
+        if self.steering.refusal:
+            return None
+
+        if self.index is None:
+            return "pick a trace, on the map or in the list"
+
+        if not self.steering.armed():
+            return "switch `plane on the DEM` on, above"
+
+        # Both ends written is not the same thing as a stretch, and this is the
+        # state the AOI was left in: `Mt. Alpi faults.2` carries a plane steered
+        # by hand over `@583458.91,4439774.76 @582408.83,4441315.77`, which is
+        # 2689 m back to 791 m, and `covers` being `s0 <= s <= s1` it holds over
+        # no metre of anything. It was kept in one press -- legally, both ends
+        # being written -- and saved, and the only thing on screen that ever said
+        # so was a grey row in a table.
+        #
+        # **In front of the pin and not after it**, which is not an ordering
+        # preference: a pair the wrong way round has no middle, so `pinned_at`
+        # answers None for it and the advice about pinning would arrive first --
+        # true, useless, and about the wrong line.
+        claimed = interval_of(
+            self.panel.line_now(), self.document.dataset.structures[self.index].path
+        )
+
+        if claimed is not None and claimed[0] > claimed[1]:
+            return (
+                f"turn this line's ends round -- written as they are it runs "
+                f"from {claimed[0]:.0f} m back to {claimed[1]:.0f} m and holds "
+                f"over no ground: select one end and shift-click the map"
+            )
+
+        if self._pin is None:
+            return (
+                "ctrl-click the trace to pin the plane on it, or put the caret "
+                "on a line that claims a stretch"
+            )
+
+        if not self.panel.has_plane_slot():
+            return (
+                "put the caret on a `fit` or `attitude` line in the box, or "
+                "press `+ fit` to start one"
+            )
+
+        line = self.panel.line_now()
+        carried = plane_of(line)
+        dialled = tuple(round(one, PLANE_DECIMALS) for one in self.steering.plane())
+
+        # The line not yet saying what the dial says, which covers the two cases
+        # that are the same case: a template still at `000/00`, and a plane
+        # steered somewhere else since it was last written.
+        if carried is None or tuple(
+            round(one, PLANE_DECIMALS) for one in carried
+        ) != dialled:
+            return (
+                "turn the dial until the cut runs along the trace, then press "
+                "`Keep this plane`"
+            )
+
+        if not anchors_written(line):
+            return (
+                "shift-click the two ends of the stretch it holds over, then "
+                "press `Keep this plane` again"
+            )
+
+        # Whether the *line* is claimed, and not whether the document has
+        # unsaved changes. The two were the same test here once and it said `the
+        # file has it` about a line finished in the box and kept by nothing --
+        # the state two clicks into the sequence, where the one press left is the
+        # one this was supposed to be asking for.
+        if not self.panel.in_document(line):
+            return (
+                "press `Keep this plane` again: the line is finished, and this "
+                "is the press that puts it in"
+            )
+
+        if self.document.dirty:
+            return "Ctrl+S to write it into the file"
+
+        # Nothing about this line, which is not nothing to do: this window is for
+        # adding claims to a trace, and the state it opens in on a file with fits
+        # in it is the caret sitting on one of them, finished and saved.
+        return (
+            "nothing on this line -- `+ fit` in the box starts another, or "
+            "ctrl-click the trace to steer a plane somewhere else"
+        )
 
     def _clear_steering(self):
         """Everything the steering draws, taken off the map. Does not blit."""
@@ -5326,6 +5823,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self.say(said)
         self._resteer()
+        self._tell_next()
 
     def unpin(self):
         """Gives the pin back to the line under the caret."""
@@ -5337,6 +5835,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.steering.set_pinned(False)
         self.say("the plane is back on the line the caret is on")
         self._resteer()
+        self._tell_next()
 
     def _repin(self):
         """
@@ -5401,6 +5900,7 @@ class EditorWindow(QtWidgets.QMainWindow):
                 "anywhere, or put the caret on a line that claims a stretch or "
                 "carries an anchor"
             )
+            self._tell_next()
 
             return
 
@@ -5447,6 +5947,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             said += "\n" + gaps.describe()
 
         self.steering.note(said)
+        self._tell_next()
 
     def _ground_now(self):
         """
@@ -5618,6 +6119,8 @@ class EditorWindow(QtWidgets.QMainWindow):
                 f"on the line: {written.strip()} -- shift-click its two ends, "
                 f"then press again; as it stands it would claim the whole trace"
             )
+
+        self._tell_next()
 
     def _mark_refusals(self, structure):
         """The stretches somebody has rejected, drawn where they are."""
@@ -6235,6 +6738,11 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self._retitle()
         self.say(f"written to {written}")
+
+        # The file having it is a state like any other, and the one the next step
+        # was pointing at: said here, or the line would go on asking for a Save
+        # that has happened.
+        self._tell_next()
 
         return True
 
