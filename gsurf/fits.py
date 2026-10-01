@@ -66,12 +66,21 @@ class Sweep:
     `lengths` empty means `traces.DEFAULT_SWEEP`, which is the set those costs
     were measured on. Left as a default here rather than filled in, so that a
     caller passing nothing and a caller passing the default are the same call.
+
+    `chosen` says a person picked the length rather than the trace, and the only
+    thing it changes is the word the `Reading` comes back with. Worth carrying
+    because the two are not the same claim: a swept length is a measurement of
+    the trace, and a picked one is an assertion that this fault holds a single
+    orientation over that distance. `window=` in the file is the same number
+    either way and cannot tell them apart, so the distinction has to live where
+    the reading is described.
     """
 
     lengths: tuple = ()
     step: float = 25.0
     fallback: float = 250.0
     keep: str = "held"
+    chosen: bool = False
 
 
 # What reading one trace came to. Exactly one of these, always, and they are
@@ -84,6 +93,7 @@ TOO_SHORT = "too-short"     # shorter than the shortest window that was swept
 SWEPT = "swept"             # the trace chose its own window length
 SHORTENED = "shortened"     # read at less than the fallback, that being all that fit
 FALLBACK = "fallback"       # read at the fallback, nothing having picked a length
+CHOSEN = "chosen"           # read at the length a person asked for
 
 
 @dataclass
@@ -130,6 +140,7 @@ class Reading:
             SWEPT: "the length it holds at",
             SHORTENED: "all that fits on it",
             FALLBACK: "the fallback: no length held better than another",
+            CHOSEN: "the length you asked for",
         }[self.outcome]
 
         over = f"read over {self.length:.0f} m ({how})"
@@ -347,7 +358,7 @@ def fits_along(structure, dem, gate, sweep=None, gstruct=None, convergence=None)
         outcome = SWEPT
         spans = swept[length]
     else:
-        outcome = FALLBACK
+        outcome = CHOSEN if sweep.chosen else FALLBACK
         length = sweep.fallback
         spans = (
             swept[length] if length in swept

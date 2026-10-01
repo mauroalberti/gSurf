@@ -1110,6 +1110,59 @@ no part of the trace. Nothing is drawn for it — an empty highlight is what no
 ground looks like — and the panel says it in words instead, which is the half a
 picture cannot carry.
 
+**And the pair the clicks make is put right where it is made.** Refusing to sort
+on the way out is about the *picture*: a reader that tidied the ends would draw a
+stretch the file does not honour, which is the one kind of wrong a drawing can
+be. It says nothing about where the pair came from, and two shift-clicks are a
+gesture with no way to get this right by being careful. The sense a trace was
+digitised in is not drawn on the map, is not a property of the fault, and is not
+something a curator aiming at two ends of an outcrop should have to hold in their
+head; picking the far one first is not a decision anybody made. So the second
+click hands the two ends over the way the format reads them, says that it did,
+and undoes in one step with the anchor that caused it — and `interval_of` never
+sees a pair to sort. A pair typed out by hand is left exactly as typed, because
+there the tokens are the curator's own text and the sentence above is already
+being said about it; a box that rewrote what was being typed into it would be a
+different and worse tool.
+
+This was found on a file rather than reasoned out. `montealpi_01.gstruct` carried
+`fit plane @583458.91,4439774.76 @582408.83,4441315.77` on *Mt. Alpi faults.2* —
+2689 m to 791 m along a trace of 3532, written by two clicks at the right two
+places in the wrong two orders, applied, saved, and holding over nothing. The
+line had been read back into the box, steered against, and none of that showed
+anything wrong: the plane the caret carries is read from the line's own slot and
+does not care which way the ends run.
+
+**And the box is being taken away, which that line is the argument for.** Two
+wrong lines came out of one afternoon on one file — the pair above, and a `fit`
+carrying `0.0/0.0 from=plane-dem`, a provenance stamped on a decision never made
+— and both were syntactically perfect, both were saved, and neither could be
+seen by reading the file back. That is not two defects in a tool; it is what a
+free-text surface is for. So the box becomes a **table of the block's claims**,
+one row per line, edited through cells and dials rather than typed:
+`curation.rows_of` reads a block into `Row`s and `ClaimTable` lays them out, with
+the `with_*` helpers above — which were always surgical line rewrites and never
+needed a text box — doing the writing.
+
+The first step is in and reads only, beside the box. It already earns itself: the
+reversed pair is `2689 m` above `791 m`, in red, in the order the format reads
+them, because the column shows the **progressive** and the progressive is the
+quantity the mistake is about. The rows are never sorted — `attitude_at` takes
+the first fit covering a metre, so their order is part of what the file says, and
+a header click that reordered them would change the meaning of the file on screen
+without changing the file. Lines that are not claims — the `path`, its vertices,
+the heading — are not rows, and the last row says how many there are and that
+Save writes them back untouched.
+
+What goes when the box goes: `Apply` and the parser's red line, since a typed
+cell cannot make a line that will not read; free-form comments, which stay a job
+for a text editor on the file itself; and the free undo `QPlainTextEdit` gave,
+which has to be rebuilt as a stack of block snapshots — the argument for the
+table being that people are distractible makes undo a requirement rather than a
+nicety. What stays: every byte outside an edited line, the unknown attributes a
+row carries (`raw.comments.station="Possibly within CSC or CTC on CSC"` round-trips
+through the reader whole), the provenance band, and the map.
+
 **`fit off the DEM` is the fourth button and not a fourth template.** The three
 above write a line for somebody to finish; this one sweeps a window along the
 selected trace and writes a `fit` for every stretch whose plane the topography
@@ -1147,6 +1200,96 @@ nowhere until somebody moves it up. The band above the box draws which line is
 winning at which metre, so it is visible; the panel says it as well, because
 visible and unsaid is how it would become a trap. Where the line should go is a
 decision still to make.
+
+**And then the button stopped being a button.** The table above was shown and
+judged, and the judgement was that a line of the file rendered in cells is still
+a line of the file: it changed the typeface, not the level. So the box goes and
+the table goes with it, and what replaces them is one window per operation —
+starting with the one that was asked for first, the fit being the delicate one.
+
+`fit off the DEM...` now opens a window that reads the whole trace, lists what
+came out, and keeps what is ticked. Three things are different and none of them
+is cosmetic. The stretch is given as **progressives along the trace** — `687 m`
+to `762 m` — where the line the old button wrote said
+`@583458.91,4439774.76 @582408.83,4441315.77`, and nobody reads a piece of fault
+out of a pair of eastings. **Pointing at a row lights that ground on the map**,
+which is the link a spreadsheet of planes would not have. And the pair cannot be
+written backwards — the bug that cost a day — not because anything checks, but
+because there is no longer a gesture that types it.
+
+There is no control for the stretch, and the reason is worth stating: reading
+only a chosen part of the trace was the obvious design and is the wrong one,
+because *which* part the topography can answer for is the thing being found out.
+Reading it all costs about ten milliseconds and returns four to eight stretches
+on a trace that carries any; the ticks choose among them afterwards, which is
+choosing after looking rather than guessing before. Nor is there a control for
+the step or the gate: the first belongs to `fits.Sweep`, whose numbers are chosen
+together and argued there, and the gate is deliberately measured off every path
+in the file, so a spin box for it would be a spin box for making two verdicts in
+one file incomparable. What the gate came to is **shown**, because `too straight
+to carry a plane` is a comparison and that is the number it is against.
+
+**The window length was on that list, and the file took it off.** The complaint
+was that the window almost never finds anything, and it was right: on
+`montealpi_01.gstruct` the sweep gives 82 of 393 traces something to keep. What
+blocks the rest is not the gate — 97% of the ground comes back `line` either way
+— but `holding_length`, which refuses a peak sitting at an end of the ladder
+swept, rightly, since the turn is then outside what was asked. That ladder stops
+at 900 m because it was calibrated on `elementi_tettonici`, where the median
+trace is 172 m. On this sheet the median trace is 1048 m. Ask about longer
+windows and 179 traces answer.
+
+Which is *not* a reason to ask about them by default, and the checks are what
+said so: on a 2683 m trace with one bend in it, a long window covers the bend
+wherever it is put, so the held share peaks at the long end and the fit comes
+back claiming the whole trace. Measured on that trace, a fit read over 250 m
+covers 50 m of it and one read over 900 m covers 675 m. **A long window buys
+traces by giving up where along them the answer holds** — a trade a curator can
+make looking at a fault, and a default cannot make for them. So the sweep is left
+exactly as it was and `read over` offers the ladder by hand, up to 2500 m. A
+length asked for is an assertion that this fault holds a single orientation over
+that distance; it goes into the file as `window=`, and because `window=` is the
+same number whichever way it was arrived at, the reading says `the length you
+asked for` instead of calling it a fallback.
+
+And where nothing held, the window **names the lengths that would**: `Other
+windows do: 600 m gives 2, 900 m gives 2, 1500 m gives 1`. Without that,
+`nothing held` cannot be told apart from a trace that is simply straight — and
+the sweep already knew the difference and was throwing it away. Of the AOI's 260
+silent traces, 110 turn out to answer at some length and 150 answer nowhere, and
+those 150 get the sentence that closes the question rather than a blank that
+leaves it open. The scan is seven readings and usually imperceptible; 31 traces
+take over 100 ms and `L0003` — 19.8 km of lineament, 791 window positions at the
+shortest length — takes a full second. Sampling the DEM once instead of seven
+times would make that 740 ms, which is the same problem with more plumbing, so
+what is done about it is to say so: the label is written and repainted before the
+work starts, and the cursor waits. `repaint` and not `processEvents`, since this
+runs inside the combo's own signal and pumping the loop would let a second change
+of length re-enter the first.
+
+`Keep` applies in one step, where the button left its lines for `Apply`: the
+looking `Apply` was standing in for has just happened, in front of the ground it
+was about, and asking twice teaches the answer rather than the question. The list
+is spent afterwards — the lines are written by appending, so a second press would
+put two legal `fit` lines over one stretch and let `attitude_at` take whichever
+came first. The window is not modal, which is structural rather than polite: the
+trace is on the map and the map is the other window. The length control re-reads
+when it changes, but only over a list that is on screen — never after a `Keep`,
+which leaves the list spent on purpose, and never before a first press, since a
+combo that computed on its own would make picking a length a way of working
+without having asked to. The length itself outlives a change of trace, where the
+list does not: a list of fits belongs to one fault, and a decision that this
+sheet reads at 900 m belongs to the sheet.
+
+One thing the second surface made visible. The panel's stretch band is fed by a
+guard that remembers what the panel last *emitted*, so a caret crossing a line
+does not cost a blit per character — sound while the panel is the only thing
+drawing there, and no longer true. A row picked in the fit window draws over the
+band without the panel hearing, and a caret then landing on a line claiming what
+the panel last said reported no change, leaving the band showing 50 m while the
+caret sat in a line claiming the whole trace. `forget_covering` is the fix and
+the check that caught it was measuring something else: it wanted 135 points and
+got 5.
 
 **And the plane steered by hand, for everything that button is quiet about.** The
 gate is right to refuse most traces — a plane through a straight trace is

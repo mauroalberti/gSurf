@@ -58,6 +58,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict, NamedTuple, Optional, Tuple
 
 import numpy as np
 
@@ -839,6 +840,53 @@ def interval_of(line, path):
     return tuple(ends)
 
 
+def with_ends_in_order(line, path):
+    """
+    The same line with its two ends swapped, or None if they need no swapping.
+
+    `interval_of` above is right to hand back what is written and never sort
+    it, and this is the other half of that rule rather than a retraction of
+    it. Sorting on the way *out* would draw a stretch the file does not
+    honour; putting the pair right on the way *in* leaves the picture and the
+    file saying the same thing, which is what the refusal to sort was
+    protecting.
+
+    So it belongs to the gesture that makes a pair without being asked which
+    way round it goes. **Two shift-clicks are that gesture**: the curator is
+    aiming at ground, and the direction the trace was digitised in is not on
+    the map, is not a property of the fault, and is not something anybody
+    should have to hold in their head to click two ends of an outcrop. Picking
+    the far one first is not a decision that was made. A pair typed out by hand
+    is left exactly as typed -- there the tokens are the curator's own text and
+    `claim_said` already says what it covers -- because a box that rewrote what
+    was being typed into it would be a different and worse tool.
+
+    A `*` cannot be on the wrong side of an anchor: the format reads the first
+    as 0 and the second as the whole length, so either pairing with one is
+    ordered by construction and a reversed pair is always two picked anchors.
+    This therefore only ever moves what a click wrote.
+
+    A splice and not a rebuild, for `with_plane`'s reason: every byte outside
+    the two slots stays where it was, the indent that puts a line inside its
+    structure included.
+    """
+
+    interval = interval_of(line, path)
+
+    if interval is None or interval[0] <= interval[1]:
+        return None
+
+    (first, first_at, first_to), (second, second_at, second_to) = (
+        _tokens_of(line)[ENDS_AT]
+    )
+
+    return (
+        line[:first_at] + second
+        + line[first_to:second_at] + first
+        + line[second_to:]
+    )
+
+
 # Where a line keeps its plane, counted from the keyword: `fit <kind> <start>
 # <end> <plane>` and `attitude <anchor> plane <plane>`. Two keywords and two
 # different places, which is why this is a table and `ENDS_AT` is a constant --
@@ -933,6 +981,122 @@ def anchor_of(line):
         return float(x), float(y)
     except ValueError:
         return None
+
+
+# The keywords a block keeps that are a claim about the trace: something with a
+# place on it and a value at that place. `path` and its vertices are the trace
+# itself, `structure` is the heading, and a blank or a comment is neither -- all
+# of them stay in the block and are written back untouched, they are just not
+# rows.
+ROW_WORDS = ("span", "attitude", "fit", "lineation")
+
+# Which positional token names the sort of claim: the axis of a `span`
+# (`certainty`, `exposure`, `use`), and the `plane` of the other two, which is
+# the format's own way of saying what kind of thing is being stated. Separate
+# from `PLANE_KIND_AT` although the numbers agree for two of the four: that one
+# is a test with a wrong answer to give, this one is a label.
+SORT_AT = {"span": 1, "fit": 1, "attitude": 2, "lineation": 2}
+
+# Where a `span` keeps the word it is asserting. `fit` and `attitude` hold a
+# plane in the same slot, which `plane_of` reads; `span`'s is a vocabulary word
+# and stays a string, because the vocabulary is the file's and not this tool's.
+VALUE_AT = {"span": 4}
+
+
+class Row(NamedTuple):
+    """
+    One line of a block, read as the claim it makes rather than as text.
+
+    Built from the **raw line** and not from the parsed model, which is the same
+    choice `interval_of` makes and for the same reason: what is on screen has to
+    be what is in the file, including a line half-written and a line the model
+    would not accept. `at` is the line's place in the block, which is what a
+    splice needs -- every edit downstream of here rewrites one line by index and
+    leaves every other byte where it was.
+    """
+
+    at: int
+    line: str
+    word: str
+    sort: Optional[str]
+    ends: Optional[Tuple[float, float]]
+    place: Optional[float]
+    plane: Optional[Tuple[float, float]]
+    value: Optional[str]
+    attrs: Dict[str, str]
+    note: str
+
+
+def rows_of(text, path):
+    """
+    The claims a block makes, in the order it makes them, one per line.
+
+    Order is the block's own and is never sorted, because in this format order
+    is meaning: `attitude_at` takes the **first** fit that covers a metre, so
+    two rows swapped are two different files. Anything that shows these has to
+    show them like this -- which is a thing to say out loud, since a table that
+    sorts on a header click is the default a toolkit hands you.
+
+    Attributes are split with gstruct's own `_split`, not with whitespace: a
+    value can be quoted and hold spaces (`raw.comments.station="Possibly within
+    CSC or CTC on CSC"` is in the files), and a reader that broke that would
+    show the curator a shorter sentence than the one they wrote. The comment is
+    cut the way `loads` cuts it, at the first `#` and without regard for quotes,
+    so what the table reads and what the parser reads are the same string --
+    a reader kinder than the parser would hide the one difference worth seeing.
+    """
+
+    gstruct = module()
+    rows = []
+
+    for at, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("#"):
+            continue
+
+        bare, hashed, note = line.partition("#")
+        tokens = bare.split()
+
+        if not tokens or tokens[0] not in ROW_WORDS:
+            continue
+
+        word = tokens[0]
+
+        try:
+            pos, attrs = gstruct._split(bare)
+        except Exception:
+            pos, attrs = tokens, {}
+
+        sort_at = SORT_AT.get(word)
+        value_at = VALUE_AT.get(word)
+
+        rows.append(Row(
+            at=at,
+            line=line,
+            word=word,
+            sort=pos[sort_at] if sort_at is not None and len(pos) > sort_at else None,
+            ends=interval_of(bare, path),
+            place=_place_of(bare, path),
+            plane=plane_of(bare),
+            value=(
+                pos[value_at]
+                if value_at is not None and len(pos) > value_at else None
+            ),
+            attrs=attrs,
+            note=note.strip() if hashed else "",
+        ))
+
+    return rows
+
+
+def _place_of(line, path):
+    """Where along the path a single-anchor line sits, or None."""
+
+    anchor = anchor_of(line)
+
+    if anchor is None or len(path) < 2:
+        return None
+
+    return place_on(path, *anchor)[0]
 
 
 def with_plane(line, dip_dir, dip, decimals=PLANE_DECIMALS):

@@ -255,8 +255,10 @@ def main():
         plane_of,
         point_on,
         provenance_of,
+        rows_of,
         stretch,
         with_attrs,
+        with_ends_in_order,
         with_plane,
     )
     from gsurf.planes import GAP_FADE_CELLS, gaps_on
@@ -515,6 +517,44 @@ def main():
                   "  span use @600400.00,4420000.00 @600200.00,4420000.00 rejected",
                   alpha.path,
               ) == (400.0, 200.0))
+
+        # And the other half of that rule, which is where the pair is made. A
+        # reader that sorted would draw a stretch the file does not honour; a
+        # click that hands over its two ends the way the format reads them
+        # leaves nothing to sort. Which way the trace was digitised is not on
+        # the map and is not a property of the fault, so it is not something to
+        # be held in the head while aiming at two ends of an outcrop.
+        check("two anchors picked back to front are turned round",
+              interval_of(
+                  with_ends_in_order(
+                      "  span use @600400.00,4420000.00 @600200.00,4420000.00 "
+                      'rejected reason="due parole"',
+                      alpha.path,
+                  ),
+                  alpha.path,
+              ) == (200.0, 400.0))
+
+        # A splice, so the indent that puts the line inside its structure and
+        # the quoted value that holds a space both come through untouched.
+        check("and every byte outside the two slots stays where it was",
+              with_ends_in_order(
+                  "  fit plane @600400.00,4420000.00 @600200.00,4420000.00 "
+                  '140.5/31 from=plane-dem dem="Monte Alpi.tif"',
+                  alpha.path,
+              ) == ("  fit plane @600200.00,4420000.00 @600400.00,4420000.00 "
+                    '140.5/31 from=plane-dem dem="Monte Alpi.tif"'))
+
+        # Nothing else is touched, and the half-filled template is the case
+        # worth naming: `*` and an anchor cannot be in the wrong order, the
+        # format reading the first as 0 and the second as the whole length, so
+        # a pair the wrong way round is always two picked anchors.
+        check("a pair already in order, or holding a `*`, is left alone",
+              all(with_ends_in_order(one, alpha.path) is None for one in (
+                  "  fit plane @600200.00,4420000.00 @600400.00,4420000.00 100/40 from=",
+                  "  fit plane @600400.00,4420000.00 * 100/40 from=",
+                  "  fit plane * * 000/00 from=",
+                  "  attitude @600800.00,4420000.00 plane 90/30 station=S1",
+              )))
 
         check("a line that is not a span or a fit claims nothing",
               interval_of("  attitude @600800.00,4420000.00 plane 90/30 station=S1",
@@ -1378,7 +1418,228 @@ def main():
               f"{window.highlight.get_linewidth()} at "
               f"{window.highlight.get_zorder()}")
 
+        # And the same two clicks in the other order, which is the case the
+        # curator cannot see coming: the trace's own sense is not drawn
+        # anywhere, so which of two ends is "first" is the digitiser's business
+        # and not theirs. Before this, the far end clicked first produced a line
+        # that parsed, applied, saved, and held over no ground at all.
+        window.panel.add_line("  fit plane * * 000/00 from=")
+        window.pick(600700.0, 4420000.0, anchor=True)
+        window.pick(600300.0, 4420000.0, anchor=True)
+
+        check("the far end clicked first still claims the ground between them",
+              [round(x) for x, _ in claimed_now()]
+              == [600300, 600400, 600500, 600600, 600700],
+              str([round(x) for x, _ in claimed_now()]))
+
+        check("the line itself is turned round, not the picture over it",
+              interval_of(window.panel._line_now(), alpha.path) == (300.0, 700.0),
+              window.panel._line_now())
+
+        # Said, because it is a change to what the hand did. The claim is said
+        # in the same breath: without the turn this bar read "covers no part".
+        check("and the turn is reported with the claim it made possible",
+              "turned" in window.statusBar().currentMessage()
+              and "400 m of 1000" in window.statusBar().currentMessage(),
+              window.statusBar().currentMessage())
+
+        # One click, one Ctrl-Z. Two document edits inside one gesture would
+        # otherwise undo in two, and the halfway state -- the anchor written,
+        # the ends back to front -- is one no gesture ever produced.
+        window.panel.text.undo()
+
+        check("and a click that turned the pair undoes in one step",
+              window.panel._line_now()
+              == "  fit plane @600700.00,4420000.00 * 000/00 from=",
+              window.panel._line_now())
+
         window.panel._redraw()
+
+        # -- a block read as the claims it makes ---------------------------
+        #
+        # The first step of taking the box away, and the whole argument for
+        # taking it away is in one line of a real file: `fit plane
+        # @583458.91,4439774.76 @582408.83,4441315.77` on `montealpi_01`, a pair
+        # the wrong way round, applied, saved, valid on no metre of the trace.
+        # Reading it back showed nothing -- to see it you had to hold two
+        # eastings in your head and know which way the trace had been digitised.
+        # The quantity the mistake is about is the progressive, and a reader that
+        # shows the progressive shows the mistake without being told to look.
+
+        print("\n-- a block read as the claims it makes --\n")
+
+        alpha_text = document.text_of(0)
+        claims = rows_of(alpha_text, document.dataset.structures[0].path)
+
+        check("every line that claims something is a row, and nothing else is",
+              [row.word for row in claims]
+              == ["span", "span", "attitude", "fit"],
+              str([row.word for row in claims]))
+
+        check("in the order the file makes them, which is part of what it says",
+              [row.at for row in claims] == sorted(row.at for row in claims)
+              and all(alpha_text.splitlines()[row.at] == row.line for row in claims))
+
+        check("`kind`, `path`, the vertices and the heading are none of them rows",
+              len([line for line in alpha_text.splitlines() if line.strip()])
+              - len(claims) == 14,
+              f"{len(claims)} rows of "
+              f"{len([x for x in alpha_text.splitlines() if x.strip()])} lines")
+
+        by_word = {row.word: row for row in claims}
+
+        check("a `*` end is the end of the path and reads as the metre it is",
+              by_word["fit"].ends == (0.0, 1000.0), str(by_word["fit"].ends))
+
+        check("and a picked pair reads as the two metres it encloses",
+              claims[1].ends == (200.0, 400.0), str(claims[1].ends))
+
+        check("an attitude claims a place and not a stretch",
+              by_word["attitude"].place == 800.0
+              and by_word["attitude"].ends is None,
+              str(by_word["attitude"].place))
+
+        check("a span's fourth slot is a word and a fit's is a plane",
+              claims[0].value == "certain" and claims[0].plane is None
+              and by_word["fit"].plane == (100.0, 40.0)
+              and by_word["fit"].value is None)
+
+        check("and the axis a span is about comes through as its own thing",
+              [row.sort for row in claims if row.word == "span"]
+              == ["certainty", "use"])
+
+        # Attributes are split with gstruct's own `_split` and not on
+        # whitespace, which is the difference between showing the curator their
+        # sentence and showing them its first word.
+        gamma_rows = rows_of(document.text_of(2), document.dataset.structures[2].path)
+        noted = next(row for row in gamma_rows if row.word == "attitude")
+
+        check("a quoted attribute arrives whole, spaces and all",
+              noted.attrs.get("note") == GAMMA_NOTE, repr(noted.attrs.get("note")))
+
+        check("and the ones beside it are not lost to it",
+              noted.attrs.get("station") == "S2"
+              and noted.attrs.get("off") == "12.5", str(noted.attrs))
+
+        # The comment is cut where `loads` cuts it, so what the table reads and
+        # what the parser reads are one string. A reader kinder than the parser
+        # would hide the one difference worth seeing.
+        commented = rows_of(
+            "  span certainty * * certain reason=x  # said on the phone\n"
+            "  # a line that is only a comment\n",
+            [(0.0, 0.0), (100.0, 0.0)],
+        )
+
+        check("a trailing comment is kept beside its claim, not inside it",
+              len(commented) == 1
+              and commented[0].attrs.get("reason") == "x"
+              and commented[0].note == "said on the phone",
+              str(commented))
+
+        # -- the same block, as a table ------------------------------------
+
+        print("\n-- the same block, as a table --\n")
+
+        window.select(0)
+        claim_table = window.panel.claims
+
+        def cells(row):
+            return [
+                claim_table.item(row, column).text() if claim_table.item(row, column) else ""
+                for column in range(claim_table.columnCount())
+            ]
+
+        check("the table has a row per claim, and one more for what is not one",
+              claim_table.rowCount() == len(claims) + 1,
+              f"{claim_table.rowCount()} rows for {len(claims)} claims")
+
+        check("the last one counts the lines it does not show, and says why",
+              "14 more lines" in cells(len(claims))[0]
+              and "vertices" in cells(len(claims))[0],
+              cells(len(claims))[0])
+
+        check("and it cannot be picked, because it does not stand for a line",
+              not (claim_table.item(len(claims), 0).flags()
+                   & QtCore.Qt.ItemFlag.ItemIsSelectable))
+
+        check("a `*` end is shown as an end of the trace and not as `0 m`",
+              cells(0)[1:3] == ["start", "end"], str(cells(0)[1:3]))
+
+        check("a picked pair is shown in metres along it",
+              cells(1)[1:3] == ["200 m", "400 m"], str(cells(1)[1:3]))
+
+        check("the span's word and the fit's plane sit in the same column",
+              cells(0)[3] == "certain" and cells(3)[3] == "100/40",
+              f"{cells(0)[3]!r} and {cells(3)[3]!r}")
+
+        check("what a row came from is beside it, and the rest of it after that",
+              "station=S1" in cells(2)[4] and "src=field" in cells(2)[4],
+              cells(2)[4])
+
+        # The two directions of the one mapping, which is what makes the claim_table
+        # and the box the same thing seen twice while they are both on screen.
+        claim_table.selectRow(2)
+        QtWidgets.QApplication.processEvents()
+
+        check("picking a row puts the caret on the line it stands for",
+              window.panel.text.textCursor().blockNumber() == claims[2].at
+              and "station=S1" in window.panel._line_now(),
+              window.panel._line_now().strip()[:40])
+
+        caret_onto("fit plane * * 100/40")
+        QtWidgets.QApplication.processEvents()
+
+        check("and moving the caret picks the row standing for its line",
+              claim_table.at_now() == claims[3].at, str(claim_table.at_now()))
+
+        caret_onto("  path 11")
+        QtWidgets.QApplication.processEvents()
+
+        check("a line that claims nothing picks nothing, rather than the nearest",
+              claim_table.at_now() is None, str(claim_table.at_now()))
+
+        # And the thing the claim_table exists for. A pair the wrong way round is not
+        # a parse error and never will be -- the format reads it, `covers` is
+        # `from <= s <= to`, and it simply covers nothing. So it has to be
+        # *visible*, and what makes it visible is the two metres in the order
+        # the format reads them.
+        window.select(1)
+        window.panel.add_written(
+            ["  fit plane @602400.00,4420000.00 @602100.00,4420000.00 55/25 from="]
+        )
+        QtWidgets.QApplication.processEvents()
+
+        beta_table = window.panel.claims
+        backwards = next(
+            row for row in range(beta_table.rowCount())
+            if beta_table.item(row, 3) and beta_table.item(row, 3).text() == "55/25"
+        )
+
+        check("a pair the wrong way round reads as the two metres it does not cover",
+              [beta_table.item(backwards, c).text() for c in (1, 2)] == ["400 m", "100 m"],
+              str([beta_table.item(backwards, c).text() for c in (1, 2)]))
+
+        check("and both metres are marked, with what it costs written on them",
+              all(beta_table.item(backwards, c).foreground().color().name() == "#b2182b"
+                  for c in (1, 2))
+              and "covers no part" in beta_table.item(backwards, 1).toolTip(),
+              beta_table.item(backwards, 1).toolTip()[:50])
+
+        # Beta's own fit, `* *`, is the control: the mark has to be about the
+        # order of the pair and not about being a fit, or it says nothing.
+        in_order = next(
+            row for row in range(beta_table.rowCount())
+            if beta_table.item(row, 3) and beta_table.item(row, 3).text() == "12/88"
+        )
+
+        check("while the fit above it, in order, carries no mark at all",
+              beta_table.item(in_order, 1).foreground().color().name()
+              != beta_table.item(backwards, 1).foreground().color().name()
+              and not beta_table.item(in_order, 1).toolTip().startswith("These two"),
+              beta_table.item(in_order, 1).foreground().color().name())
+
+        window.panel._redraw()
+        window.select(0)
 
         # -- the planes on the net -----------------------------------------
         #
@@ -2345,6 +2606,13 @@ def main():
               (crossed_steering or "nothing said")[:58])
 
         fitting.select(rows["VEE"])
+
+        # Put something on the dial first, so that the template arriving under
+        # the caret has something to overwrite if it is going to.
+        steering.dip_dir.setValue(140.0)
+        steering.dip.setValue(35.0)
+        QtWidgets.QApplication.processEvents()
+
         fitting.panel.add_line("  fit plane * * 000/00 from=")
         QtWidgets.QApplication.processEvents()
 
@@ -2373,12 +2641,27 @@ def main():
         check("and at the elevation the DEM has there",
               abs(fitting._pin[2] - panel.dem.elevation_at(*fitting._pin[:2])) < 1e-6)
 
-        # The template arrives carrying `000/00`, so the dial reads that -- which
-        # is the loop running backwards, and the half worth more on a file with
-        # planes already in it: clicking into a fit somebody computed shows that
-        # plane cutting the ground it was computed over.
-        check("the dial shows what the line says, rather than a number of its own",
-              steering.plane() == (0.0, 0.0))
+        # The template arrives carrying `000/00` and the dial does *not* read
+        # that: an unfilled slot is not a plane anybody wrote, and taking it
+        # means reaching the line you are about to write undoes the steering you
+        # did to have something to write. The loop still runs backwards for a
+        # line that carries a real plane -- checked below, on a computed fit.
+        check("an unfilled slot does not take the dial off the hand that set it",
+              steering.plane() == (140.0, 35.0), str(steering.plane()))
+
+        # Laid flat by hand, for the two below: a horizontal plane used to reach
+        # the dial by way of the template, which is no longer a way in.
+        steering.dip_dir.setValue(0.0)
+        steering.dip.setValue(0.0)
+        QtWidgets.QApplication.processEvents()
+
+        def caret_in_box(fragment):
+            """The caret on the box's first line holding `fragment`."""
+
+            cursor = fitting.panel.text.textCursor()
+            cursor.setPosition(fitting.panel.text.toPlainText().index(fragment))
+            fitting.panel.text.setTextCursor(cursor)
+            QtWidgets.QApplication.processEvents()
 
         # A horizontal plane on a DEM that is itself one plane is a contour, and
         # on this one the contours run north-south. The straightness is exact --
@@ -2772,11 +3055,470 @@ def main():
               pinned_elsewhere and fitting._free_pin is None
               and not steering.release.isEnabled())
 
+        # -- and the loop running forwards, against the one running backwards --
+        #
+        # `942a807` asks for the two in a fixed order -- steer first, attribute
+        # afterwards -- and the backward loop used to break exactly that. The
+        # hand turns the dial, and then has to reach the line the number is
+        # going into; reaching it handed the dial back to whatever that line
+        # already said, silently, which for a fresh template is `000/00`. So the
+        # whole gesture -- steer, write it in the line, Apply, Save -- put a
+        # horizontal plane in the file with `from=plane-dem` on it, and nothing
+        # on the way through looked wrong.
+        #
+        # Invisible to every check above because they all *are* the backward
+        # loop: they set the dial with `show_plane`, which is the call the caret
+        # makes. Only a hand turning it and then moving the caret tells the two
+        # apart.
+        #
+        # What is guarded here is narrow on purpose: the *template's* plane is
+        # not taken. Who wins in general between the hand and a line that really
+        # does carry a plane is left open, because the answer is to stop asking
+        # -- a row picked in a table is not a caret that arrives.
+        fitting.select(rows["VEE"])
+        fitting.panel.add_line("  fit plane * * 000/00 from=")
+        QtWidgets.QApplication.processEvents()
+
+        steering.dip_dir.setValue(140.0)
+        steering.dip.setValue(35.0)
+        QtWidgets.QApplication.processEvents()
+
+        steered_by_hand = steering.plane()
+
+        away = fitting.panel.text.textCursor()
+        away.movePosition(QtGui.QTextCursor.MoveOperation.Start)
+        fitting.panel.text.setTextCursor(away)
+        QtWidgets.QApplication.processEvents()
+
+        caret_in_box("  fit plane * * 000/00")
+
+        check("a plane steered by hand survives the caret reaching its line",
+              steered_by_hand == (140.0, 35.0)
+              and steering.plane() == (140.0, 35.0),
+              f"steered {steered_by_hand}, held {steering.plane()}")
+
+        into_the_line = fitting.panel.take_plane(*steering.plane())
+
+        check("and what it writes there is that plane, not the slot's own",
+              into_the_line is not None and "140.0/35.0" in into_the_line,
+              str(into_the_line))
+
+        # The backward loop still runs, which is the half this must not cost:
+        # a line carrying a plane somebody computed still puts it on the dial.
+        caret_in_box("  fit plane")
+        QtWidgets.QApplication.processEvents()
+
+        check("while a line carrying a computed plane still shows it",
+              steering.plane() == (90.0, 30.0), str(steering.plane()))
+
         steering.on.setChecked(False)
         QtWidgets.QApplication.processEvents()
 
         check("switched off, the band goes with the cut",
               len(fitting.agreeing.get_segments()) == 0)
+
+        # -- the same reading, in a window that shows before it keeps ------
+        #
+        # `fit off the DEM` wrote its answer into the box as `fit plane
+        # @583458.91,4439774.76 @582408.83,4441315.77 118.4/42.1 ...`, and the
+        # two tokens saying which piece of fault the plane was claimed over are
+        # coordinates. Nobody reads a stretch of ground out of a pair of
+        # eastings. The window is that same reading with the stretch measured
+        # along the trace, the row lighting the ground on the map, and a tick
+        # per fit -- so the looking that `Apply` was standing in for happens in
+        # front of the thing being decided.
+        #
+        # The box is put back first: the section above left an unapplied
+        # template in it, and `show_index` over that puts up a modal box, which
+        # is a check that hangs rather than a check that fails.
+        print("\n-- the fit, in a window of its own --\n")
+
+        fitting.panel._redraw()
+        QtWidgets.QApplication.processEvents()
+
+        fit_ui = fitting.fit_panel
+
+        check("it is not on screen until it is asked for",
+              not fitting.fit_window.isVisible(),
+              "hidden at start-up: it is not in the window group")
+
+        menus = [
+            action.text() for action in fitting.menuBar().actions()
+        ]
+
+        check("and there is a menu for it, before the windows one",
+              menus[:2] == ["&Fit", "&Windows"]
+              and fitting.fit_action.shortcut().toString() == "Ctrl+D",
+              f"{', '.join(menus)} -- {fitting.fit_action.shortcut().toString()}")
+
+        fitting.select(rows["VEE"])
+        QtWidgets.QApplication.processEvents()
+
+        before_window = fitting.panel.text.toPlainText()
+        fitting.panel.fit_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("the button opens it instead of writing, which is what `...` says",
+              fitting.fit_window.isVisible()
+              and fitting.panel.text.toPlainText() == before_window
+              and fitting.panel.fit_button.text().endswith("..."),
+              fitting.panel.fit_button.text())
+
+        check("and it says which trace it is about, and how long that trace is",
+              "VEE" in fit_ui.about.text() and " m" in fit_ui.about.text(),
+              fit_ui.about.text())
+
+        # Read, and still nothing written anywhere. The whole of the window's
+        # argument is that this step is free: what comes back is a list to be
+        # looked at, and the document has not heard of it.
+        was_fits = len(fitting.document.dataset.structures[rows["VEE"]].fits)
+        in_the_box = fitting.panel.text.toPlainText()
+
+        got = fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        check("reading writes nothing: not in the document, not in the box",
+              got is not None and fit_ui.table.rowCount() == len(got.lines)
+              and len(fitting.document.dataset.structures[rows["VEE"]].fits)
+              == was_fits
+              and fitting.panel.text.toPlainText() == in_the_box,
+              f"{fit_ui.table.rowCount()} row(s), {was_fits} fit(s) on VEE")
+
+        def fit_cells(row):
+            return [
+                fit_ui.table.item(row, column).text()
+                for column in range(fit_ui.table.columnCount())
+            ]
+
+        vee_length = gstruct.path_length(
+            fitting.document.dataset.structures[rows["VEE"]].path
+        )
+        shown = fit_cells(0)
+
+        # The assertion the whole window exists for. Not "the cells are filled"
+        # -- they were filled before, in the box -- but that what is in them is
+        # the progressive along the trace, which is the quantity a curator
+        # standing on the fault has. A coordinate is a fact about the projection.
+        from_m = float(shown[1].split()[0])
+        to_m = float(shown[2].split()[0])
+
+        check("the stretch is given along the trace, in metres, and not as anchors",
+              "@" not in shown[1] and "@" not in shown[2]
+              and shown[1].endswith(" m") and shown[2].endswith(" m")
+              and 0.0 <= from_m < to_m <= vee_length,
+              f"{shown[1]} to {shown[2]} of {vee_length:.0f} m")
+
+        # And in order, which is not the same assertion and is the one that says
+        # the mistake that cost a day cannot be made here: `interval_of` returns
+        # a pair as written and refuses to sort it, because `covers` is
+        # `s0 <= s <= s1` and a reversed pair holds over nothing. What makes this
+        # window safe is not that it checks -- it is that nobody is typing the
+        # pair, so there is no gesture that can put it the wrong way round.
+        check("and every row runs forwards, there being no way to write one backwards",
+              all(
+                  float(fit_cells(row)[1].split()[0])
+                  < float(fit_cells(row)[2].split()[0])
+                  for row in range(fit_ui.table.rowCount())
+              ),
+              f"{fit_ui.table.rowCount()} row(s)")
+
+        # The plane, in the cell, against the arithmetic the raster was built
+        # from -- and on the grid bearing, the cell being a true one. The same
+        # correction the line carries, read off the display this time.
+        shown_dip_dir, shown_dip = (float(one) for one in shown[3].split("/"))
+        shown_grid = (shown_dip_dir - float(got.reading.fits[0].attrs["converg"])) % 360.0
+
+        check("the plane in the cell is the one the DEM was built from",
+              abs(shown_dip - RELIEF_DIP) <= 2.0
+              and abs(shown_grid - RELIEF_DIP_DIR) <= 2.0,
+              f"{shown[3]} true, {shown_grid:.1f} grid against "
+              f"{RELIEF_DIP_DIR:.0f}/{RELIEF_DIP:.0f}")
+
+        check("and the gate that let it through is on screen, not just in the log",
+              "lever" in fit_ui.gate.text(), fit_ui.gate.text()[:52])
+
+        # Pointing at a row lights the ground it covers. This is the link the
+        # window would be a spreadsheet without: the numbers are along the trace,
+        # and the trace is in the other window.
+        fit_ui.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        lit = list(zip(fitting.claimed.get_xdata(), fitting.claimed.get_ydata()))
+        vee_path = fitting.document.dataset.structures[rows["VEE"]].path
+        wanted = fitting.on_map([
+            gstruct.point_at(vee_path, got.spans[0][0]),
+            gstruct.point_at(vee_path, got.spans[0][1]),
+        ])
+
+        # Where the row says, and not merely somewhere: a band drawn over the
+        # whole trace whenever a row is picked would light up on every click and
+        # be read as an answer, while saying nothing about which row.
+        check("pointing at a row lights the stretch it covers, and only that",
+              len(lit) > 1
+              and math.hypot(lit[0][0] - wanted[0][0],
+                             lit[0][1] - wanted[0][1]) < 1.0
+              and math.hypot(lit[-1][0] - wanted[-1][0],
+                             lit[-1][1] - wanted[-1][1]) < 1.0
+              and len(lit) < len(fitting._drawn[rows["VEE"]]),
+              f"{len(lit)} point(s) of the {len(fitting._drawn[rows['VEE']])} "
+              f"on the trace")
+
+        # And letting go puts the band back to what the block claims, rather than
+        # blanking it. Two things have an opinion about one picture; pointing at
+        # nothing is not the same statement as there being nothing to point at.
+        # And the caret takes the band back even when the line it is in claims
+        # exactly what the panel last reported. That is the case the panel's own
+        # guard swallows: it remembers what it emitted, not what is on the map,
+        # and the fit window draws over the map without going through it. So the
+        # caret is put in the steered line, the row is picked, and then the caret
+        # is nudged *within the same line* -- no change by the guard's reckoning,
+        # and the band would stay showing the row's 50 m while the caret sat in a
+        # line claiming the whole trace.
+        caret_in_box("from=plane-dem")
+
+        fit_ui.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        nudged = fitting.panel.text.textCursor()
+        nudged.movePosition(QtGui.QTextCursor.MoveOperation.Right)
+        fitting.panel.text.setTextCursor(nudged)
+        QtWidgets.QApplication.processEvents()
+
+        whole = fitting.panel._covering_now()
+
+        check("and a caret moving within its line still takes the band back",
+              whole is not None
+              and list(zip(fitting.claimed.get_xdata(),
+                           fitting.claimed.get_ydata()))
+              == fitting.on_map(stretch(vee_path, *whole)),
+              f"the line claims {whole[0]:.0f}..{whole[1]:.0f} m, and the band "
+              f"has {len(fitting.claimed.get_xdata())} point(s)")
+
+        # Against what the caret's line claims, worked out here rather than
+        # captured before the row was picked. Two drafts of this compared the
+        # band with itself -- first by counting points, then by coordinates --
+        # and both would have passed had the band simply never moved, which on
+        # this trace it nearly does not: the steered fit and the read one cover
+        # the same 50 m around the bend. What has to be true is that the band
+        # ends up being the *line's* stretch, so that is what it is measured
+        # against.
+        caret_in_box("from=plane-dem")
+
+        fit_ui.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        fit_ui.table.clearSelection()
+        QtWidgets.QApplication.processEvents()
+
+        by_line = fitting.panel._covering_now()
+        back = list(zip(fitting.claimed.get_xdata(),
+                        fitting.claimed.get_ydata()))
+
+        check("and letting go gives the band back to the line, not to nothing",
+              by_line is not None
+              and back == fitting.on_map(stretch(vee_path, *by_line)),
+              f"{len(back)} point(s), against the line's "
+              f"{by_line[0]:.0f}..{by_line[1]:.0f} m")
+
+        # The tick is the decision, and an unticked row is a fit that was read,
+        # looked at, and refused. Nothing about it reaches the file.
+        fit_ui.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+        QtWidgets.QApplication.processEvents()
+
+        check("unticking a row takes it out of what would be kept",
+              fit_ui.ticked() == [] and len(got.lines) == 1,
+              f"{len(fit_ui.ticked())} of {len(got.lines)} ticked")
+
+        fit_ui.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Checked)
+        QtWidgets.QApplication.processEvents()
+
+        kept_now = fit_ui.keep()
+        QtWidgets.QApplication.processEvents()
+
+        after = fitting.document.dataset.structures[rows["VEE"]].fits
+
+        check("Keep puts it in the document in one step, with no Apply after it",
+              kept_now and len(after) == was_fits + 1
+              and after[-1].attrs.get("from") == FROM_DEM,
+              f"{was_fits} fit(s) before, {len(after)} after")
+
+        # And the list is spent. The lines are written by appending, so a second
+        # press would append them again -- two legal `fit` lines over one stretch,
+        # and `attitude_at` taking whichever is first. A Keep button still live
+        # after keeping hands that over on one stray click.
+        pressed_again = fit_ui.keep()
+
+        check("and pressing Keep again writes nothing, the list being spent",
+              not pressed_again
+              and not fit_ui.keep_button.isEnabled()
+              and len(fitting.document.dataset.structures[rows["VEE"]].fits)
+              == was_fits + 1,
+              f"{len(fitting.document.dataset.structures[rows['VEE']].fits)} fit(s)")
+
+        # A dead straight trace comes back with nothing, which is a verdict and
+        # not a failure -- so the window says what it walked, and Keep is not
+        # offered. 27 of 185 traces on the AOI pass the gate: this is the common
+        # case, and a window that looked broken here would look broken most days.
+        fitting.select(rows["EAST"])
+        QtWidgets.QApplication.processEvents()
+
+        check("a change of selection throws the list away rather than re-aiming it",
+              fit_ui.table.rowCount() == 0 and fit_ui.ticked() == []
+              and "EAST" in fit_ui.about.text(),
+              fit_ui.about.text())
+
+        straight = fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        check("a straight trace lists nothing, says what it walked, and offers no Keep",
+              straight is not None and not straight.reading.fits
+              and fit_ui.table.rowCount() == 0
+              and not fit_ui.keep_button.isEnabled()
+              and "nothing held" in fit_ui.outcome.text(),
+              fit_ui.outcome.text()[:58])
+
+        # -- the window length, where the trace will not pick one -------
+
+        print("\n-- the window length, asked for by hand --\n")
+
+        from gsurf.tools.editor import FIT_LENGTHS
+
+        fit_lengths = [
+            fit_ui.length.itemData(index)
+            for index in range(fit_ui.length.count())
+        ]
+
+        check("read over offers a ladder, and starts on the trace's own length",
+              fit_lengths[0] is None and fit_lengths[1:] == list(FIT_LENGTHS)
+              and fit_ui.length.currentData() is None,
+              f"{fit_ui.length.count()} entries, first "
+              f"{fit_ui.length.itemText(0)!r}")
+
+        # EAST is straight and was just read: nothing held. The verdict by
+        # itself cannot be told apart from a trace that turns over some other
+        # distance, and this is the sentence that tells them apart -- said
+        # here in the form that closes the question rather than opens it.
+        check("and where no window at all answers, that is said rather than left open",
+              "No window between" in fit_ui.elsewhere.text()
+              and f"{FIT_LENGTHS[-1]:.0f} m" in fit_ui.elsewhere.text(),
+              fit_ui.elsewhere.text())
+
+        # The other branch, off the panel: the lengths that would answer, with
+        # what each gives. Asked on the trace that does turn, since EAST is the
+        # case where the honest answer is none.
+        fitting.select(rows["VEE"])
+        QtWidgets.QApplication.processEvents()
+
+        vee_holds = fitting.panel.lengths_that_hold()
+
+        check("and the lengths that would answer are named with what each gives",
+              vee_holds
+              and all(
+                  metres in FIT_LENGTHS and count > 0
+                  for metres, count in vee_holds
+              ),
+              ", ".join(f"{m:.0f} m gives {n}" for m, n in vee_holds))
+
+        # Changing the length over an empty window reads nothing. The combo
+        # re-reads to save a press, and the press it saves is the second one --
+        # a combo that read on its own would make picking a length a way of
+        # computing without having asked to.
+        at_250 = fit_lengths.index(250.0)
+        fit_ui.length.setCurrentIndex(at_250)
+        QtWidgets.QApplication.processEvents()
+
+        check("picking a length with nothing on screen reads nothing",
+              fit_ui.table.rowCount() == 0 and fit_ui._read is None,
+              f"{fit_ui.table.rowCount()} row(s)")
+
+        picked = fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        # And the reading says who chose. `window=` is the same number whether
+        # the trace picked it or a person did, so the file cannot tell them
+        # apart and the sentence has to.
+        check("reading at a length says it was asked for, not that the trace held it",
+              picked is not None and picked.reading.fits
+              and "the length you asked for" in fit_ui.outcome.text()
+              and abs(picked.reading.length - 250.0) < 1e-9,
+              fit_ui.outcome.text()[:60])
+
+        check("and the length asked for is the one the row was read over",
+              all(
+                  fit_cells(row)[4] == "250 m"
+                  for row in range(fit_ui.table.rowCount())
+              )
+              and all(
+                  fit.attrs.get("window") == "250" for fit in picked.reading.fits
+              ),
+              f"{fit_ui.table.rowCount()} row(s) at "
+              f"{fit_cells(0)[4] if fit_ui.table.rowCount() else '-'}")
+
+        # A second length without a second press. Four lengths tried would be
+        # eight gestures otherwise, and the reading is ten milliseconds.
+        rows_at_250 = fit_ui.table.rowCount()
+
+        fit_ui.length.setCurrentIndex(fit_lengths.index(900.0))
+        QtWidgets.QApplication.processEvents()
+
+        check("changing it over a reading re-reads, without a press",
+              fit_ui._read is not None
+              and all(
+                  fit.attrs.get("window") == "900"
+                  for fit in fit_ui._read.reading.fits
+              )
+              and fit_ui.table.rowCount() == len(fit_ui._read.lines),
+              f"{rows_at_250} row(s) at 250 m, {fit_ui.table.rowCount()} at 900 m")
+
+        # A long window covers a bend wherever it is put, so it finds the bend
+        # and stops being able to say where along the fault the answer held.
+        # That is the whole cost of this control and the reason the sweep was
+        # left alone: the trade is one a curator makes looking at a fault.
+        wide = fit_ui._read
+
+        check("and a longer window claims more of the trace, which is what it costs",
+              rows_at_250 and wide.spans and picked.spans
+              and (wide.spans[0][1] - wide.spans[0][0])
+              > (picked.spans[0][1] - picked.spans[0][0]),
+              f"{picked.spans[0][1] - picked.spans[0][0]:.0f} m at 250, "
+              f"{wide.spans[0][1] - wide.spans[0][0]:.0f} m at 900")
+
+        # Keep, and then a length change over the spent list. The lines are
+        # written by appending, and a combo that refilled the table after a Keep
+        # would put a second copy of the same fits within reach of one click on
+        # a control nobody presses to write.
+        before_keep = len(fitting.document.dataset.structures[rows["VEE"]].fits)
+        fit_ui.keep()
+        QtWidgets.QApplication.processEvents()
+
+        fit_ui.length.setCurrentIndex(fit_lengths.index(400.0))
+        QtWidgets.QApplication.processEvents()
+
+        check("and after Keep a change of length refills nothing",
+              fit_ui.table.rowCount() == 0 and fit_ui._read is None
+              and not fit_ui.keep_button.isEnabled()
+              and len(fitting.document.dataset.structures[rows["VEE"]].fits)
+              == before_keep + 1,
+              f"{before_keep} fit(s) before Keep, "
+              f"{len(fitting.document.dataset.structures[rows['VEE']].fits)} after")
+
+        # And the length outlives the trace, where the list does not. A list of
+        # fits belongs to one fault; a decision that this sheet reads at 400 m
+        # belongs to the sheet, and re-picking it per fault would make a
+        # session's worth of identical choices out of one.
+        fitting.select(rows["EAST"])
+        QtWidgets.QApplication.processEvents()
+
+        check("the length outlives a change of trace, where the list does not",
+              fit_ui.length.currentData() == 400.0
+              and fit_ui.table.rowCount() == 0 and fit_ui._read is None,
+              f"read over {fit_ui.length.currentText()}, "
+              f"{fit_ui.table.rowCount()} row(s)")
+
+        fit_ui.length.setCurrentIndex(0)
+        QtWidgets.QApplication.processEvents()
+
+        fitting.fit_window.hide()
 
         fitting.close()
 
