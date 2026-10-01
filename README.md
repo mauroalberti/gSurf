@@ -1166,7 +1166,7 @@ nicety. What stays: every byte outside an edited line, the unknown attributes a
 row carries (`raw.comments.station="Possibly within CSC or CTC on CSC"` round-trips
 through the reader whole), the provenance band, and the map.
 
-**`fit off the DEM` is the fourth button and not a fourth template.** The three
+**The fit is the fourth button and not a fourth template.** The three
 above write a line for somebody to finish; this one sweeps a window along the
 selected trace and writes a `fit` for every stretch whose plane the topography
 determines — the same producer the import runs over a whole layer, on one trace
@@ -1210,8 +1210,8 @@ a line of the file: it changed the typeface, not the level. So the box goes and
 the table goes with it, and what replaces them is one window per operation —
 starting with the one that was asked for first, the fit being the delicate one.
 
-`fit off the DEM...` now opens a window that reads the whole trace, lists what
-came out, and keeps what is ticked. Three things are different and none of them
+`fits along this trace...` now opens a window that reads the whole trace, lists
+what came out, and keeps what is ticked. Three things are different and none of them
 is cosmetic. The stretch is given as **progressives along the trace** — `687 m`
 to `762 m` — where the line the old button wrote said
 `@583458.91,4439774.76 @582408.83,4441315.77`, and nobody reads a piece of fault
@@ -1379,6 +1379,38 @@ none of `snr`, `flat` or `jack`; `from=plane-dem` is the honest name for somebod
 who looked at two lines and judged them to run together. It also writes **which
 north**, which no line in these files currently does — see the note below, because
 that turned out to be a question about the files and not about this button.
+
+**A dial and a bar for the bearing, and the whole thing in the fit window.** The
+controls sat on the map's own frame, on the argument that what is being steered is
+a picture — curves swinging about a pin — and a dial on the other monitor is
+steering by feel. That argument was not wrong and it was outweighed twice. A dial
+bolted to the frame is 190 px of map gone whether or not anybody is steering; and
+what it produces is a `fit` line, which the fit window above now lists, marks and
+will delete — so a `from=plane-dem` line was reached through a window named after
+another producer. It moves in, between the file's own fits and the sweep, and the
+window reads downwards as what is claimed here, then the two ways to add to it.
+The cost is left standing: that window can be dragged to the other screen, and
+then the feel is gone. It opens at the map's own corner.
+
+Moving it bought the width for a second bar. The bearing now has a dial *and* a
+slider, which is not a redundancy — swinging a plane through a quadrant to watch
+the cut move is a turn, and only the dial does it without hitting an end; nudging
+by a degree or jumping from 90 to 270 is a distance, and only the bar shows where
+in the range you are while you do it. The bar runs 0 to 360 with north at both
+ends and reports modulo 360, because a straight control cannot wrap, and that
+division is why the dial stays. Both bars carry their ticks and their ends in
+writing: `TicksBelow` had been set on the dip's slider since it was written and
+drawing nothing, there being no room under the groove at the natural height — and
+in a 190 px column, with one bar under the dial at an even spacing, the person who
+asked for a second one had read the dip's slider as the dip direction's. It was
+never wired to anything but the dip. The layout said otherwise and the layout is
+what gets read.
+
+Closing the window now takes the steered plane off the map and says so. The
+steering is a mode, and until it moved there was no way to hide its controls; now
+there is one click, and what would be left behind is a cut and a band that nothing
+on screen can turn or switch off. The numbers stay in the boxes, so `Ctrl+D` comes
+back to the same plane.
 
 **Where it goes wrong is where the geology says it should.** The cut passes
 through the pin within half a cell of the DEM — 1.5 m over four attitudes on the

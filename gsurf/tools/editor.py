@@ -486,10 +486,10 @@ PANEL_WINDOW_PX = (PANEL_WIDTH_PX, 940)
 MAP_WINDOW_PX = (1080, 880)
 MAP_FLOOR_PX = 700
 
-# The column on the map's own frame, which used to hold the legend's two
-# controls and now holds the steering above them. Wide enough for a dial worth
-# turning -- 132 px of dial is a degree every 1.2 px at the rim -- and no wider,
-# because every pixel here comes off the map.
+# The column on the map's own frame: the legend's two controls, and for a while
+# the steering above them. A cap and not a width -- the column asks for what is
+# in it and the map takes the rest -- so with the dial moved into the fit window
+# the map gets those pixels back without this number having to be guessed again.
 MAP_COLUMN_PX = 190
 
 # What is left between them, and what is left for the map window's own frame.
@@ -518,7 +518,12 @@ LABEL_FRACTION = 0.14
 # how big it opens. `keep` first because it is the column being operated: the
 # rest is evidence, and the tick is the decision.
 FIT_COLUMNS = ("keep", "from", "to", "plane", "read over")
-FIT_WINDOW_PX = (560, 620)
+
+# Taller than it was by about what the steering is, now that the steering is in
+# here. `SatelliteWindow` caps this at the screen, and on the 741 px of usable
+# height this is written on it is capped: the two tables carry the stretch, so
+# what the cap costs is rows, which scroll, and not the buttons at the bottom.
+FIT_WINDOW_PX = (560, 800)
 
 # And what it shows about the fits the file already holds there. The same four
 # quantities in the same order, so the two tables read as one thing seen twice,
@@ -1724,10 +1729,10 @@ class EditorPanel(QtWidgets.QWidget):
 
         # The fourth button, which is not a fourth template: the three above write
         # a line for somebody to finish and this one does not write at all -- it
-        # opens the window that reads the topography, shows what came out, and
-        # keeps what is ticked. The ellipsis is the whole of how a button says
-        # that: three of these four press and one of them asks.
-        self.fit_button = QtWidgets.QPushButton("fit off the DEM...")
+        # opens the window where the fits are, all of them, however they were
+        # made. The ellipsis is the whole of how a button says that: three of
+        # these four press and one of them asks.
+        self.fit_button = QtWidgets.QPushButton("fits along this trace...")
         self.fit_button.clicked.connect(self.fit_asked.emit)
 
         if self.dem is None:
@@ -2768,7 +2773,7 @@ class EditorPanel(QtWidgets.QWidget):
 
 class PlaneSteering(QtWidgets.QWidget):
     """
-    A dial, a slider, and the number they are both saying: the plane on the DEM.
+    A dial, two bars, two numbers: the plane laid on the DEM, by hand.
 
     `tools/intersection.py`'s panel, cut down to what is left once the tool has
     something to aim at. Gone are the source point's three boxes and the
@@ -2780,10 +2785,17 @@ class PlaneSteering(QtWidgets.QWidget):
     stretch or from what is on screen, so both were answers to questions this
     tool can work out for itself.
 
-    What is left is the pair of controls that *are* the tool -- turn it, watch
-    the curves move, stop when they run along the fault -- plus the one button
-    that was missing from the other tool entirely: the number going into the
-    file.
+    What is left is the controls that *are* the tool -- turn it, watch the
+    curves move, stop when they run along the fault -- plus the one button that
+    was missing from the other tool entirely: the number going into the file.
+
+    **Each number has a dial or a bar and a box, and the bearing has both.** Not
+    a redundancy: a round control and a straight one are good at different
+    gestures. Swinging a plane through a quadrant to see where the cut goes is a
+    turn, and the dial is the only one of the two that does it without hitting
+    an end; nudging a bearing by a degree, or jumping from 90 to 270, is a
+    distance, and the bar is the only one of the two that shows where you are in
+    the range while you do it.
 
     **It reports into its own label and not into the status bar.** The bar is
     one line and shared with everything the panel says, and this fires on every
@@ -2819,7 +2831,11 @@ class PlaneSteering(QtWidgets.QWidget):
         self.dial.setRange(0, 359)
         self.dial.setWrapping(True)
         self.dial.setNotchesVisible(True)
-        self.dial.setMinimumSize(132, 132)
+
+        # Fixed and not a floor, now that it sits beside something that wants
+        # the width: left to stretch it would be drawn as an ellipse, and a
+        # bearing read off an ellipse is read off the wrong angle.
+        self.dial.setFixedSize(132, 132)
 
         # The dial alone steps by a whole degree and the convergence here is
         # 0.8, so without the tenth the correction would be finer than the
@@ -2831,6 +2847,30 @@ class PlaneSteering(QtWidgets.QWidget):
         self.dip_dir.setWrapping(True)
         self.dip_dir.setSuffix("°  dip dir")
 
+        # A bar for the bearing too, beside the dial and not instead of it.
+        #
+        # The dial is the better control for the gesture this tool exists for --
+        # swing the plane and watch the cut move, which is a turn and not a
+        # distance -- but it is the worse one for the gesture around it: nudging
+        # a bearing by a degree, or going to 270 from 90 without passing
+        # through everything between. A bar does both, and the two cost one
+        # widget to keep in step.
+        #
+        # **It cannot wrap, and that is the dial's half of the division.** The
+        # range runs 0 to 360 with north at both ends, so the whole circle is
+        # reachable from either side; dragged off the right-hand end it stops
+        # there rather than coming round, and the bearing it reports is taken
+        # modulo 360. Which is why the handle is not pulled back to the left
+        # while a hand is on it: the next thing to set the plane puts it there.
+        self.dip_dir_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dip_dir_slider.setRange(0, 360)
+        self.dip_dir_slider.setTickInterval(45)
+        self.dip_dir_slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
+        self.dip_dir_slider.setMinimumHeight(26)
+        self.dip_dir_slider.setPageStep(45)
+
+        self.dip_dir_scale = self._scale(self.dip_dir_slider)
+
         # Beside 132 px of dial, a slider at its natural height is a 20 px bar
         # between two spin boxes, which is the shape of a progress bar: it reads
         # as something being reported rather than something to take hold of. The
@@ -2840,39 +2880,14 @@ class PlaneSteering(QtWidgets.QWidget):
         # room under the groove for them and they come out not drawn, which is
         # why setting `TicksBelow` here had been doing nothing -- and a page step
         # of a tick, so that clicking the groove lands on one.
-        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 90)
-        self.slider.setTickInterval(15)
-        self.slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
-        self.slider.setMinimumHeight(26)
-        self.slider.setPageStep(15)
+        self.dip_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dip_slider.setRange(0, 90)
+        self.dip_slider.setTickInterval(15)
+        self.dip_slider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
+        self.dip_slider.setMinimumHeight(26)
+        self.dip_slider.setPageStep(15)
 
-        # And the ends of the range written under it, which is the other half of
-        # what the notches do: a dial with no numbers on it is still obviously a
-        # bearing, and a bar with no numbers could be running to 90 or to 360.
-        #
-        # The middle label sits at the middle of the groove and is exact; the
-        # outer two are off by half a handle, the groove being inset by that
-        # much at each end. That is the price of not reimplementing
-        # `QStyle.sliderPositionFromValue` to place three labels, and it is
-        # affordable because of what they are for: which end is which, and where
-        # the range stops. Neither is a reading taken off the bar -- the number
-        # is in the box below, to a tenth.
-        self.scale = QtWidgets.QWidget()
-
-        marks = QtWidgets.QHBoxLayout(self.scale)
-        marks.setContentsMargins(2, 0, 2, 0)
-        marks.setSpacing(0)
-
-        for degrees, side in (
-            (0, QtCore.Qt.AlignmentFlag.AlignLeft),
-            (45, QtCore.Qt.AlignmentFlag.AlignHCenter),
-            (90, QtCore.Qt.AlignmentFlag.AlignRight),
-        ):
-            mark = QtWidgets.QLabel(f"{degrees}°")
-            mark.setStyleSheet("color: #6a6a6a; font-size: 10px;")
-            mark.setAlignment(side | QtCore.Qt.AlignmentFlag.AlignTop)
-            marks.addWidget(mark, 1)
+        self.dip_scale = self._scale(self.dip_slider)
 
         self.dip = QtWidgets.QDoubleSpinBox()
         self.dip.setRange(0.0, 90.0)
@@ -2883,7 +2898,7 @@ class PlaneSteering(QtWidgets.QWidget):
         self.dip_dir.setValue(90.0)
         self.dip.setValue(30.0)
         self._sync_dial()
-        self._sync_slider()
+        self._sync_bars()
 
         self.label = QtWidgets.QLabel()
         self.label.setWordWrap(True)
@@ -2911,28 +2926,50 @@ class PlaneSteering(QtWidgets.QWidget):
 
         self.dial.valueChanged.connect(self._dial_moved)
         self.dip_dir.valueChanged.connect(self._dip_dir_typed)
-        self.slider.valueChanged.connect(self._slider_moved)
+        self.dip_dir_slider.valueChanged.connect(self._dip_dir_slid)
+        self.dip_slider.valueChanged.connect(self._dip_slid)
         self.dip.valueChanged.connect(self._dip_typed)
         self.on.toggled.connect(self._toggled)
+
+        # The dial beside the bars rather than above them, which is what the
+        # move out of the map's column bought. Stacked in 190 px the two bars
+        # would be 168 px long -- two degrees of bearing per pixel -- and the
+        # block would be 400 px tall; across a window they get the width, and
+        # the dial is level with the pair it belongs to.
+        bars = QtWidgets.QVBoxLayout()
+        bars.setSpacing(2)
+        bars.addWidget(self.dip_dir_slider)
+        bars.addWidget(self.dip_dir_scale)
+        bars.addWidget(self.dip_dir)
+
+        # A gap between the two, because this is four controls making two pairs
+        # -- each a thing to take hold of with its number under it -- and at an
+        # even spacing a bar sits as near the box above it as the one it belongs
+        # to. Which is not a hypothetical: with one bar here and the dial above
+        # it, the dip's slider was read as the dip direction's by the person who
+        # asked for this one.
+        bars.addSpacing(10)
+
+        bars.addWidget(self.dip_slider)
+        bars.addWidget(self.dip_scale)
+        bars.addWidget(self.dip)
+
+        turning = QtWidgets.QHBoxLayout()
+        turning.setSpacing(10)
+        turning.addWidget(self.dial, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        turning.addLayout(bars, 1)
+
+        pressing = QtWidgets.QHBoxLayout()
+        pressing.addWidget(self.take)
+        pressing.addWidget(self.release)
+        pressing.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(self.on)
-        layout.addWidget(self.dial)
-        layout.addWidget(self.dip_dir)
-
-        # A gap between the two, because the stack is four controls making two
-        # pairs -- each a thing to take hold of with its number under it -- and
-        # at an even spacing the slider sits as near the box above it as the one
-        # it belongs to. Six pixels is what it takes to read as a pair.
-        layout.addSpacing(6)
-
-        layout.addWidget(self.slider)
-        layout.addWidget(self.scale)
-        layout.addWidget(self.dip)
-        layout.addWidget(self.take)
-        layout.addWidget(self.release)
+        layout.addLayout(turning)
+        layout.addLayout(pressing)
         layout.addWidget(self.label)
 
         # The refusal is a fact about the session and not about the gesture --
@@ -2947,6 +2984,49 @@ class PlaneSteering(QtWidgets.QWidget):
             self.setToolTip(refusal)
         else:
             self._steering(False)
+
+    @staticmethod
+    def _scale(slider):
+        """
+        The ends of a slider's range written under it, and the middle.
+
+        The other half of what the notches do: a dial with no numbers on it is
+        still obviously a bearing, and a bar with no numbers could be running to
+        90 or to 360.
+
+        **Read off the slider and not argued**, so that a range changed in one
+        place does not leave a label behind saying what it used to be.
+
+        Three of them and not five, because three is the most that can be placed
+        exactly this way: equal cells with the outer two aligned outwards put
+        marks at 0, 1/2 and 1 of the width, which is where those values are. A
+        fourth would have to sit at 1/4, and equal cells would put it at 3/10 --
+        twenty pixels out on a bar this wide, which is a scale that lies. The
+        ends themselves are off by half a handle, the groove being inset by that
+        much, and that is the price of not reimplementing
+        `QStyle.sliderPositionFromValue`: affordable because of what they are
+        for -- which end is which, and where the range stops. Neither is a
+        reading taken off the bar; the number is in the box below, to a tenth.
+        """
+
+        low, high = slider.minimum(), slider.maximum()
+        scale = QtWidgets.QWidget()
+
+        marks = QtWidgets.QHBoxLayout(scale)
+        marks.setContentsMargins(2, 0, 2, 0)
+        marks.setSpacing(0)
+
+        for degrees, side in (
+            (low, QtCore.Qt.AlignmentFlag.AlignLeft),
+            ((low + high) // 2, QtCore.Qt.AlignmentFlag.AlignHCenter),
+            (high, QtCore.Qt.AlignmentFlag.AlignRight),
+        ):
+            mark = QtWidgets.QLabel(f"{degrees}°")
+            mark.setStyleSheet("color: #6a6a6a; font-size: 10px;")
+            mark.setAlignment(side | QtCore.Qt.AlignmentFlag.AlignTop)
+            marks.addWidget(mark, 1)
+
+        return scale
 
     # -- what it is saying -------------------------------------------------
 
@@ -2971,7 +3051,7 @@ class PlaneSteering(QtWidgets.QWidget):
                 box.setValue(value)
 
         self._sync_dial()
-        self._sync_slider()
+        self._sync_bars()
 
     def note(self, said):
         self.label.setText(said or "")
@@ -2999,7 +3079,14 @@ class PlaneSteering(QtWidgets.QWidget):
                    "the file until Apply, and then Save."
         )
 
-    # -- the two controls, each following the other ------------------------
+    # -- five controls saying two numbers, each following the others -------
+    #
+    # The boxes are what command, and everything else follows them: a gesture on
+    # a dial or a bar writes its box with the box's signal blocked and then puts
+    # the *other* representations of that box back in step, never the one under
+    # the hand. A control re-set while it is being dragged fights the pointer,
+    # and a bearing is the case where it would also lie -- 359.6 in the box
+    # rounds to 360, which the bar would then snap to its other end.
 
     def _sync_dial(self):
         with QtCore.QSignalBlocker(self.dial):
@@ -3007,32 +3094,58 @@ class PlaneSteering(QtWidgets.QWidget):
                 int(round(self.dip_dir.value() - self.DIAL_NORTH_OFFSET)) % 360
             )
 
-    def _sync_slider(self):
-        with QtCore.QSignalBlocker(self.slider):
-            self.slider.setValue(int(round(self.dip.value())))
+    def _sync_dip_dir_bar(self):
+        with QtCore.QSignalBlocker(self.dip_dir_slider):
+            self.dip_dir_slider.setValue(int(round(self.dip_dir.value())) % 360)
+
+    def _sync_dip_bar(self):
+        with QtCore.QSignalBlocker(self.dip_slider):
+            self.dip_slider.setValue(int(round(self.dip.value())))
+
+    def _sync_bars(self):
+        self._sync_dip_dir_bar()
+        self._sync_dip_bar()
 
     def _dial_moved(self, value):
         with QtCore.QSignalBlocker(self.dip_dir):
             self.dip_dir.setValue(float((value + self.DIAL_NORTH_OFFSET) % 360))
 
+        self._sync_dip_dir_bar()
+        self._answer()
+
+    def _dip_dir_slid(self, value):
+        with QtCore.QSignalBlocker(self.dip_dir):
+            self.dip_dir.setValue(float(value % 360))
+
+        self._sync_dial()
         self._answer()
 
     def _dip_dir_typed(self, value):
         self._sync_dial()
+        self._sync_dip_dir_bar()
         self._answer()
 
-    def _slider_moved(self, value):
+    def _dip_slid(self, value):
         with QtCore.QSignalBlocker(self.dip):
             self.dip.setValue(float(value))
 
         self._answer()
 
     def _dip_typed(self, value):
-        self._sync_slider()
+        self._sync_dip_bar()
         self._answer()
 
     def _steering(self, on):
-        for widget in (self.dial, self.dip_dir, self.slider, self.dip, self.take):
+        for widget in (
+            self.dial,
+            self.dip_dir_slider,
+            self.dip_dir_scale,
+            self.dip_dir,
+            self.dip_slider,
+            self.dip_scale,
+            self.dip,
+            self.take,
+        ):
             widget.setEnabled(on)
 
     def _toggled(self, on):
@@ -3316,6 +3429,36 @@ class FitFromDem(QtWidgets.QWidget):
         layout.addLayout(deciding)
 
         self.retarget()
+
+    def put_steering(self, steering):
+        """
+        Hangs the hand-steered plane between what the file claims and the sweep.
+
+        Built by the window and not here, because what it steers is drawn on the
+        map and this panel has never known that there is a map. Placed here
+        because of what it *makes*: a `fit` line on this trace, the same kind of
+        thing the sweep below it makes, which the table above it already listed
+        under `plane-dem` while living in another window entirely.
+
+        Between the two and not above either, so the window reads downwards as
+        what is already claimed, then the two ways to add to it -- a plane laid
+        by hand, and a window swept along the trace.
+        """
+
+        at = self.layout().indexOf(self.carried) + 1
+
+        for offset, widget in enumerate((self._rule(), steering, self._rule())):
+            self.layout().insertWidget(at + offset, widget)
+
+    @staticmethod
+    def _rule():
+        """A line across the window, which is all the sectioning this needs."""
+
+        rule = QtWidgets.QFrame()
+        rule.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        rule.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+
+        return rule
 
     # -- what it is pointed at ---------------------------------------------
 
@@ -4174,9 +4317,22 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.fit_panel.showing.connect(self._show_fitting)
         self.fit_panel.said.connect(self.say)
 
+        # Built here rather than in the panel, because every one of these four
+        # wires ends on the map: what it steers is drawn, and `FitFromDem` has
+        # never known that there is a map. Where it is *shown* is the panel's
+        # business, and the panel puts it between the file's fits and the sweep.
+        self.steering = PlaneSteering(refusal=self._steering_refusal())
+        self.steering.steered.connect(self._steer)
+        self.steering.take_asked.connect(self._take_plane)
+        self.steering.armed_changed.connect(self._steering_armed)
+        self.steering.unpin_asked.connect(self.unpin)
+
+        self.fit_panel.put_steering(self.steering)
+
         self.fit_window = SatelliteWindow(
-            "gSurf - fit off the DEM", self.fit_panel, FIT_WINDOW_PX, parent=self
+            "gSurf - fits along this trace", self.fit_panel, FIT_WINDOW_PX, parent=self
         )
+        self.fit_window.visibility_changed.connect(self._fitting_visible)
         self._fit_placed = False
 
         self.save_button = QtWidgets.QPushButton("Save")
@@ -4243,27 +4399,27 @@ class EditorWindow(QtWidgets.QMainWindow):
 
     def _beside_the_map(self, legend):
         """
-        The narrow column on the map's own frame: the steering, and the legend.
+        What is left on the map's own frame once the steering has gone: the
+        legend's two boxes.
 
-        The steering goes here and not in the panel, and the two windows can be
-        on different screens, so this is a choice about where the hand has to
-        be. What it steers is a picture -- curves swinging about a pin -- and
-        the judgement it serves is made by looking at them against the trace.
-        The number it produces lands in the box, which is a thing read
-        afterwards; the curves are the thing watched while the hand moves. A
-        dial on the other monitor would be steering by feel.
+        The steering was here, on the argument that what it steers is a picture
+        -- curves swinging about a pin -- and that the judgement it serves is
+        made by looking at them against the trace, so a dial on the other
+        monitor would be steering by feel. That argument was not wrong and it
+        was outweighed. A dial bolted to the map's frame is 190 px of map gone
+        for good, whether or not anybody is steering; and the thing it makes is
+        a `fit` line, which the fit window now lists, marks and will delete --
+        so leaving the steering out of it meant reaching a `plane-dem` line
+        through a window named after another producer.
+
+        What it costs is real and is left to the hand: the fit window can be
+        put on the other screen, and then the feel is gone. It opens at the
+        map's own corner, which is where the trade stays paid.
         """
-
-        self.steering = PlaneSteering(refusal=self._steering_refusal())
-        self.steering.steered.connect(self._steer)
-        self.steering.take_asked.connect(self._take_plane)
-        self.steering.armed_changed.connect(self._steering_armed)
-        self.steering.unpin_asked.connect(self.unpin)
 
         beside = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(beside)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.steering)
         layout.addStretch(1)
         layout.addWidget(LegendControls(self.map_view, placement=legend))
 
@@ -4293,7 +4449,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         reading = self.menuBar().addMenu("&Fit")
 
-        self.fit_action = QtGui.QAction("Read this trace off the &DEM...", self)
+        self.fit_action = QtGui.QAction("&Fits along this trace...", self)
         self.fit_action.setShortcut("Ctrl+D")
         self.fit_action.triggered.connect(self.open_fitting)
         reading.addAction(self.fit_action)
@@ -4339,6 +4495,30 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.fit_window.show()
         self.fit_window.raise_()
         self.fit_window.activateWindow()
+
+    def _fitting_visible(self, shown):
+        """
+        Takes the steered plane off the map when the window holding its dial goes.
+
+        The steering is a mode, and a mode whose way out has just been hidden is
+        a trap: closing this window used to be impossible, the dial being bolted
+        to the map's frame, and now it is one click. What would be left on the
+        map is a cut and a band nothing on screen can turn or switch off.
+
+        The numbers stay in the boxes, so coming back by Ctrl+D and ticking the
+        box again puts the same plane back. What is dropped is the drawing, and
+        it is said rather than done quietly: a picture that vanishes on its own
+        is a picture somebody goes looking for.
+        """
+
+        if shown or not self.steering.armed():
+            return
+
+        self.steering.on.setChecked(False)
+        self.say(
+            "The steered plane is off the map: its dial went with the window "
+            "(Ctrl+D brings both back, on the same plane)."
+        )
 
     def _place_fitting(self):
         """

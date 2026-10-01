@@ -2605,25 +2605,61 @@ def main():
               and "25833" in crossed_steering,
               (crossed_steering or "nothing said")[:58])
 
-        # The dial carries its scale on its own face; the slider carries it in
-        # three labels under the groove, and labels can go on saying 0 and 90
-        # long after somebody has moved the range. Asserted against the slider
-        # rather than against the numbers, because what would be wrong then is
-        # not the typo but the disagreement.
-        marked = [
-            steering.scale.layout().itemAt(at).widget().text()
-            for at in range(steering.scale.layout().count())
-        ]
-        ends = (f"{steering.slider.minimum()}°", f"{steering.slider.maximum()}°")
+        # The dial carries its scale on its own face; a bar carries it in three
+        # labels under the groove, and labels can go on saying 0 and 90 long
+        # after somebody has moved the range. Asserted against the bar rather
+        # than against the numbers, because what would be wrong then is not the
+        # typo but the disagreement.
+        def scale_of(scale):
+            return [
+                scale.layout().itemAt(at).widget().text()
+                for at in range(scale.layout().count())
+            ]
 
-        check("the dip slider says where its range starts and stops",
-              (marked[0], marked[-1]) == ends and len(marked) == 3,
-              f"{marked} against {list(ends)}")
+        for which, bar, scale in (
+            ("dip direction", steering.dip_dir_slider, steering.dip_dir_scale),
+            ("dip", steering.dip_slider, steering.dip_scale),
+        ):
+            marked = scale_of(scale)
+            ends = (f"{bar.minimum()}°", f"{bar.maximum()}°")
 
-        check("and a click on the groove lands on a tick",
-              steering.slider.pageStep() == steering.slider.tickInterval(),
-              f"{steering.slider.pageStep()} against ticks every "
-              f"{steering.slider.tickInterval()}")
+            check(f"the {which} bar says where its range starts and stops",
+                  (marked[0], marked[-1]) == ends and len(marked) == 3,
+                  f"{marked} against {list(ends)}")
+
+            check(f"and a click on the {which} groove lands on a tick",
+                  bar.pageStep() == bar.tickInterval(),
+                  f"{bar.pageStep()} against ticks every {bar.tickInterval()}")
+
+        # The bearing has both, and they are the same number: a turn of the dial
+        # moves the bar, a drag of the bar moves the dial, and the box is what
+        # both of them wrote. Checked across the wrap, which is the one place a
+        # straight bar and a round one cannot agree -- 350 is near north on the
+        # dial and near the right-hand end of the bar.
+        steering.dial.setValue((350 - steering.DIAL_NORTH_OFFSET) % 360)
+        QtWidgets.QApplication.processEvents()
+
+        turned = (steering.dip_dir.value(), steering.dip_dir_slider.value())
+
+        steering.dip_dir_slider.setValue(95)
+        QtWidgets.QApplication.processEvents()
+
+        check("the dial and the bearing bar are one number, each following the other",
+              turned == (350.0, 350) and steering.dip_dir.value() == 95.0
+              and steering.dial.value() == (95 - steering.DIAL_NORTH_OFFSET) % 360,
+              f"dial to 350 gave {turned}, bar to 95 gave "
+              f"{steering.dip_dir.value()} and dial {steering.dial.value()}")
+
+        # The far end of the bar is north again, the range being 0 to 360 so that
+        # the whole circle is reachable from either side. What it reports there is
+        # 0 and not 360, because that is what goes in a file.
+        steering.dip_dir_slider.setValue(360)
+        QtWidgets.QApplication.processEvents()
+
+        check("and its far end is north, reported as north",
+              steering.dip_dir.value() == 0.0 and steering.dial.value()
+              == (0 - steering.DIAL_NORTH_OFFSET) % 360,
+              f"{steering.dip_dir.value()} with the dial at {steering.dial.value()}")
 
         fitting.select(rows["VEE"])
 
@@ -3187,6 +3223,41 @@ def main():
         check("and it says which trace it is about, and how long that trace is",
               "VEE" in fit_ui.about.text() and " m" in fit_ui.about.text(),
               fit_ui.about.text())
+
+        # One window for the fits, whatever made them. The steering used to be
+        # bolted to the map's frame, which meant a `from=plane-dem` line was
+        # listed in one window and produced in another.
+        check("the hand-steered plane is in here too, between the file and the sweep",
+              steering.window() is fitting.fit_window
+              and fit_ui.layout().indexOf(fit_ui.carried)
+              < fit_ui.layout().indexOf(steering)
+              < fit_ui.layout().indexOf(fit_ui.table),
+              f"carried at {fit_ui.layout().indexOf(fit_ui.carried)}, steering at "
+              f"{fit_ui.layout().indexOf(steering)}, reading at "
+              f"{fit_ui.layout().indexOf(fit_ui.table)}")
+
+        # And a mode whose way out has been hidden is a trap: closing this window
+        # used to be impossible for the steering, the dial being on the map.
+        steering.on.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        armed_open = steering.armed()
+        held = steering.plane()
+
+        fitting.fit_window.hide()
+        QtWidgets.QApplication.processEvents()
+
+        check("closing it takes the steered plane off the map rather than "
+              "leaving it there unturnable",
+              armed_open and not steering.armed()
+              and len(fitting.cutting.get_xdata()) == 0,
+              f"armed {armed_open} open, {steering.armed()} closed")
+
+        check("and the plane itself is kept, so coming back resumes it",
+              steering.plane() == held, f"{held} -> {steering.plane()}")
+
+        fitting.open_fitting()
+        QtWidgets.QApplication.processEvents()
 
         # Read, and still nothing written anywhere. The whole of the window's
         # argument is that this step is free: what comes back is a list to be
