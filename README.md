@@ -1417,20 +1417,45 @@ goes in the file word for word.
 
 **And the other direction, which is why QGIS was in the loop at all.** `Point on
 the map` arms the window, the next shift-click says where the measurement was
-made, two dials and a station name make the plane, and `Add this reading` writes
-it. The arming is a mode held by a button that stays down, because a shift-click
+made, a checkbox says whether that was on the trace, two dials and a station name
+make the plane, and `Add this reading` writes it. The arming is a mode held by a button that stays down, because a shift-click
 already means two things and a third meaning carried by a modifier nobody is told
 about is how a click disappears — which this tool has done once already. It is
 spent by the click it was waiting for.
 
-**The point is not snapped, and that is the whole difference from the gesture
-beside it.** A fit's ends are progressives *along* a trace, so a shift-click for
-one snaps onto the path; a station is somewhere a person stood, and `off=` is the
-record of how far that was — *a station 80 m off a fault is a different claim from
-one standing on it*, which is why `imports` writes the number and why writing a
-snapped `off=0.0` would have been a lie in the one field that exists to prevent
-it. The check clicks 80 m out and reads 85.3 m back, the canvas quantising to
-pixels, and asserts the distance rather than a constant.
+**Whether the point goes on the trace is a checkbox, and it is checked.** The
+gesture was built without one, on the argument that a fit's ends are progressives
+*along* a trace while a station is somewhere a person stood, so `off=` is the
+record of how far that was and a snapped `off=0.0` would lie in the one field that
+exists to prevent it. That argument is right about a bedding reading taken near a
+fault and backwards about the fault itself: *a fault plane is measured on the
+fault*, the trace is the fault at the surface, and there the click beside the line
+is the artefact and the line is the record. `off=0.0` on a `src=field` attitude is
+FORMAT.md's own example.
+
+Nothing about the answer turns on it, and the check says so. `attitude_at` reads
+`s` and never the offset — `Anchored.resolve` recomputes the distance from the
+anchor, and `off=` is a copy of it in words — and `s` is the projection, which
+snapping does not move *along*. So the two settings differ in what the file records
+and in where the dot sits, not in what the trace answers: the check reads back
+`s=1341.64` either way and `misurata:S99@0m` with it.
+
+The snap happens at the press and not at the click. A click already taken is the
+one chance to change one's mind about which of the two statements the line makes,
+and a point snapped on arrival has thrown away the click that would have to be
+snapped back — so the window holds the click as it landed, `_writing()` decides,
+and clearing the box afterwards moves what will be written without moving what was
+clicked.
+
+And the distance is reported rather than refused. The check clicks 80 m out, reads
+85.3 m back — the canvas quantising to pixels — and the window says *the click sits
+85 m off the trace and the reading will be written on it: either the aim missed, or
+the trace is not drawn where the fault is*. Both readings of that number are
+ordinary, the second one especially at 1:50.000, and which it is is not something
+this window can know. The threshold for saying it is `SAME_OUTCROP_M`, already in
+the file as the width of one outcrop as somebody standing on it would place two
+readings: inside that, the snap moves the point within one outcrop and there is
+nothing to report.
 
 Whole degrees, where a fit gets one decimal, and nothing about north on the line.
 Both come off FORMAT.md's rule that the number in a file is always a true azimuth:

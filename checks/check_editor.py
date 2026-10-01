@@ -3443,10 +3443,9 @@ def main():
               and "Nothing measured" in putting.step.text(),
               putting.step.text())
 
-        # 80 m off the trace, which is the number the whole gesture turns on: a
-        # shift-click for a fit's end snaps onto the path, and a station is
-        # somewhere a person stood. Taken off the apex so that the point is
-        # unambiguously beside the trace rather than along it.
+        # 80 m off the trace, which is the number the whole gesture turns on.
+        # Taken off the apex so that the point is unambiguously beside the trace
+        # rather than along it.
         apex = point_on(vee.path, APEX_S)
         beside = (apex[0], apex[1] + 80.0)
 
@@ -3468,12 +3467,12 @@ def main():
 
         # Not 80.0: the click goes through the canvas as integer pixels, and on a
         # view this wide one pixel is metres. What the check is about is that the
-        # number is the distance and not zero -- a snapped anchor writes 0.0 --
-        # so the expected `off=` is read back from the point rather than written
-        # out, and the tolerance is the pixel.
+        # click is *kept* as it landed -- the snap happens at the press, so that
+        # the checkbox can still be changed -- so the expected `off=` is read back
+        # from the point rather than written out, and the tolerance is the pixel.
         off_clicked = putting._point[3] if putting._point else None
 
-        check("and the click lands unsnapped, with its distance from the trace",
+        check("and the click is held as it landed, with its distance from the trace",
               off_clicked is not None and abs(off_clicked - 80.0) < 10.0,
               f"off by {off_clicked:.1f} m, for a click aimed 80 m out"
               if off_clicked else "nothing")
@@ -3485,6 +3484,41 @@ def main():
               and putting.add_button.isEnabled()
               and "Dial the plane" in putting.step.text(),
               putting.step.text()[:60])
+
+        # -- and which of the two statements the line will make ---------------
+        #
+        # On by default, because a fault plane is measured on the fault and the
+        # trace is the fault at the surface. What has to hold is that it is still
+        # a choice after the click, and that choosing is visible before pressing.
+
+        check("checked by default, and said to be about to snap 80 m",
+              putting.snapping()
+              and f"{off_clicked:.0f} m off the trace" in putting.step.text()
+              and "on it" in putting.where.text(),
+              putting.step.text()[-90:])
+
+        snapped_anchor, snapped_off = putting._writing()
+        on_path = point_on(vee.path, putting._point[2])
+
+        check("snapping puts the anchor on the path, at the progressive it had",
+              snapped_off == 0.0
+              and abs(snapped_anchor[0] - on_path[0]) < 1e-9
+              and abs(snapped_anchor[1] - on_path[1]) < 1e-9,
+              f"{snapped_anchor} vs {on_path}, off={snapped_off}")
+
+        putting.on_trace.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        loose_anchor, loose_off = putting._writing()
+
+        check("clearing it after the click moves what will be written, not the click",
+              loose_anchor == (putting._point[0], putting._point[1])
+              and loose_off == off_clicked
+              and f"{off_clicked:.1f} m off it" in putting.where.text(),
+              putting.where.text()[-40:])
+
+        putting.on_trace.setChecked(True)
+        QtWidgets.QApplication.processEvents()
 
         putting.dip_dir.setValue(236)
         putting.dip.setValue(57)
@@ -3502,15 +3536,32 @@ def main():
 
         written_line = putting._in_file[0].line.strip()
 
-        # Whole degrees, like every imported attitude in the AOI, and `off=` from
-        # the click rather than 0.0 -- which a snapped anchor would have written,
-        # calling a measurement 80 m away a measurement on the fault.
-        check("as whole degrees, with src=field and the distance it was made at",
+        # Whole degrees, like every imported attitude in the AOI, and `off=0.0`,
+        # which is the format's own example of a field reading.
+        check("as whole degrees, with src=field and off=0.0 for a plane on the fault",
               "plane 236/57" in written_line
               and "station=S99" in written_line
               and "src=field" in written_line
-              and f"off={off_clicked:.1f}" in written_line,
+              and "off=0.0" in written_line,
               written_line[:90])
+
+        # The claim the checkbox's own tooltip makes, and the reason it can be
+        # offered at all: `attitude_at` reads `s` and never the offset, and `s` is
+        # the projection, which snapping does not move along the trace. So the two
+        # statements differ in what the file records and not in what it answers.
+        put_in_file = fitting.document.dataset.structures[rows["VEE"]].attitudes[0]
+        answered, how = (
+            fitting.document.dataset.structures[rows["VEE"]].attitude_at(APEX_S)
+        )
+
+        check("and snapping has not moved it along the trace, nor changed the answer",
+              abs(put_in_file.s - putting._in_file[0].place) < 1e-6
+              and put_in_file.offset is not None and put_in_file.offset < 1e-6
+              and answered is not None
+              and (answered.dip_dir, answered.dip) == (236.0, 57.0)
+              and how.startswith("misurata:S99"),
+              f"s={put_in_file.s:.2f} vs {putting._in_file[0].place}, "
+              f"offset={put_in_file.offset}, plane={answered!r}, {how}")
 
         # Nothing about north, because nothing was computed from grid
         # coordinates: a compass corrected for declination already reads in the

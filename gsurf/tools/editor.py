@@ -3777,24 +3777,46 @@ class ReadingsHere(QtWidgets.QWidget):
 
         # -- and the other direction ---------------------------------------
 
-        # Where the measurement was made, as `(x, y, s, off)`, or None. Not
-        # snapped to the trace, which is the one thing that makes this gesture
-        # different from the shift-click that picks a fit's end: a fit's ends are
-        # progressives *along* a trace, and a station is somewhere a person
-        # stood. `off=` is the record of the difference, and a snapped anchor
-        # would write 0.0 into it and call a measurement 80 m away a measurement
-        # on the fault.
+        # Where the measurement was made, as `(x, y, s, off, aimed)`, or None.
+        # `off` is what goes on the line and `aimed` is how far the click itself
+        # landed from the trace: the two differ only when the point was snapped,
+        # and then the second is the only place that number survives.
         self._point = None
 
         self.pick_point = QtWidgets.QPushButton("Point on the map")
         self.pick_point.setCheckable(True)
         self.pick_point.setToolTip(
-            "Then shift-click the map where the measurement was made -- where "
-            "you stood, not on the trace. How far that is from the trace goes "
-            "into the line as off=, which is what says whether this reading was "
-            "taken on the fault or near it."
+            "Then shift-click the map where the measurement was made. How far "
+            "that lands from the trace goes into the line as off=, which is what "
+            "says whether this reading was taken on the fault or near it."
         )
         self.pick_point.toggled.connect(self._wanting)
+
+        # Checked, because a fault plane is measured on the fault, and the trace
+        # *is* the fault at the surface. The gesture was built unsnapped on the
+        # argument that a station is where a person stood and `off=0.0` would lie
+        # about it -- which holds for a bedding reading near a fault and is the
+        # wrong way round for the fault itself, where the click off the line is
+        # the artefact and the line is the record.
+        #
+        # Nothing about the answer turns on this. `attitude_at` reads `s`, never
+        # the offset, and `s` is the same projection either way -- snapping moves
+        # the point onto the path at the progressive it already had. What changes
+        # is the anchor written in the file, the dot's place on the map, and the
+        # statement `off=` makes.
+        self.on_trace = QtWidgets.QCheckBox("measured on the trace itself")
+        self.on_trace.setChecked(True)
+        self.on_trace.setToolTip(
+            "Puts the point on the trace at the progressive the click projects "
+            "to, and writes off=0.0 -- the format's own example of a field "
+            "reading. Leave it checked for a fault plane read on the fault, and "
+            "clear it for a measurement made near the trace and not on it, where "
+            "the distance is worth keeping.\n\n"
+            "Which answer the reading gives does not depend on this: that is "
+            "decided by where along the trace the click projects to, and "
+            "snapping does not move it along."
+        )
+        self.on_trace.toggled.connect(self._tell)
 
         self.where = QtWidgets.QLabel()
         self.where.setStyleSheet("color: #6a6a6a; font-size: 11px;")
@@ -3834,9 +3856,13 @@ class ReadingsHere(QtWidgets.QWidget):
         self.add_button.setEnabled(False)
         self.add_button.clicked.connect(self.add_reading)
 
+        aiming = QtWidgets.QHBoxLayout()
+        aiming.addWidget(self.pick_point)
+        aiming.addWidget(self.on_trace, stretch=1)
+
         putting_in = QtWidgets.QGroupBox("Put one on it")
         in_laid = QtWidgets.QVBoxLayout(putting_in)
-        in_laid.addWidget(self.pick_point)
+        in_laid.addLayout(aiming)
         in_laid.addWidget(self.where)
         in_laid.addLayout(dialling)
         in_laid.addWidget(self.add_button)
@@ -4015,6 +4041,7 @@ class ReadingsHere(QtWidgets.QWidget):
         self.add_button.setEnabled(self._point is not None)
         self.pick_point.setEnabled(open_here)
         self.undo_button.setEnabled(self.panel.may_undo())
+        self.where.setText(self._placed_said())
         self.step.setText(self._step_said(at, why, open_here))
 
     def _step_said(self, at, why, open_here):
@@ -4033,15 +4060,33 @@ class ReadingsHere(QtWidgets.QWidget):
 
         if self.wanting_point():
             return (
-                "Shift-click the map where the measurement was made -- not on "
-                "the trace unless that is where you stood."
+                "Shift-click the map where the measurement was made"
+                + (
+                    " -- it goes on the trace at the progressive it projects to."
+                    if self.snapping()
+                    else ", and it stays where you click."
+                )
             )
 
         if self._point is not None:
-            return (
+            dialled = (
                 "Dial the plane, then `Add this reading`. The dip direction is a "
                 "true azimuth, declination already taken off."
             )
+
+            # Said and not refused, because the number has two readings and
+            # neither is a mistake: the click may have missed the trace, or the
+            # trace may be drawn tens of metres from the fault it stands for,
+            # which at 1:50.000 is ordinary and is the case snapping exists for.
+            # Which of the two it is, is not something this window can tell.
+            if self.snapping() and self._point[3] > SAME_OUTCROP_M:
+                return (
+                    f"{dialled} The click sits {self._point[3]:.0f} m off the "
+                    f"trace and the reading will be written on it -- either the "
+                    f"aim missed, or the trace is not drawn where the fault is."
+                )
+
+            return dialled
 
         if at is not None:
             claim = self._in_file[at]
@@ -4075,6 +4120,11 @@ class ReadingsHere(QtWidgets.QWidget):
 
         return self.pick_point.isChecked()
 
+    def snapping(self):
+        """Whether that click should be put on the trace rather than beside it."""
+
+        return self.on_trace.isChecked()
+
     def _wanting(self, on):
         if not on:
             self.showing.emit(None)
@@ -4084,20 +4134,52 @@ class ReadingsHere(QtWidgets.QWidget):
 
     def took_point(self, x, y, s, off):
         """
-        Where the measurement was made, from a click the map routed here.
+        Where the click landed, from the map, with `s` and `off` worked out there.
 
-        Kept unsnapped, and `s` and `off` arrive worked out rather than being
-        recomputed: the map has a path and this window has a structure, and two
-        places projecting a point onto a trace is two places to round it
-        differently.
+        Kept as it arrived even when the point is going to be snapped, and the
+        snap is done at `Add this reading`: a click already taken is the one
+        chance to change one's mind about which of the two statements the line
+        should make, and a point snapped on arrival has thrown away the click
+        that would have to be snapped back.
+
+        `s` and `off` come worked out rather than recomputed because the map has
+        a path and this window has a structure, and two places projecting a point
+        onto a trace is two places to round it differently.
         """
 
         self._point = (float(x), float(y), float(s), float(off))
         self.pick_point.setChecked(False)
-        self.where.setText(
-            f"{x:.2f}, {y:.2f} -- {s:.0f} m along this trace, {off:.1f} m off it"
-        )
         self._tell()
+
+    def _placed_said(self):
+        """Where the next press would put it, which the checkbox can still move."""
+
+        if self._point is None:
+            return ""
+
+        x, y, s, off = self._point
+
+        if not self.snapping():
+            return f"{x:.2f}, {y:.2f} -- {s:.0f} m along this trace, {off:.1f} m off it"
+
+        structure = self._structure()
+        on_it = point_on(structure.path, s) if structure is not None else (x, y)
+
+        return (
+            f"{on_it[0]:.2f}, {on_it[1]:.2f} -- {s:.0f} m along this trace, on it"
+            + (f"; the click was {off:.1f} m off" if off > SAME_OUTCROP_M else "")
+        )
+
+    def _writing(self):
+        """The anchor and the `off=` the next press would write, snapped or not."""
+
+        x, y, s, off = self._point
+        structure = self._structure()
+
+        if not self.snapping() or structure is None:
+            return (x, y), off
+
+        return point_on(structure.path, s), 0.0
 
     def add_reading(self):
         """The dialled measurement into the block, at the point that was clicked."""
@@ -4105,7 +4187,7 @@ class ReadingsHere(QtWidgets.QWidget):
         if self._point is None:
             return False
 
-        x, y, _, off = self._point
+        (x, y), off = self._writing()
         attrs = {}
         named = self.station.text().strip()
 
@@ -4119,7 +4201,10 @@ class ReadingsHere(QtWidgets.QWidget):
 
         # Written for the reason `imports` writes it: `s` is derived and looks
         # exact whatever the distance, so without this the file cannot say
-        # whether the compass was on the fault or near it.
+        # whether the compass was on the fault or near it. Nothing downstream
+        # reads it -- `Anchored.resolve` recomputes the distance from the anchor
+        # and `attitude_at` never asks -- so this is the line stating in words
+        # what the coordinates already imply, which is the whole of its job.
         attrs["off"] = f"{off:.1f}"
 
         line = reading_line(x, y, self.dip_dir.value(), self.dip.value(), attrs)
@@ -4135,7 +4220,6 @@ class ReadingsHere(QtWidgets.QWidget):
         )
 
         self._point = None
-        self.where.setText("")
         self.station.clear()
         self.showing.emit(None)
         self.wrote.emit()
@@ -7443,7 +7527,12 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.pick(x, y, anchor=shifted)
 
     def _point_for_reading(self, x, y):
-        """A click sent to the measurements window, unsnapped, with its distance."""
+        """A click sent to the measurements window as it landed, with its distance.
+
+        Projected here and snapped there, if at all: this is the half that needs
+        the path, and whether the anchor ends up on the trace is a statement about
+        what was measured, which the window holds and a click does not.
+        """
 
         if self.index is None:
             self.say("nothing selected to measure on")
@@ -7461,7 +7550,9 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_panel.took_point(*here, s, off)
         self.say(
             f"the measurement goes at {s:.0f} m along {structure.ident}, "
-            f"{off:.1f} m off it -- dial the plane and press `Add this reading`"
+            + ("on the trace" if self.readings_panel.snapping()
+               else f"{off:.1f} m off it")
+            + " -- dial the plane and press `Add this reading`"
         )
 
     def pick(self, x, y, anchor=False):
