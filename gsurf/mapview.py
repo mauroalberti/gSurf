@@ -522,6 +522,63 @@ class MapView(QtWidgets.QWidget):
 
         return bool(self.toolbar.mode)
 
+    # The navigation buttons, in the words on their own tooltips. `toolbar.mode`
+    # is matplotlib's enum and reads `pan/zoom` or `zoom rect`; pan goes first
+    # because its value carries the word `zoom` as well.
+    NAVIGATING_AS = (("pan", "Pan"), ("zoom", "Zoom to rectangle"))
+
+    def navigating_as(self):
+        """Which navigation button has the mouse, named as the bar names it."""
+
+        mode = str(self.toolbar.mode or "").lower()
+
+        for word, named in self.NAVIGATING_AS:
+            if word in mode:
+                return named
+
+        return None
+
+    def _swallowed(self):
+        """
+        Says that a gesture meant for the tool went to the navigation bar.
+
+        **This is where a click disappears without trace**, and it took somebody
+        failing three times to find it. The bar is modal and its buttons stay
+        down, so zooming in to see which way a trace runs and then ctrl-clicking
+        it is one motion with a mode change in the middle of it. Measured on the
+        trace editor: with `Zoom to rectangle` still on, every ctrl-click and
+        every shift-click returned here, nothing was said anywhere, and the tool
+        went on asking for the click it had just been given.
+
+        Only with ctrl or shift held, and that is the whole of what makes this
+        quiet enough to say at all. A plain press in pan mode *is* the pan, and a
+        tool is not owed a message about a gesture that did what it looks like;
+        a press with a modifier is aimed at the tool -- nothing in this project
+        binds either modifier to anything the bar does -- so it is a gesture
+        with nowhere to arrive.
+        """
+
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+
+        held = [
+            word
+            for word, modifier in (
+                ("ctrl", QtCore.Qt.KeyboardModifier.ControlModifier),
+                ("shift", QtCore.Qt.KeyboardModifier.ShiftModifier),
+            )
+            if modifiers & modifier
+        ]
+
+        if not held:
+            return
+
+        self.status.emit(
+            f"{'-'.join(held)}-click went to the navigation bar: `"
+            f"{self.navigating_as()}` is still on, so the mouse is driving the "
+            f"map instead of reaching what is on it -- press that button again "
+            f"to release it"
+        )
+
     def display_xy(self, x, y):
         """Map coordinates as screen pixels, for thresholds that must not
         change with the zoom scale."""
@@ -529,7 +586,13 @@ class MapView(QtWidgets.QWidget):
         return self.axes.transData.transform((x, y))
 
     def _on_press(self, event):
-        if self.is_navigating() or event.inaxes is not self.axes or event.xdata is None:
+        if self.is_navigating():
+            if event.inaxes is self.axes:
+                self._swallowed()
+
+            return
+
+        if event.inaxes is not self.axes or event.xdata is None:
             return
 
         # A legend inside the map is inside the axes as well, and its entries

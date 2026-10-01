@@ -1516,6 +1516,27 @@ pinning would have arrived first, true and useless and about the wrong line. On
 `Mt. Alpi faults.2` the line now reads *turn this line's ends round — written as
 they are it runs from 2689 m back to 791 m and holds over no ground*.
 
+**And then that line was read, followed, and still did not work** — which is how
+the actual reason was found, three failures in. matplotlib's navigation bar is
+modal and its buttons stay down, and `MapView._on_press` hands nothing on while
+one of them is: with `Zoom to rectangle` still pressed from zooming in to see
+which way the trace runs, every ctrl-click and every shift-click on the map
+returned there, nothing was said anywhere, and the step line went on asking for
+the click it had just been given. Not a corner of the tool — zooming in and then
+clicking what you zoomed in on is one motion, with a mode change in the middle of
+it.
+
+So the press now says so, and the step line says it instead of the gesture: *release
+`Zoom to rectangle` in the map's toolbar — while it is on, a click drives the map
+instead of reaching the trace*. Instead of and not in front of, because the rule
+there is the earliest thing still missing and a mode eating the click is earlier
+than the click. **Only with ctrl or shift held**, which is what makes it quiet
+enough to say at all: a plain press in pan mode *is* the pan and is owed no
+message, while nothing in this project binds either modifier to anything the bar
+does, so a modified press is a gesture with nowhere to arrive. The check drives it
+through Qt rather than calling `pin_freely`, which is the point — every other check
+of this sequence reaches past the gesture, and the defect lived in the gesture.
+
 **Where it goes wrong is where the geology says it should.** The cut passes
 through the pin within half a cell of the DEM — 1.5 m over four attitudes on the
 check's 5 m fixture — until the plane lies down on the slope, and then it wanders:

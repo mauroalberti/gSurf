@@ -2870,6 +2870,101 @@ def main():
               and steering.step.text().startswith("next:"),
               steering.step.text())
 
+        # -- the click that goes to the navigation bar ---------------------
+
+        # The state nothing on screen admitted to, and the reason somebody could
+        # not get one of these into a file over three evenings: matplotlib's bar
+        # is modal, its buttons stay down, and `MapView._on_press` hands nothing
+        # on while one of them is. Zooming in to see which way a trace runs and
+        # then ctrl-clicking it is one motion with a mode change in the middle of
+        # it, so this is not a corner -- it is the ordinary way round.
+        #
+        # Driven through Qt and not by calling `pin_freely`, which is the whole
+        # point: every other check here reaches past the gesture, and the defect
+        # lived in the gesture. The modifier has to be the one Qt reports, too --
+        # `_on_map_pressed` asks `QApplication.keyboardModifiers()` rather than
+        # matplotlib's key state, because the map does not have the keyboard when
+        # the hand is holding ctrl over it.
+        from PyQt6.QtTest import QTest
+
+        fitting.show()
+        QtWidgets.QApplication.processEvents()
+
+        canvas = fitting.map_view.canvas
+        bar = fitting.map_view.toolbar
+
+        def on_canvas(x, y):
+            px, py = fitting.on_map([(x, y)])[0]
+            sx, sy = fitting.map_view.axes.transData.transform((px, py))
+            ratio = canvas.devicePixelRatioF()
+
+            return QtCore.QPoint(int(sx / ratio), int(canvas.height() - sy / ratio))
+
+        def click(x, y, modifier):
+            QTest.mouseClick(
+                canvas, QtCore.Qt.MouseButton.LeftButton, modifier, on_canvas(x, y),
+            )
+            QtWidgets.QApplication.processEvents()
+
+        CTRL = QtCore.Qt.KeyboardModifier.ControlModifier
+        waiting = steering.step.text()
+        held_pin = fitting._free_pin
+        anywhere = point_on(vee.path, vee.length / 2.0)
+
+        fitting._free_pin = None
+        fitting.statusBar().clearMessage()
+        click(*anywhere, CTRL)
+
+        check("a ctrl-click on the map pins the plane where it landed",
+              fitting._free_pin is not None
+              and "pinned" in fitting.statusBar().currentMessage(),
+              fitting.statusBar().currentMessage()[:70] or "nothing said")
+
+        bar.zoom()
+        fitting._free_pin = None
+        fitting.statusBar().clearMessage()
+        click(*anywhere, CTRL)
+
+        said_swallowed = fitting.statusBar().currentMessage()
+
+        check("with the zoom button down the same click is reported, not swallowed",
+              fitting._free_pin is None
+              and "navigation bar" in said_swallowed
+              and "Zoom to rectangle" in said_swallowed,
+              said_swallowed[:92] or "nothing said")
+
+        # And the line that says what to do next says the mode rather than the
+        # gesture: the rule there is that the answer is the earliest thing still
+        # missing, and a mode eating the click is earlier than the click.
+        fitting._tell_next()
+
+        check("and the next step is releasing that button, not the click",
+              "Zoom to rectangle" in steering.step.text()
+              and "shift-click" not in steering.step.text(),
+              steering.step.text())
+
+        # A plain press in pan mode *is* the pan, and is owed no message: that is
+        # what keeps this quiet enough to say at all. Only ctrl and shift are
+        # unambiguously aimed past the bar, nothing in this project binding
+        # either to anything the bar does.
+        bar.zoom()
+        bar.pan()
+        fitting.statusBar().clearMessage()
+        click(*anywhere, QtCore.Qt.KeyboardModifier.NoModifier)
+
+        check("but a plain press in pan mode is the pan, and says nothing",
+              fitting.statusBar().currentMessage() == "",
+              fitting.statusBar().currentMessage()[:60] or "nothing said")
+
+        bar.pan()
+        fitting._free_pin = held_pin
+        steering.set_pinned(held_pin is not None)
+        fitting._resteer()
+        fitting._tell_next()
+
+        check("and with the bar released the step is the click again",
+              steering.step.text() == waiting, steering.step.text())
+
         check("but a line whose ends are still `*` is written and not kept",
               len(fitting.document.dataset.structures[rows["VEE"]].fits)
               == before_keeping,

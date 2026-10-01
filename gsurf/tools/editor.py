@@ -5646,6 +5646,33 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self.steering.tell_next(self._next_step())
 
+    def _by_clicking(self, said):
+        """
+        A step that is a click on the map, or what is keeping one from landing.
+
+        The navigation bar owns the mouse while one of its buttons is down, and
+        those buttons stay down: `MapView._on_press` hands nothing on, so the pin
+        and the ends cannot be clicked and the line below went on asking for them
+        anyway. This is the state that had somebody unable to write a
+        `from=plane-dem` fit three evenings running, and nothing on screen was
+        wrong -- the advice was right, the gesture was right, and the click was
+        going somewhere else.
+
+        Returned instead of the step and not in front of it: the rule here is
+        that the answer is the earliest thing still missing, and a mode that eats
+        the gesture is earlier than the gesture.
+        """
+
+        named = self.map_view.navigating_as()
+
+        if named is None:
+            return said
+
+        return (
+            f"release `{named}` in the map's toolbar: while it is on, a click "
+            f"drives the map instead of reaching the trace"
+        )
+
     def _next_step(self):
         """
         The one gesture that would take a steered plane nearer the file, or None.
@@ -5694,14 +5721,14 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
 
         if claimed is not None and claimed[0] > claimed[1]:
-            return (
+            return self._by_clicking(
                 f"turn this line's ends round -- written as they are it runs "
                 f"from {claimed[0]:.0f} m back to {claimed[1]:.0f} m and holds "
                 f"over no ground: select one end and shift-click the map"
             )
 
         if self._pin is None:
-            return (
+            return self._by_clicking(
                 "ctrl-click the trace to pin the plane on it, or put the caret "
                 "on a line that claims a stretch"
             )
@@ -5728,7 +5755,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             )
 
         if not anchors_written(line):
-            return (
+            return self._by_clicking(
                 "shift-click the two ends of the stretch it holds over, then "
                 "press `Keep this plane` again"
             )
