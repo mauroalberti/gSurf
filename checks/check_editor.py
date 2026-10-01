@@ -752,6 +752,17 @@ def main():
               == shortcuts_of(window.net_window) == {"Ctrl+S", "Ctrl+Return"},
               " and ".join(sorted(shortcuts_of(window.net_window))))
 
+        # The fourth too, and it had been left out: `_build_shortcuts` iterated
+        # the group, and the fit window is deliberately not in the group so that
+        # it does not come up at start-up. Harmless while it was a list to tick
+        # and shut. Not harmless once the steering moved in, because then keeping
+        # a plane and writing the file were in two windows for no reason anybody
+        # chose -- which is the complaint that found it.
+        check("and from the fit window, which is not in the group",
+              shortcuts_of(window.fit_window) == {"Ctrl+S", "Ctrl+Return"}
+              and window.fit_window not in window.group.satellites.values(),
+              " and ".join(sorted(shortcuts_of(window.fit_window))) or "none")
+
         check("and the buttons carry none of their own, so neither is ambiguous",
               window.save_button.shortcut().isEmpty()
               and window.panel.apply_button.shortcut().isEmpty())
@@ -1003,11 +1014,27 @@ def main():
               != window.document.text_of(window.index)
               and not window.document.dirty)
 
+        # A third click on that line has nowhere to go and is now refused, so the
+        # two checks below each get a template of their own. It used to land, and
+        # what it did is why the refusal exists: the caret sits just after the
+        # second anchor, so a third coordinate went in *there* --
+        # `span use @A @B @C rejected reason="check"` -- putting a coordinate in
+        # the slot that holds what the span claims and pushing `rejected` out of
+        # it. The line parsed. The span meant something else.
+        before_a_third = window.panel.text.toPlainText()
+
+        window.pick(603000.0, 4420400.0, anchor=True)
+
+        check("a third anchor on a finished line is refused, the line left alone",
+              window.panel.text.toPlainText() == before_a_third,
+              window.statusBar().currentMessage())
+
         # An anchor goes on the selected trace whatever it was aimed at, which is
         # the rule that keeps a progressive off a fault nobody measured -- and the
         # rule the dots put at risk, now that a green dot on a neighbour is a
         # visible thing to aim at. Gamma is open; this click is 10 m from Beta and
         # 1200 m from Gamma, and it is written on Gamma, correctly and silently.
+        window.panel.add_line('  span use * * rejected reason="nearer"')
         window.pick(602200.0, 4420010.0, anchor=True)
         aimed = window.statusBar().currentMessage()
 
@@ -1016,6 +1043,7 @@ def main():
 
         # And the same click aimed at the trace it is on says nothing extra, or the
         # warning would be furniture rather than a warning.
+        window.panel.add_line('  span use * * rejected reason="on it"')
         window.pick(603000.0, 4420300.0, anchor=True)
         aimed = window.statusBar().currentMessage()
 
@@ -2803,9 +2831,11 @@ def main():
               grazing > 4.0 * CELL,
               f"{grazing:.1f} m out at 2.7 degrees from the DEM's own plane")
 
-        # The number, into the line the caret is on, and nowhere else until
-        # Apply. One replacement of one line, so it is one step of the undo
-        # stack: a dial that wrote as it turned would put ninety there.
+        # The number, into the line the caret is on. One replacement of one line,
+        # so it is one step of the undo stack: a dial that wrote as it turned
+        # would put ninety there.
+        before_keeping = len(fitting.document.dataset.structures[rows["VEE"]].fits)
+
         steering.show_plane(140.5, 31.0)
         fitting._steer(140.5, 31.0)
         fitting._take_plane()
@@ -2815,6 +2845,97 @@ def main():
 
         check("the button writes the steered attitude into the caret's line",
               "140.5/31.0" in taken, taken.strip()[:66])
+
+        # And stops there, this line's ends being still `*`. `interval_of` reads
+        # those as the ends of the path, correctly, so applying now would assert
+        # a claim over all of VEE in one press with the band on the map looking
+        # exactly as it does -- which is the one thing this button must not be
+        # able to do by itself.
+        check("but a line whose ends are still `*` is written and not kept",
+              len(fitting.document.dataset.structures[rows["VEE"]].fits)
+              == before_keeping,
+              f"{before_keeping} fit(s) before, "
+              f"{len(fitting.document.dataset.structures[rows['VEE']].fits)} after")
+
+        # The ends are still pickable, which is what the plane being written must
+        # not cost. It used to: replacing the whole line dropped the selection
+        # that was on a `*`, and the next shift-click wrote its coordinate at the
+        # caret -- that is, at the end of the line, in a place `loads` reads as a
+        # token it has no slot for and discards. Measured on the AOI's L0071, a
+        # plane written first and two ends clicked after gave a fit claiming all
+        # 7239 m of the trace and kept neither click, and it parsed.
+        aimed = fitting.panel.text.textCursor()
+
+        check("and the ends it has not got yet are still what a click would fill",
+              aimed.hasSelection() and aimed.selectedText() == "*",
+              f"selection {aimed.selectedText()!r}")
+
+        quarter, three = (
+            point_on(vee.path, vee.length / 4.0),
+            point_on(vee.path, vee.length * 3.0 / 4.0),
+        )
+
+        fitting.panel.insert_anchor(*quarter)
+        fitting.panel.insert_anchor(*three)
+        QtWidgets.QApplication.processEvents()
+
+        clicked = fitting.panel.text.textCursor().block().text()
+
+        # The two end slots, and no bare `@x,y` anywhere after them. Not a count
+        # of `@` in the line: the provenance carries `at=@x,y`, which is a third
+        # one and belongs there -- it is where the plane was *determined*, against
+        # the two ends it is *attributed* to.
+        tokens = clicked.split()
+
+        check("so two clicks after the plane land in the two slots, not in a heap",
+              tokens[2].startswith("@") and tokens[3].startswith("@")
+              and tokens[4] == "140.5/31.0"
+              and not any(one.startswith("@") for one in tokens[5:]),
+              clicked.strip()[:92])
+
+        # Pressed again, on a line that is now finished, and this time it keeps:
+        # the looking has been done -- steered by hand, with the band saying where
+        # the agreement ran out -- and a second window asking the same question
+        # would teach the answer rather than the question. It is `keep_fits`'
+        # rule, with the one condition that tells the two apart.
+        fitting._take_plane()
+        QtWidgets.QApplication.processEvents()
+
+        kept_now = fitting.document.dataset.structures[rows["VEE"]].fits
+
+        check("and pressing it on a finished line keeps it, with no Apply",
+              len(kept_now) == before_keeping + 1,
+              f"{len(kept_now)} fit(s), was {before_keeping}")
+
+        # Over the ground that was clicked, which is the assertion the whole fix
+        # rests on: the quarter points and not 0 to the whole length. Found by the
+        # plane it carries rather than taken off the end of the list, so that the
+        # check says what it means if the order ever changes.
+        landed = [
+            one for one in kept_now
+            if abs(one.plane.dip_dir - 140.5) < 0.05
+            and abs(one.plane.dip - 31.0) < 0.05
+        ]
+
+        check("over the stretch the two clicks enclose, not over the whole trace",
+              len(landed) == 1
+              and abs(landed[0].s0 - vee.length / 4.0) < 1.0
+              and abs(landed[0].s1 - vee.length * 3.0 / 4.0) < 1.0,
+              f"{len(landed)} such fit(s)" if len(landed) != 1 else
+              f"{landed[0].s0:.0f} to {landed[0].s1:.0f} m of {vee.length:.0f}")
+
+        # A third click on that line has nowhere to go, and says so instead of
+        # going somewhere. This is the other half of the same defect: the silent
+        # drop was reachable from any finished line, not only from one a plane
+        # had just been written into.
+        full = fitting.panel.text.textCursor().block().text()
+        third = fitting.panel.insert_anchor(*point_on(vee.path, vee.length / 2.0))
+        QtWidgets.QApplication.processEvents()
+
+        check("a third click on a finished line is refused, not swallowed",
+              third is None
+              and fitting.panel.text.textCursor().block().text() == full,
+              f"returned {third!r}")
 
         # With the provenance, which is the format's rule and not decoration: a
         # derived plane names the producer that made it. This one has no gate and
@@ -2833,22 +2954,25 @@ def main():
               "north=true" in taken and "converg=+" in taken,
               taken.strip()[-46:])
 
-        # The line still parses, which is the assertion all of the above rests
-        # on: a plane spliced into a slot is only worth anything if the file
-        # reads back saying it.
+        # The line parses, which is the assertion all of the above rests on: a
+        # plane spliced into a slot is only worth anything if the file reads back
+        # saying it. The keep has already been through the parser, so Apply here
+        # is asserting that it is idempotent -- pressing it over a block already
+        # in the document replaces that block rather than adding to it.
         fitting.panel.apply_block()
         QtWidgets.QApplication.processEvents()
 
         kept = fitting.document.dataset.structures[rows["VEE"]].fits
 
-        check("Apply takes it, and it reads back as the plane that was steered",
-              any(
+        check("it reads back as the plane that was steered, and Apply adds nothing",
+              len(kept) == before_keeping + 1
+              and any(
                   abs(one.plane.dip_dir - 140.5) < 0.05
                   and abs(one.plane.dip - 31.0) < 0.05
                   and one.attrs.get("from") == "plane-dem"
                   for one in kept
               ),
-              f"{len(kept)} fit(s) on VEE")
+              f"{len(kept)} fit(s) on VEE, was {before_keeping}")
 
         # Switched off, nothing of it is left on the map. The claim's band is not
         # its to take away -- that belongs to the line, not to the dial.
@@ -3118,7 +3242,7 @@ def main():
         # hand turns the dial, and then has to reach the line the number is
         # going into; reaching it handed the dial back to whatever that line
         # already said, silently, which for a fresh template is `000/00`. So the
-        # whole gesture -- steer, write it in the line, Apply, Save -- put a
+        # whole gesture -- steer, Keep this plane, Save -- put a
         # horizontal plane in the file with `from=plane-dem` on it, and nothing
         # on the way through looked wrong.
         #

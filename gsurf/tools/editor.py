@@ -206,6 +206,7 @@ from gsurf.curation import (
     UNCONSTRAINED,
     Document,
     anchor_of,
+    anchors_written,
     covered_metres,
     degrees_not_metres,
     fits_in,
@@ -2649,13 +2650,57 @@ class EditorPanel(QtWidgets.QWidget):
 
         edit = self.text.textCursor()
         edit.movePosition(QtGui.QTextCursor.MoveOperation.StartOfBlock)
+        at = edit.position()
         edit.movePosition(
             QtGui.QTextCursor.MoveOperation.EndOfBlock,
             QtGui.QTextCursor.MoveMode.KeepAnchor,
         )
         edit.insertText(written)
 
+        # **And the ends are left pickable**, which takes saying so. Replacing
+        # the whole line drops the selection that was on a `*`, and a shift-click
+        # with nothing aimed writes its coordinate at the caret -- which here is
+        # the end of the line, where `loads` reads a token it has no slot for and
+        # drops it. Measured on L0071: a plane written first and two ends clicked
+        # after gave `fit plane * * 220.0/35.0 from=plane-dem @...,... @...,...`,
+        # which applies, claims all 7239 m of the trace, and keeps neither click.
+        #
+        # On this line only. A plane written into a line that is already finished
+        # must not reach down into the next one looking for a `*` to aim at.
+        self._aim_at_anchor(at, same_line=True)
+
         return written
+
+    def keep_plane(self, dip_dir, dip, attrs=None):
+        """
+        A steered plane into the caret's line, applied if the line is finished.
+
+        Returns `(the line, whether it is in the document)`.
+
+        `keep_fits`' sibling, and the condition is the one difference between
+        them. The swept fits arrive with their ends computed, so there is nothing
+        left for anybody to decide and applying them is right. A steered plane
+        lands on a line whose ends may still be `*`, which `interval_of` reads as
+        the whole trace -- correctly -- and applying *that* would assert a claim
+        over ground nobody picked, in one press, with the band on the map looking
+        exactly as it did.
+
+        So the apply waits for two anchors. Not a refusal and not a dialog: the
+        plane is in the box either way, the ends can be clicked after it now,
+        and pressing again keeps it. Which also makes the button idempotent,
+        because what it writes is a function of the dial and not of what is
+        already there.
+        """
+
+        written = self.take_plane(dip_dir, dip, attrs)
+
+        if written is None:
+            return None, False
+
+        if not anchors_written(written):
+            return written, False
+
+        return written, self.apply_block()
 
     def _aim_at_anchor(self, start, same_line=False):
         """Selects the next `*`, so that a picked anchor replaces it."""
@@ -2690,7 +2735,8 @@ class EditorPanel(QtWidgets.QWidget):
         as one word it cannot make sense of.
 
         Returns whether closing the pair put it the wrong way round and it was
-        turned -- see `with_ends_in_order`, and `pick`, which says so.
+        turned -- see `with_ends_in_order`, and `pick`, which says so. Or None,
+        where the click had nowhere to go and nothing was written.
 
         **One step of the undo stack for one click**, which the turn is the
         reason for: two edits to the document would take two Ctrl-Zs to undo,
@@ -2699,6 +2745,13 @@ class EditorPanel(QtWidgets.QWidget):
         `_order_ends` that joins them and not a `beginEditBlock` around both,
         and that is not a preference -- see the note there.
         """
+
+        nowhere = self._nowhere_for_an_anchor()
+
+        if nowhere is not None:
+            self.said.emit(nowhere)
+
+            return None
 
         cursor = self.text.textCursor()
         written = f"@{x:.2f},{y:.2f}"
@@ -2721,6 +2774,36 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setFocus()
 
         return turned
+
+    def _nowhere_for_an_anchor(self):
+        """
+        Why a picked anchor would not land, or None if it will.
+
+        One case, and it was silent until it was looked for: a line whose anchor
+        slots are all written, with no `*` selected. The coordinate goes in at
+        the caret, `loads` drops it, and the line goes on claiming exactly what it
+        claimed -- so the click is gone with no error anywhere and the only
+        evidence is a band that did not move.
+
+        Refused rather than guessed at. Which of two written ends a third click
+        meant to replace is not something this can know, and overwriting the
+        nearer one would be a rule nobody asked for applied silently to somebody's
+        own typing. Said with the way out in it, because selecting an end and
+        shift-clicking *does* replace it -- the selection is what this reads.
+        """
+
+        cursor = self.text.textCursor()
+
+        if cursor.hasSelection() and cursor.selectedText() == "*":
+            return None
+
+        if not anchors_written(self._line_now()):
+            return None
+
+        return (
+            "this line's ends are both written: select one to replace it, or "
+            "put the caret on a line that still has a `*`"
+        )
 
     def _order_ends(self):
         """
@@ -2906,7 +2989,14 @@ class PlaneSteering(QtWidgets.QWidget):
         self.label.setMinimumHeight(48)
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
-        self.take = QtWidgets.QPushButton("write it in the line")
+        # `Keep this plane`, and the word is borrowed on purpose from the button
+        # six inches below it: `Keep the ticked ones`. Two producers in one window
+        # and one verb between them, because what the two gestures do is the same
+        # thing -- a plane that was being looked at becomes a plane the file
+        # claims. It used to say `write it in the line`, which is exactly what the
+        # code does and not what anybody is trying to do, and the line it names is
+        # in another window.
+        self.take = QtWidgets.QPushButton("Keep this plane")
         self.take.clicked.connect(lambda: self.take_asked.emit())
 
         # Disabled rather than hidden, and that is the whole design of it. A pin
@@ -3074,9 +3164,9 @@ class PlaneSteering(QtWidgets.QWidget):
 
         self.take.setEnabled(bool(may) and self.armed())
         self.take.setToolTip(
-            why or "Write this attitude into the plane slot of the line the "
-                   "caret is on, and say where it came from. Nothing reaches "
-                   "the file until Apply, and then Save."
+            why or "Put this attitude on the line the caret is on, with where it "
+                   "came from, and into the document in the same press once both "
+                   "ends have been clicked. Nothing reaches the file until Save."
         )
 
     # -- five controls saying two numbers, each following the others -------
@@ -4573,6 +4663,14 @@ class EditorWindow(QtWidgets.QMainWindow):
         canvas and clicking it gives it the keyboard, so leaving it out would
         make Ctrl+S depend on which window was last clicked -- which is worse
         than no shortcut, because it fails silently and only sometimes.
+
+        **And the fit window, which is not in the group**, so iterating the group
+        had left it out. That was invisible while the window was a list to tick
+        and shut; it stopped being invisible when the steering moved in, because
+        then the press that keeps a plane and the key that writes the file were in
+        two different windows for no reason anybody chose. What keeps that window
+        out of the group is where it is *shown* -- it must not come up at
+        start-up -- which has nothing to do with what a key does in it.
         """
 
         for label, shortcut, slot in (
@@ -4585,7 +4683,7 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             self.addAction(action)
 
-            for satellite in self.group.satellites.values():
+            for satellite in (*self.group.satellites.values(), self.fit_window):
                 satellite.addAction(action)
 
     def _panel_title(self):
@@ -5494,7 +5592,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         dip_dir, dip = self.steering.plane()
         convergence = self.session.convergence.at(*self._pin[:2])
 
-        written = self.panel.take_plane(dip_dir, dip, {
+        written, kept = self.panel.keep_plane(dip_dir, dip, {
             "from": FROM_STEERED,
             "src": "gsurf",
             "dem": self.session.dem.path.name,
@@ -5508,7 +5606,18 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             return
 
-        self.say(f"written: {written.strip()} -- Apply to keep it, then Save")
+        # Which of the two happened, in the sentence, because the difference is
+        # whether the file now claims this. The unkept half ends in what to do
+        # next rather than in a complaint: the plane is on the line, the ends are
+        # still the whole trace, and clicking two of them is the missing step and
+        # not a correction of this one.
+        if kept:
+            self.say(f"kept: {written.strip()} -- Save to put it in the file")
+        else:
+            self.say(
+                f"on the line: {written.strip()} -- shift-click its two ends, "
+                f"then press again; as it stands it would claim the whole trace"
+            )
 
     def _mark_refusals(self, structure):
         """The stretches somebody has rejected, drawn where they are."""
@@ -6003,6 +6112,12 @@ class EditorWindow(QtWidgets.QMainWindow):
             snapped = point_on(structure.path, s)
 
             turned = self.panel.insert_anchor(*snapped)
+
+            # Nothing written, and the panel has said why. No dot either: the
+            # green dot is where the anchor went, and drawn over a refusal it
+            # would be the one half of the report that looked like success.
+            if turned is None:
+                return
 
             drawn = self.on_map([snapped])[0]
             self.picked.set_data([drawn[0]], [drawn[1]])

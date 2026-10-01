@@ -787,6 +787,39 @@ def stretch(path, s0, s1):
 # places counted from the keyword, which is why one reader serves both.
 ENDS_AT = slice(2, 4)
 
+# And where each of the three keeps the anchors a click can fill. `ENDS_AT` for
+# the two that claim ground, the single anchor for the one that claims a place.
+ANCHORS_AT = {"span": ENDS_AT, "fit": ENDS_AT, "attitude": slice(1, 2)}
+
+
+def anchors_written(line):
+    """
+    Whether every anchor slot of a line already holds a picked coordinate.
+
+    **Not `interval_of(line) is not None`**, and the difference is the whole of
+    what this is for: `*` reads as an end of the path, so a template straight
+    off its button has an interval -- the whole trace -- and would be
+    indistinguishable here from two anchors enclosing a stretch somebody chose.
+    True only of `@x,y` in every slot, which is to say of a claim that has been
+    decided.
+
+    Two questions turn on that one fact. Whether a written plane can be applied
+    as it stands, and whether another picked anchor has anywhere to go: a click
+    landing on a line whose slots are full writes its coordinate at the caret,
+    where `loads` finds a token it has no slot for and drops it -- so the line
+    goes on claiming what it claimed and the click leaves no trace anywhere.
+
+    False for anything that is not one of the three, a blank line included.
+    """
+
+    tokens = line.split()
+    slots = ANCHORS_AT.get(tokens[0] if tokens else "")
+
+    if slots is None or len(tokens) < slots.stop:
+        return False
+
+    return all(token.startswith("@") for token in tokens[slots])
+
 
 def interval_of(line, path):
     """

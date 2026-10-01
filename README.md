@@ -1361,12 +1361,12 @@ side, so a curve cannot leave the picture exactly where it would start to diverg
 120 cells at the floor, 1200 at the ceiling, which is where a frame stops landing.
 Measured on the check's fixture: 6.4 ms a frame, 156 fps.
 
-Turn the dial until the cut runs along the trace, and **write it in the line**
-puts that attitude in the plane slot of whatever line the caret is on — `fit`
-fourth from the keyword, `attitude` third, `span` not at all, since its fourth
-slot holds a vocabulary word and a plane written there would parse and mean
-nothing. One replacement of one line, so it is one step of the undo stack; a dial
-that wrote as it turned would put ninety there. The loop also runs backwards, and
+Turn the dial until the cut runs along the trace, and **Keep this plane** puts
+that attitude in the plane slot of whatever line the caret is on — `fit` fourth
+from the keyword, `attitude` third, `span` not at all, since its fourth slot
+holds a vocabulary word and a plane written there would parse and mean nothing.
+One replacement of one line, so it is one step of the undo stack; a dial that
+wrote as it turned would put ninety there. The loop also runs backwards, and
 that is the half worth more on a file that already has planes in it: click into a
 `fit` somebody computed and the dial shows it, cutting the ground it was computed
 over. `conflicts.py` asks whether a plane agrees with the ground arithmetically.
@@ -1411,6 +1411,44 @@ steering is a mode, and until it moved there was no way to hide its controls; no
 there is one click, and what would be left behind is a cut and a band that nothing
 on screen can turn or switch off. The numbers stay in the boxes, so `Ctrl+D` comes
 back to the same plane.
+
+**The press keeps it, and the word is the one the button below it uses.** It said
+`write it in the line`, which is exactly what the code does and not what anybody
+is trying to do — and the line it named was in another window. `Keep the ticked
+ones` was six inches away saying the same thing in the user's language, so this
+is `Keep this plane`: two producers in one window, one verb, and what both
+gestures do is turn a plane somebody was looking at into a plane the file claims.
+It goes through the parser in the same press, as the ticked fits already did, so
+nothing is left standing between the press and `Save` — and `Ctrl+S` now reaches
+that window, which it did not. The shortcuts were handed to every window of the
+group and the fit window is deliberately outside it, so that it does not come up
+at start-up; that is about where a window is *shown* and nothing to do with what
+a key does in it, and leaving it out had put the press that keeps a plane and the
+key that writes the file in two windows for no reason anybody chose.
+
+With one condition, and it is the whole of why this took a day rather than a
+minute. A template arrives as `fit plane * * 000/00`, and `*` reads as an end of
+the path — correctly, which is what `+ fit` lighting the whole trace is telling
+you. Applied in one press that would assert a claim over the entire fault, with
+the band on the map looking exactly as it did. So the apply waits for two picked
+anchors: press it on an unfinished line and the plane goes on the line, the
+status says the ends are still the whole trace, and pressing again once they are
+clicked keeps it. Idempotent, because what it writes is a function of the dial.
+
+And asking which order the two go in found a bug worth the question. Writing the
+plane replaces the whole line, which dropped the selection sitting on the `*`, and
+a shift-click with nothing aimed writes its coordinate **at the caret** — where
+`loads` finds a token it has no slot for and discards it. On the AOI's L0071 a
+plane written first and two ends clicked after produced a `fit` over all 7239 m
+of the trace, keeping neither click, and it parsed. The same hole was reachable
+from any finished line, and there it was worse: the caret sits just after the
+second anchor, so a third click wrote `span use @A @B @C rejected` — a coordinate
+in the slot that holds what the span claims, `rejected` pushed out of it, and the
+line still parsed. Two checks in the suite had been asserting the status message
+that click produced while the line underneath it was being corrupted. Now the
+plane re-aims at the next `*` on its own line, so either order works and both
+give 816 to 6901 m on L0071; and a click with nowhere to go is refused with the
+way out in it, rather than guessing which of two written ends was meant.
 
 **Where it goes wrong is where the geology says it should.** The cut passes
 through the pin within half a cell of the DEM — 1.5 m over four attitudes on the
