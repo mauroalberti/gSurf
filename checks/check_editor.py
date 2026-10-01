@@ -3487,7 +3487,17 @@ def main():
         # written by appending, and a combo that refilled the table after a Keep
         # would put a second copy of the same fits within reach of one click on
         # a control nobody presses to write.
+        #
+        # Ticked first, and that is the new state of affairs rather than a
+        # ceremony: VEE carries a `from=plane-dem` fit over the whole of itself
+        # from the steering section above, so everything read off it covers ground
+        # an earlier line already claims and arrives unticked. Which is the
+        # window's answer and not an obstacle -- the gesture it asks for is a
+        # decision about the file, and the check makes it here by hand.
         before_keep = len(fitting.document.dataset.structures[rows["VEE"]].fits)
+        fit_ui.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Checked)
+        QtWidgets.QApplication.processEvents()
+
         fit_ui.keep()
         QtWidgets.QApplication.processEvents()
 
@@ -3514,6 +3524,243 @@ def main():
               and fit_ui.table.rowCount() == 0 and fit_ui._read is None,
               f"read over {fit_ui.length.currentText()}, "
               f"{fit_ui.table.rowCount()} row(s)")
+
+        fit_ui.length.setCurrentIndex(0)
+        QtWidgets.QApplication.processEvents()
+
+        # -- what the file already claims along the trace -------------------
+        #
+        # The hole the triplicate came out of. `montealpi_01.gstruct` carries
+        # three fits over `2887.500..2937.503 m` of `L0071`, two of them
+        # byte-identical, and nothing in this program ever said the first one was
+        # there: the window read the topography, the lines were appended, and
+        # `attitude_at` takes the first fit covering a progressive, so the second
+        # and the third parse, apply, save, and are asked nothing. Keep spending
+        # its list stops the second press in one sitting and nothing at all
+        # across two.
+        #
+        # So the file's own fits are on screen above the reading, and a candidate
+        # covering ground an earlier line already claims arrives unticked.
+        print("\n-- the fits the file already carries --\n")
+
+        def carried_cells(row):
+            return [
+                fit_ui.carried.item(row, column).text()
+                for column in range(fit_ui.carried.columnCount())
+            ]
+
+        fitting.select(rows["TAKEN"])
+        QtWidgets.QApplication.processEvents()
+
+        taken_path = fitting.document.dataset.structures[rows["TAKEN"]].path
+        taken_length = gstruct.path_length(taken_path)
+
+        # TAKEN came out of the fixture carrying `fit plane * * 100/40
+        # from=table src=gsurf` -- a fit over the whole of itself off a table,
+        # which is the state a trace comes out of the import in -- and the
+        # precedence section above wrote a second one under it off the DEM. The
+        # two tokens saying `the whole of it` are `*`, and the row reads them as
+        # the format does: nought to the length.
+        check("the file's own fits are on screen, as the stretches they claim",
+              fit_ui.carried.rowCount() == 2
+              and carried_cells(0)[0] == "0 m"
+              and carried_cells(0)[1] == f"{taken_length:.0f} m"
+              and carried_cells(0)[2] == "100/40",
+              " | ".join(carried_cells(0)))
+
+        # And the one under it is the thing this window was built to show. It was
+        # written by `fit_off_dem` in the precedence section, it is legal, it
+        # parses, and the `* *` line above covers every metre it claims -- so
+        # `attitude_at` never reaches it. Nothing in this program said so before
+        # now except one sentence in the status bar, at the moment it was written,
+        # once.
+        under = fit_ui._inert(1)
+
+        check("and a fit the line above covers to the last metre is said to answer nowhere",
+              carried_cells(1)[4] == FROM_DEM
+              and under is not None and "claimed by a fit above" in under
+              and "nowhere" in fit_ui.carries.text(),
+              f"{' | '.join(carried_cells(1))} -- {fit_ui.carries.text()}")
+
+        # And where it came from, which is the column a table of this window's own
+        # output would not have needed. A file's fits come off the sweep, off the
+        # steered plane, off a table, off a reach; showing only the ones this
+        # window makes would say `nothing is claimed here` about this trace.
+        check("and the producer is a column, every fit in a file not being from here",
+              carried_cells(0)[4] == "table"
+              and carried_cells(0)[3] == "--"
+              and "src=gsurf" in fit_ui.carried.item(0, 4).toolTip(),
+              f"how={carried_cells(0)[4]}, read over={carried_cells(0)[3]}, "
+              f"{fit_ui.carried.item(0, 4).toolTip()}")
+
+        # The rule the order of these rows stands for, said in words. It is not
+        # guessable from a table, and the case where it decides anything is the
+        # case where nothing looks wrong.
+        check("and the sentence says the first fit covering a metre is what answers",
+              "the first of them is what answers there" in fit_ui.carries.text()
+              and not fit_ui.carried.isSortingEnabled(),
+              fit_ui.carries.text())
+
+        # Pointing at a row in the file's table lights its ground, like pointing
+        # at one in the reading's -- and takes the band off the other, there being
+        # one band and now two tables with an opinion about it.
+        fit_ui.carried.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        whole_trace = list(zip(fitting.claimed.get_xdata(),
+                               fitting.claimed.get_ydata()))
+
+        check("pointing at one of them lights the ground it claims",
+              whole_trace == fitting.on_map(stretch(taken_path, 0.0, taken_length)),
+              f"{len(whole_trace)} point(s) of the "
+              f"{len(fitting._drawn[rows['TAKEN']])} on the trace")
+
+        # Now the reading, over a trace that already carries a fit across all of
+        # it. Every row comes back unticked, because every row would be a line
+        # the format never reads.
+        on_taken = fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        check("a reading over ground the file already claims arrives unticked",
+              on_taken is not None and on_taken.lines
+              and fit_ui.table.rowCount() == len(on_taken.lines)
+              and fit_ui.ticked() == []
+              and not fit_ui.keep_button.isEnabled(),
+              f"{fit_ui.table.rowCount()} row(s), {len(fit_ui.ticked())} ticked")
+
+        # Said and not left to the tooltips. A row arriving unticked is a decision
+        # this window made, and a decision made in silence cannot be told from a
+        # tick that failed to take.
+        check("and it says so, an unticked row otherwise reading as a bug",
+              "already claims" in fit_ui.already.text()
+              and "not ticked" in fit_ui.already.text(),
+              fit_ui.already.text())
+
+        # Offered and not withheld: the row is a true thing the topography said,
+        # and the way to have it is to take the line above it out -- a decision
+        # about the file. Ticking it anyway writes a line nothing reads, which is
+        # the curator's to make and is what the tooltip says it is.
+        fit_ui.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Checked)
+        QtWidgets.QApplication.processEvents()
+
+        check("ticking one back is allowed, and Keep follows the ticks",
+              len(fit_ui.ticked()) == 1 and fit_ui.keep_button.isEnabled(),
+              f"{len(fit_ui.ticked())} ticked, Keep "
+              f"{'live' if fit_ui.keep_button.isEnabled() else 'dead'}")
+
+        # A pair written the wrong way round, which is the other line that came
+        # out of that afternoon: `fit plane @583458.91,4439774.76
+        # @582408.83,4441315.77` on Mt. Alpi faults.2 runs from 2689 m back to
+        # 791 m along a trace of 3532. It parses, it applies, it saves, and
+        # `covers` being `s0 <= s <= s1` it holds over no metre of anything.
+        # Written here through the box, since there is no gesture in this program
+        # that produces one any more.
+        near = gstruct.point_at(taken_path, 300.0)
+        far = gstruct.point_at(taken_path, 900.0)
+
+        fitting.panel.add_written([
+            f"  fit plane @{far[0]:.2f},{far[1]:.2f} "
+            f"@{near[0]:.2f},{near[1]:.2f} 100/40 from=table src=gsurf"
+        ])
+        fitting.panel.apply_block()
+        QtWidgets.QApplication.processEvents()
+
+        backwards = next(
+            (row for row in range(fit_ui.carried.rowCount())
+             if carried_cells(row)[0] == "900 m"),
+            None,
+        )
+
+        check("a pair the wrong way round is on screen as the nothing it covers",
+              backwards is not None
+              and carried_cells(backwards)[1] == "300 m"
+              and fit_ui.carried.item(backwards, 0).foreground().color().name()
+              == "#b2182b"
+              and "nowhere" in fit_ui.carries.text(),
+              f"{fit_ui.carries.text()}")
+
+        # And pointing at it says so, which is the one case where the sentence
+        # has to carry it: there is no band to look at, because there is no
+        # ground. A line nothing ever reads looks exactly like one that answers.
+        said_before = fitting.statusBar().currentMessage()
+        fit_ui.carried.selectRow(backwards)
+        QtWidgets.QApplication.processEvents()
+
+        lit_for_backwards = list(zip(fitting.claimed.get_xdata(),
+                                     fitting.claimed.get_ydata()))
+
+        check("and pointing at it draws nothing and says why",
+              not lit_for_backwards
+              and "back to 300 m" in fitting.statusBar().currentMessage()
+              and fitting.statusBar().currentMessage() != said_before,
+              fitting.statusBar().currentMessage()[:70])
+
+        # The table is read out of the document and not out of the box. A `fit`
+        # typed and not applied claims nothing yet, and a count that moved while
+        # somebody was in the middle of typing would disagree with the file.
+        was_carried = fit_ui.carried.rowCount()
+
+        fitting.panel.add_written([
+            "  fit plane * * 170/50 from=table src=typed-not-applied"
+        ])
+        QtWidgets.QApplication.processEvents()
+
+        check("and what it shows is the file, not the box: unapplied is unclaimed",
+              fit_ui.carried.rowCount() == was_carried
+              and all(
+                  "typed-not-applied" not in fit_ui.carried.item(row, 4).toolTip()
+                  for row in range(fit_ui.carried.rowCount())
+              ),
+              f"{was_carried} row(s) before, {fit_ui.carried.rowCount()} after")
+
+        fitting.panel._redraw()
+        QtWidgets.QApplication.processEvents()
+
+        # And a fit kept here turns up in the table above, which is what keeps
+        # this window from showing a file it had before the last gesture. It
+        # rides on `select`, which `_on_applied` calls -- and the fit it kept is
+        # itself covered by the `* *` line, so it arrives in the table above
+        # already marked as answering nowhere. Which is true, and is the sentence
+        # the delete button will be pressed because of.
+        fit_ui.read()
+        QtWidgets.QApplication.processEvents()
+
+        fit_ui.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Checked)
+        QtWidgets.QApplication.processEvents()
+
+        before_kept = fit_ui.carried.rowCount()
+        inert_before = sum(
+            1 for row in range(before_kept) if fit_ui._inert(row) is not None
+        )
+
+        fit_ui.keep()
+        QtWidgets.QApplication.processEvents()
+
+        last = fit_ui.carried.rowCount() - 1
+        inert_now = sum(
+            1 for row in range(fit_ui.carried.rowCount())
+            if fit_ui._inert(row) is not None
+        )
+
+        check("a fit kept here turns up above, marked as what the file does with it",
+              fit_ui.carried.rowCount() == before_kept + 1
+              and carried_cells(last)[4] == FROM_DEM
+              and fit_ui.carried.item(last, 0).foreground().color().name()
+              == "#6a6a6a"
+              and inert_now == inert_before + 1,
+              f"{before_kept} row(s) before Keep, {fit_ui.carried.rowCount()} "
+              f"after -- {fit_ui.carries.text()}")
+
+        # A trace with no fit on it says that, rather than showing an empty table
+        # and leaving the reader to work out whether it was asked. EAST, which is
+        # dead straight and which nothing has ever written a line to.
+        fitting.select(rows["EAST"])
+        QtWidgets.QApplication.processEvents()
+
+        check("and a trace the file claims nothing along says so",
+              fit_ui.carried.rowCount() == 0
+              and "No fit in the file" in fit_ui.carries.text(),
+              fit_ui.carries.text())
 
         fit_ui.length.setCurrentIndex(0)
         QtWidgets.QApplication.processEvents()

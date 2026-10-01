@@ -1133,12 +1133,15 @@ line had been read back into the box, steered against, and none of that showed
 anything wrong: the plane the caret carries is read from the line's own slot and
 does not care which way the ends run.
 
-**And the box is being taken away, which that line is the argument for.** Two
-wrong lines came out of one afternoon on one file — the pair above, and a `fit`
-carrying `0.0/0.0 from=plane-dem`, a provenance stamped on a decision never made
-— and both were syntactically perfect, both were saved, and neither could be
-seen by reading the file back. That is not two defects in a tool; it is what a
-free-text surface is for. So the box becomes a **table of the block's claims**,
+**And the box is being taken away, which that line is the argument for.** That
+one line carries both mistakes at once — the ends the wrong way round, *and*
+`0.0/0.0 from=plane-dem`, a provenance stamped on a decision never made. It is
+not alone: the same file carries three fits over one 50 m stretch of `L0071`, two
+of them byte-identical and the third the same content through an earlier version
+of the writer, which is three presses of a button that never said the first one
+had happened. All four lines are syntactically perfect, all were saved, and none
+of them could be seen by reading the file back. That is not a handful of defects
+in a tool; it is what a free-text surface is for. So the box becomes a **table of the block's claims**,
 one row per line, edited through cells and dials rather than typed:
 `curation.rows_of` reads a block into `Row`s and `ClaimTable` lays them out, with
 the `with_*` helpers above — which were always surgical line rewrites and never
@@ -1280,6 +1283,50 @@ combo that computed on its own would make picking a length a way of working
 without having asked to. The length itself outlives a change of trace, where the
 list does not: a list of fits belongs to one fault, and a decision that this
 sheet reads at 900 m belongs to the sheet.
+
+**And above the reading, what the file already claims there.** The spent list was
+the whole of the defence against a duplicate, and it defends one sitting: the
+three fits over `2887.500..2937.503 m` of `L0071` in `montealpi_01.gstruct`, two
+of them byte-identical and the third the same content through an older version of
+the writer, are three presses of a button that never said the first one had
+happened. So the window opens with the trace's own fits in a table above the
+press — the stretch each claims, its plane, the window it was read over, and
+**which producer made it**, because a file's fits come off the sweep, off the
+steered plane, off a table, off a reach, and a table showing only this window's
+own output would say *nothing is claimed here* about a trace that carries a fit
+off a table.
+
+Three ways a `fit` can sit in a file, parse, and be asked nothing are named on the
+row that does it: anchors that do not read as a stretch; a pair written backwards,
+which `covers` holds over no ground; and **every metre of its stretch claimed by a
+fit above it**, since `attitude_at` takes the first fit covering a progressive.
+All three are statements about what the format does with the line and not
+judgements about the geology, which is the line drawn — `0.0/0.0` is left
+unmarked, a horizontal plane being a thing a file is allowed to assert. Read
+against the real file, `Mt. Alpi faults.2` comes up as *the file carries 1 fit
+along this trace; and it answers nowhere*, with `2689 m → 791 m` in red, and
+`L0071` as *3 fits … 2 of them answer nowhere*.
+
+Which closes the hole rather than warning about it: a candidate covering ground an
+earlier line already claims **arrives unticked**, with the reason on it, and
+`Keep` follows the ticks instead of following there being rows. Unticked and not
+withheld — the row is a true thing the topography said, and the way to have it is
+to take the line above it out, which is a decision about the file. Ticking it back
+is allowed and writes a line nothing will read, which is the curator's to do. It
+is said in a sentence as well as in a tick state, because a row arriving unticked
+is a decision this window made and a decision made in silence cannot be told from
+a tick that failed to take.
+
+The table is read out of the `Document` and not out of the box: a `fit` typed and
+not applied claims nothing yet, and a count that moved while somebody was mid-line
+would disagree with the file. Never sorted, for the reason that is sharper here
+than anywhere else — in this table, row order *is* the precedence. It is re-read
+on `retarget`, which rides on `select`, which is where `_on_applied` goes, and
+`Document` only changes under an Apply; anything that comes to write a block
+without applying it will have to say so there. Pointing at a row lights its ground
+like pointing at one in the reading does, and one band with two tables having an
+opinion about it is why picking in either clears the other. The row that has no
+band — the backwards pair — says in words what there is nothing to look at.
 
 One thing the second surface made visible. The panel's stretch band is fed by a
 guard that remembers what the panel last *emitted*, so a caret crossing a line

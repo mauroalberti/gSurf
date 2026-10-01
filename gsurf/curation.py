@@ -1099,6 +1099,77 @@ def _place_of(line, path):
     return place_on(path, *anchor)[0]
 
 
+def fits_in(text, path):
+    """
+    The `fit` lines a block makes, in the order it makes them.
+
+    `rows_of` with one word kept, and it is a function rather than a
+    comprehension at each call site because *which* lines are fits is a fact
+    about the format: `attitude` and `lineation` also carry a plane and are not
+    these -- they are something somebody measured, where a fit is something a
+    computation returned. A table that mixed them would be offering one gesture
+    over two kinds of claim with different grounds behind them.
+
+    Order is the block's, unsorted, for `rows_of`'s reason: in this format the
+    first fit covering a progressive is the one that answers there, so position
+    in this list is meaning and not presentation.
+    """
+
+    return [row for row in rows_of(text, path) if row.word == "fit"]
+
+
+def covered_metres(ends, earlier):
+    """
+    How many metres of a stretch are already claimed by the fits before it.
+
+    The arithmetic behind one sentence, which is the one thing a curator cannot
+    get out of a file by reading it: `attitude_at` takes the **first** fit
+    covering a progressive, and a fit written now is appended after the ones the
+    block already had. So every metre an earlier fit covers is a metre the new
+    line will never be asked about -- legal, parsing, and inert.
+
+    Which is how `montealpi_01.gstruct` came to carry three fits over
+    `2887.500..2937.503 m` of `L0071`: two presses of a button whose window
+    never said the first one had happened. The third is not a worse line than
+    the first, it is the same line, and nothing anywhere distinguished them.
+
+    Returns metres, so that the caller can say *how much* rather than only
+    whether -- a fit half covered answers over the other half and is worth
+    keeping, and a fit covered to the last metre is not. None where the stretch
+    cannot be read; 0.0 for a stretch written backwards, which covers no ground
+    at all and so has none to lose.
+
+    `earlier` holds intervals as the file wrote them, including None and
+    including reversed pairs, both of which claim nothing and are dropped here:
+    a line that holds over no ground cannot shadow one that does.
+    """
+
+    if ends is None:
+        return None
+
+    s0, s1 = ends
+
+    if s1 <= s0:
+        return 0.0
+
+    total = 0.0
+    reach = s0
+
+    for a, b in sorted(
+        one for one in earlier if one is not None and one[1] > one[0]
+    ):
+        a, b = max(a, reach), min(b, s1)
+
+        if b > a:
+            total += b - a
+            reach = b
+
+        if reach >= s1:
+            break
+
+    return total
+
+
 def with_plane(line, dip_dir, dip, decimals=PLANE_DECIMALS):
     """
     The same line with its plane slot rewritten, or None if it has no plane slot.

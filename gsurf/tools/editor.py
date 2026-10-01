@@ -206,7 +206,9 @@ from gsurf.curation import (
     UNCONSTRAINED,
     Document,
     anchor_of,
+    covered_metres,
     degrees_not_metres,
+    fits_in,
     interval_of,
     is_gstruct,
     module,
@@ -516,7 +518,22 @@ LABEL_FRACTION = 0.14
 # how big it opens. `keep` first because it is the column being operated: the
 # rest is evidence, and the tick is the decision.
 FIT_COLUMNS = ("keep", "from", "to", "plane", "read over")
-FIT_WINDOW_PX = (520, 420)
+FIT_WINDOW_PX = (560, 620)
+
+# And what it shows about the fits the file already holds there. The same four
+# quantities in the same order, so the two tables read as one thing seen twice,
+# plus where the line came from -- which the reading's table does not need,
+# every row in it having come from here.
+#
+# `how` and not `from`, that being taken by the near end of the stretch. It is
+# the file's own `from=`: `trace-dem`, `plane-dem`, `table`, `reach`.
+CARRIED_COLUMNS = ("from", "to", "plane", "read over", "how")
+
+# Below this, a stretch counts as claimed to the last metre rather than claimed
+# in part. A metre: two orders of magnitude above the two decimals an anchor is
+# written to, and below anything a fault is read at -- nobody keeps a fit for
+# the metre an earlier line left over.
+FULLY_M = 1.0
 
 # What a window the map has to stay visible behind is offset by, where there is
 # nothing remembered about it. Down and in from the map's own top-left, like a
@@ -2999,6 +3016,29 @@ class FitFromDem(QtWidgets.QWidget):
     matter are **progressives along the trace**, and pointing at the row lights
     the ground on the map.
 
+    **What the file already claims is above what was just read**, and those are
+    two tables because they are two different kinds of thing: one is in the file
+    and the other is a list nobody has decided about yet. The order is the
+    argument -- you see what is claimed along this fault before you add to it.
+
+    That is not a convenience. `montealpi_01.gstruct` carries three fits over
+    `2887.500..2937.503 m` of `L0071`, two of them byte-identical, because
+    nothing on screen ever said the first one was there; and the defence against
+    it today is that Keep spends its list, which stops the second press and not
+    the second session. With the file's own fits on screen the duplicate is
+    visible before it is made, and a candidate that an earlier line already
+    covers arrives unticked -- `attitude_at` takes the first fit covering a
+    progressive, so such a line would parse, apply, save, and never be asked
+    anything.
+
+    **Every fit, whatever made it.** A file's fits come from the sweep, from the
+    plane steered against the topography, from a table, from a reach; a table
+    showing only this window's own output would say *nothing is claimed here*
+    about a trace that carries a fit off a table, which is the lie by omission
+    worth avoiding. So the producer is a column, and this window is really about
+    the planes claimed along one trace, with reading them off the DEM as the way
+    to make new ones.
+
     **Everything is read, and the ticks decide what is kept.** The other
     arrangement -- choose a stretch first, then read only that -- was the obvious
     one and is worse, because it asks the question in the wrong order: which part
@@ -3066,9 +3106,48 @@ class FitFromDem(QtWidgets.QWidget):
         # own display, and the display rounds.
         self._read = None
 
+        # The `fit` rows the document holds for the selected trace, in file
+        # order, as `curation.Row`. Each knows the line it came from and where
+        # that line sits in the block, which is what a splice needs -- so this is
+        # also where removing one will be aimed from. Named for what it holds and
+        # not for the table showing it, `self.carried` being that table.
+        self._in_file = []
+
+        # One band and two tables with an opinion about it. Picking a row in
+        # either clears the other, and clearing a selection is itself a signal,
+        # so the two would hand the band back and forth. See `_only_here`.
+        self._picking = False
+
+        # And the same again for the ticks: colouring a cell after it is in the
+        # table is a change by `itemChanged`'s reckoning, so a fill would be read
+        # as somebody ticking things.
+        self._filling = False
+
         self.about = QtWidgets.QLabel()
         self.about.setWordWrap(True)
         self.about.setStyleSheet("font-weight: bold;")
+
+        # What the file says along this trace, said in words as well as drawn in
+        # rows, because the one thing the rows cannot show is the rule that makes
+        # their order meaning.
+        self.carries = QtWidgets.QLabel()
+        self.carries.setWordWrap(True)
+        self.carries.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.carried = QtWidgets.QTableWidget(0, len(CARRIED_COLUMNS))
+        self.carried.setHorizontalHeaderLabels(CARRIED_COLUMNS)
+        self.carried.verticalHeader().setVisible(False)
+        self.carried.setSortingEnabled(False)
+        self.carried.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.carried.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.carried.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.carried.itemSelectionChanged.connect(self._carried_picked)
 
         self.read_button = QtWidgets.QPushButton("Read the topography")
 
@@ -3136,6 +3215,15 @@ class FitFromDem(QtWidgets.QWidget):
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
         self.table.itemSelectionChanged.connect(self._row_picked)
+        self.table.itemChanged.connect(self._ticks_changed)
+
+        # How much of what was just read is already claimed. Said and not left to
+        # the tooltips, which are the one part of a window nobody can be told to
+        # look at: a row arriving unticked is a decision this window made, and a
+        # decision made silently is indistinguishable from a bug.
+        self.already = QtWidgets.QLabel()
+        self.already.setWordWrap(True)
+        self.already.setStyleSheet("color: #8a5000; font-size: 11px;")
 
         self.gate = QtWidgets.QLabel()
         self.gate.setWordWrap(True)
@@ -3166,10 +3254,18 @@ class FitFromDem(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(self.about)
+
+        # What the file says, then the press, then what came back. The reading
+        # gets the larger share of the height because it is the list being worked
+        # through; the file's fits are usually one or two lines and are being
+        # consulted, not sorted.
+        layout.addWidget(self.carries)
+        layout.addWidget(self.carried, stretch=1)
         layout.addLayout(pressing)
         layout.addWidget(self.outcome)
         layout.addWidget(self.elsewhere)
-        layout.addWidget(self.table, stretch=1)
+        layout.addWidget(self.table, stretch=2)
+        layout.addWidget(self.already)
         layout.addWidget(self.gate)
         layout.addLayout(deciding)
 
@@ -3192,10 +3288,18 @@ class FitFromDem(QtWidgets.QWidget):
         that these faults read at 900 m belongs to the sheet, and re-picking it
         for every fault in turn would make a session's worth of identical
         choices out of one.
+
+        **And the file's own fits are read again here**, which is what keeps this
+        window from showing a fit that no longer exists. It is enough because of
+        where this is called from: a change of selection, and `_on_applied`,
+        which goes through `select` -- and `Document` only changes under an
+        Apply. Anything that comes to write a block without applying it will have
+        to say so here.
         """
 
         self._read = None
         self._empty()
+        self._fill_carried()
 
         structure = self._structure()
 
@@ -3237,6 +3341,215 @@ class FitFromDem(QtWidgets.QWidget):
 
         return self.panel.dem_said
 
+    # -- what the file already claims --------------------------------------
+
+    def _fill_carried(self):
+        """
+        The fits the document holds along this trace, in the order it holds them.
+
+        **Read out of the document and not out of the panel's box**, which is the
+        one choice here with a consequence. The box can hold a `fit` typed and
+        not applied, and this table is about what the file claims -- a line
+        waiting in the box claims nothing yet, and showing it here would make the
+        count disagree with the file for as long as somebody was in the middle of
+        typing. It is also the arrangement that survives the box going away.
+
+        The row number is the index into `self._in_file`, because the two are
+        built in one pass and this table is never sorted. Which is `rows_of`'s
+        rule arriving here as a convenience: order in this format is meaning, so
+        there was never going to be a second order to keep track of.
+        """
+
+        self._in_file = []
+        self.carried.clearContents()
+        self.carried.setRowCount(0)
+
+        structure = self._structure()
+
+        if structure is None:
+            self.carries.setText("")
+            return
+
+        self._in_file = fits_in(
+            self.panel.document.text_of(self.panel.index), structure.path
+        )
+
+        self.carried.setRowCount(len(self._in_file))
+
+        for row in range(len(self._in_file)):
+            self._write_carried(row)
+
+        self.carried.resizeColumnsToContents()
+        self.carries.setText(self._carries_said())
+
+    def _carries_said(self):
+        """What the file claims here, including the rule that orders the claims."""
+
+        how_many = len(self._in_file)
+
+        if not how_many:
+            return "No fit in the file along this trace."
+
+        told = [
+            f"The file carries {how_many} fit"
+            f"{'' if how_many == 1 else 's'} along this trace"
+        ]
+
+        # Said whenever there is more than one, and not only where two of them
+        # overlap. It is the rule the order of these rows stands for, a curator
+        # has no way of guessing it from a table, and the case where it matters
+        # is exactly the case where nothing looks wrong.
+        if how_many > 1:
+            told.append(
+                "and where two cover the same metre, the first of them is what "
+                "answers there"
+            )
+
+        inert = sum(1 for at in range(how_many) if self._inert(at) is not None)
+
+        if inert == how_many == 1:
+            told.append("and it answers nowhere")
+        elif inert == 1:
+            told.append("1 of them answers nowhere")
+        elif inert:
+            told.append(f"{inert} of them answer nowhere")
+
+        return "; ".join(told) + "."
+
+    def _inert(self, at):
+        """
+        Why the fit on this row is asked nothing, or None if it answers somewhere.
+
+        Three ways a `fit` line can sit in a file, parse, and mean nothing, all
+        three of them in `montealpi_01.gstruct`:
+
+        * its anchors do not read as a stretch at all;
+        * they read as one written backwards, which `covers` holds over no ground;
+        * every metre of its stretch is claimed by a fit above it.
+
+        None of these is a judgement about the geology, which is why they are
+        here and `0.0/0.0` is not: those are statements about what the format
+        does with the line, and a curator cannot check any of them by reading.
+        """
+
+        claim = self._in_file[at]
+
+        if claim.ends is None:
+            return "the stretch this line claims cannot be read off it"
+
+        s0, s1 = claim.ends
+
+        if s0 > s1:
+            return (
+                f"this line runs from {s0:.0f} m back to {s1:.0f} m: the pair is "
+                f"read as written and `covers` is `s0 <= s <= s1`, so it holds "
+                f"over no part of the trace"
+            )
+
+        if s1 - s0 <= FULLY_M:
+            return None
+
+        covered = covered_metres(claim.ends, [one.ends for one in self._in_file[:at]])
+
+        if covered is not None and covered >= (s1 - s0) - FULLY_M:
+            return (
+                f"every metre of {s0:.0f} to {s1:.0f} m is claimed by a fit "
+                f"above this one, and the first one covering a metre is what "
+                f"answers there: nothing ever reads this line"
+            )
+
+        return None
+
+    def _write_carried(self, at):
+        """One fit the file holds, and what the format does with it."""
+
+        claim = self._in_file[at]
+        ends, plane = claim.ends, claim.plane
+        inert = self._inert(at)
+        backwards = ends is not None and ends[0] > ends[1]
+
+        for column, written in enumerate((
+            "?" if ends is None else f"{ends[0]:.0f} m",
+            "?" if ends is None else f"{ends[1]:.0f} m",
+            "?" if plane is None else f"{plane[0]:.0f}/{plane[1]:.0f}",
+            f"{claim.attrs['window']} m" if "window" in claim.attrs else "--",
+            claim.attrs.get("from", "--"),
+        )):
+            cell = QtWidgets.QTableWidgetItem(written)
+            cell.setFlags(
+                QtCore.Qt.ItemFlag.ItemIsEnabled
+                | QtCore.Qt.ItemFlag.ItemIsSelectable
+            )
+
+            # The line itself, which is the thing being shown in cells: a row
+            # that reads oddly is a row somebody wants to see the text of, and
+            # until the box goes there is nowhere else to look it up.
+            cell.setToolTip(claim.line.strip())
+
+            if inert is not None:
+                cell.setForeground(QtGui.QColor("#6a6a6a"))
+                cell.setToolTip(f"{claim.line.strip()}\n\n{inert}")
+
+            # `ClaimTable`'s colour for the same mistake, on the same two cells:
+            # the ends are where it is, and red is what the AOI's one reversed
+            # pair already looks like in the panel.
+            if backwards and column in (0, 1):
+                cell.setForeground(QtGui.QColor("#b2182b"))
+
+            self.carried.setItem(at, column, cell)
+
+        # Who made it and with what, off the row. `from=` is the column, and the
+        # rest of the provenance is what the column can be asked.
+        self.carried.item(at, 4).setToolTip(
+            " ".join(
+                f"{key}={claim.attrs[key]}"
+                for key in ("from", "src", "dem", "windows", "step", "north",
+                            "converg", "span_verdict")
+                if key in claim.attrs
+            )
+            or claim.line.strip()
+        )
+
+    def _carried_picked(self):
+        """The stretch of the selected file row, for the map to light."""
+
+        if self._picking:
+            return
+
+        rows = {index.row() for index in self.carried.selectedIndexes()}
+
+        if len(rows) != 1 or not self._in_file:
+            self.showing.emit(None)
+            return
+
+        at = rows.pop()
+
+        self._only_here(self.table)
+        self.showing.emit(
+            self._in_file[at].ends if at < len(self._in_file) else None
+        )
+
+        # And the row that has no band says so, which is the rule `claim_said`
+        # follows: a picture cannot show a stretch that covers nothing, and a
+        # line nothing ever reads looks exactly like a line that answers. Only
+        # these, because a row with a band on the map has already been answered
+        # and a sentence per click would spend the status bar on saying what is
+        # already drawn.
+        inert = self._inert(at)
+
+        if inert is not None:
+            self.said.emit(inert)
+
+    def _only_here(self, other):
+        """Clears the other table's selection without it taking the band back."""
+
+        self._picking = True
+
+        try:
+            other.clearSelection()
+        finally:
+            self._picking = False
+
     # -- reading -----------------------------------------------------------
 
     def _length_changed(self):
@@ -3264,7 +3577,7 @@ class FitFromDem(QtWidgets.QWidget):
         self.gate.setText(f"gate: {self.panel.gate_said()}")
         self._name_the_others(got)
 
-        self.keep_button.setEnabled(bool(got.lines))
+        self.keep_button.setEnabled(bool(self.ticked()))
         self.said.emit(f"{ident}{got.reading.describe()}")
 
         return got
@@ -3346,26 +3659,90 @@ class FitFromDem(QtWidgets.QWidget):
 
         self._empty()
         self.table.setRowCount(len(got.lines))
+        self._filling = True
 
-        for row, (fit, span) in enumerate(zip(got.reading.fits, got.spans)):
-            self._write(row, fit, span)
+        try:
+            for row, (fit, span) in enumerate(zip(got.reading.fits, got.spans)):
+                self._write(row, fit, span)
+        finally:
+            self._filling = False
 
         self.table.resizeColumnsToContents()
+        self._say_already(got)
+
+    def _say_already(self, got):
+        """
+        How much of this reading the file has already claimed, in one sentence.
+
+        The summary of what `_write` did row by row, and it exists because the
+        rows say it in a tick state and a tooltip. A row arriving unticked is a
+        decision this window made on the curator's behalf; made without a word it
+        is indistinguishable from a tick that failed to take.
+        """
+
+        spent = covered = 0
+
+        for span in got.spans:
+            claimed = covered_metres(span, [one.ends for one in self._in_file])
+
+            if claimed is None or claimed <= 0.0 or span is None:
+                continue
+
+            if claimed >= (span[1] - span[0]) - FULLY_M:
+                spent += 1
+            else:
+                covered += 1
+
+        told = []
+
+        if spent:
+            told.append(
+                f"{spent} of these cover ground a fit in the file already "
+                f"claims to the last metre: kept, nothing would ever read "
+                f"{'them' if spent > 1 else 'it'}, so "
+                f"{'they are' if spent > 1 else 'it is'} not ticked"
+            )
+
+        if covered:
+            told.append(
+                f"{covered} overlap{'' if covered > 1 else 's'} a fit in the "
+                f"file in part, and answer{'' if covered > 1 else 's'} over the "
+                f"rest"
+            )
+
+        self.already.setText("; ".join(told) + ("." if told else ""))
 
     def _empty(self):
         self.table.clearContents()
         self.table.setRowCount(0)
         self.elsewhere.setText("")
+        self.already.setText("")
         self.showing.emit(None)
 
     def _write(self, row, fit, span):
+        # What a fit in the file already claims over this same ground, which is
+        # the one thing about a candidate that is not a property of the
+        # candidate. The lines are kept by appending, so an earlier fit wins
+        # every metre the two share: fully covered, this row is a line that
+        # parses and is read by nothing, and it arrives unticked.
+        claimed = covered_metres(span, [one.ends for one in self._in_file])
+        spent = (
+            span is not None
+            and claimed is not None
+            and claimed >= (span[1] - span[0]) - FULLY_M
+            and span[1] - span[0] > FULLY_M
+        )
+
         tick = QtWidgets.QTableWidgetItem()
         tick.setFlags(
             QtCore.Qt.ItemFlag.ItemIsEnabled
             | QtCore.Qt.ItemFlag.ItemIsSelectable
             | QtCore.Qt.ItemFlag.ItemIsUserCheckable
         )
-        tick.setCheckState(QtCore.Qt.CheckState.Checked)
+        tick.setCheckState(
+            QtCore.Qt.CheckState.Unchecked if spent
+            else QtCore.Qt.CheckState.Checked
+        )
 
         # Ticked on arrival, which is a claim and worth saying: everything in
         # this list has already been through the gate, so the default is not
@@ -3373,7 +3750,19 @@ class FitFromDem(QtWidgets.QWidget):
         # the curator who knows something the topography does not -- a stretch
         # where the trace is a road cutting, a bend that is a digitising
         # artefact.
-        tick.setToolTip("Ticked: this one is written when Keep is pressed.")
+        #
+        # **Unticked and not missing**, where the file already covers the ground.
+        # The row is a true thing the topography said and the curator may want it
+        # -- the way to have it is to remove the fit above it, which is a decision
+        # about the file and not about this list -- so it is offered with the tick
+        # off rather than withheld.
+        tick.setToolTip(
+            "Not ticked: the file already claims this ground, and the first fit "
+            "covering a metre is what answers there. Tick it to write a line "
+            "nothing will read."
+            if spent else
+            "Ticked: this one is written when Keep is pressed."
+        )
 
         self.table.setItem(row, 0, tick)
 
@@ -3411,10 +3800,31 @@ class FitFromDem(QtWidgets.QWidget):
             )
         )
 
+        # And where the file has some of this ground, that on the two cells it is
+        # about. Amber and not red: an overlap is a fact about the file, and the
+        # curator may well want the row anyway.
+        if claimed:
+            how_much = (
+                "all of it" if spent
+                else f"{claimed:.0f} m of its {span[1] - span[0]:.0f}"
+            )
+
+            for column in (1, 2):
+                self.table.item(row, column).setForeground(
+                    QtGui.QColor("#6a6a6a" if spent else "#8a5000")
+                )
+                self.table.item(row, column).setToolTip(
+                    f"a fit in the file already claims {how_much}, and the "
+                    f"first fit covering a metre is what answers there"
+                )
+
     # -- pointing and keeping ----------------------------------------------
 
     def _row_picked(self):
         """The stretch of the selected row, for the map to light."""
+
+        if self._picking:
+            return
 
         rows = {index.row() for index in self.table.selectedIndexes()}
 
@@ -3424,9 +3834,26 @@ class FitFromDem(QtWidgets.QWidget):
 
         row = rows.pop()
 
+        self._only_here(self.carried)
         self.showing.emit(
             self._read.spans[row] if row < len(self._read.spans) else None
         )
+
+    def _ticks_changed(self, _item=None):
+        """
+        Keep follows the ticks, rather than following there being rows.
+
+        It followed the rows until a row could arrive unticked, and then the two
+        came apart in both directions: a reading whose every row is already
+        claimed would offer a Keep that writes nothing, and a curator who ticked
+        one of them back would find the button dead. The button means *there is
+        something to write*, so it is wired to that.
+        """
+
+        if self._filling:
+            return
+
+        self.keep_button.setEnabled(bool(self.ticked()))
 
     def ticked(self):
         """The lines the ticks have left, in the order they were read."""
