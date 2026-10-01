@@ -222,6 +222,7 @@ from gsurf.curation import (
     plane_of,
     point_on,
     provenance_of,
+    reading_line,
     reading_said,
     readings_in,
     rows_of,
@@ -2406,6 +2407,39 @@ class EditorPanel(QtWidgets.QWidget):
             at, line, note, "nothing is open to take a reading out of"
         )
 
+    def insert_claim(self, line):
+        """
+        One finished line into the block, applied. Why it would not go, or None.
+
+        `add_line`'s sibling and not a second use of it, the difference being
+        whether anything is left to pick. A template goes in with `*` where its
+        anchors will be, waits in the box, and arms the caret for the clicks that
+        fill it; this goes in complete and applies in the press, which is the rule
+        every write from a window follows -- Apply stands for having looked, and a
+        window that showed the numbers before the press has been that.
+
+        Above the path for `add_line`'s reason: `dumps` puts the geometry last, so
+        a line written after it would sit among the vertices and read as one.
+        """
+
+        if self.index is None:
+            return "nothing is open to write a line into"
+
+        was = self.text.toPlainText()
+        lines = was.splitlines()
+
+        self.remember()
+        lines.insert(self._path_line(lines), line)
+        self.text.setPlainText("\n".join(lines))
+
+        if not self.apply_block():
+            self._before.pop()
+            self.text.setPlainText(was)
+
+            return "the block will not parse with that line: see the message"
+
+        return None
+
     # -- the topography, read along this trace ------------------------------
 
     def _gate(self):
@@ -3673,6 +3707,12 @@ class ReadingsHere(QtWidgets.QWidget):
     # that decides what the band means.
     showing = QtCore.pyqtSignal(object)
 
+    # That the next shift-click on the map is for a measurement's point and not
+    # for an anchor. A third meaning for one gesture, so it is a mode and it is
+    # held by a button that stays down -- the alternative, a modifier nobody is
+    # told about, is how a click disappears.
+    point_wanted = QtCore.pyqtSignal(bool)
+
     # For the status bar, which belongs to the map.
     said = QtCore.pyqtSignal(str)
 
@@ -3730,6 +3770,79 @@ class ReadingsHere(QtWidgets.QWidget):
         self.detach_button.setEnabled(False)
         self.detach_button.clicked.connect(self.detach_picked)
 
+        taking_out = QtWidgets.QGroupBox("Take one off this trace")
+        out_laid = QtWidgets.QVBoxLayout(taking_out)
+        out_laid.addWidget(self.why)
+        out_laid.addWidget(self.detach_button)
+
+        # -- and the other direction ---------------------------------------
+
+        # Where the measurement was made, as `(x, y, s, off)`, or None. Not
+        # snapped to the trace, which is the one thing that makes this gesture
+        # different from the shift-click that picks a fit's end: a fit's ends are
+        # progressives *along* a trace, and a station is somewhere a person
+        # stood. `off=` is the record of the difference, and a snapped anchor
+        # would write 0.0 into it and call a measurement 80 m away a measurement
+        # on the fault.
+        self._point = None
+
+        self.pick_point = QtWidgets.QPushButton("Point on the map")
+        self.pick_point.setCheckable(True)
+        self.pick_point.setToolTip(
+            "Then shift-click the map where the measurement was made -- where "
+            "you stood, not on the trace. How far that is from the trace goes "
+            "into the line as off=, which is what says whether this reading was "
+            "taken on the fault or near it."
+        )
+        self.pick_point.toggled.connect(self._wanting)
+
+        self.where = QtWidgets.QLabel()
+        self.where.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.dip_dir = QtWidgets.QSpinBox()
+        self.dip_dir.setRange(0, 360)
+        self.dip_dir.setSuffix("°")
+        self.dip_dir.setWrapping(True)
+        self.dip_dir.setToolTip(
+            "Dip direction, in true azimuth -- a compass reading already "
+            "corrected for declination, which is what this format writes. "
+            "Nothing is corrected here and nothing about north goes on the "
+            "line: a measurement was not computed from grid coordinates, so "
+            "there is no convergence to undo."
+        )
+
+        self.dip = QtWidgets.QSpinBox()
+        self.dip.setRange(0, 90)
+        self.dip.setSuffix("°")
+
+        self.station = QtWidgets.QLineEdit()
+        self.station.setPlaceholderText("station")
+        self.station.setToolTip(
+            "The name the measurement is known by in the field notes, written as "
+            "station=. Optional, and worth filling: it is how every reading in "
+            "these files says which one it is."
+        )
+
+        dialling = QtWidgets.QHBoxLayout()
+        dialling.addWidget(QtWidgets.QLabel("dip dir"))
+        dialling.addWidget(self.dip_dir)
+        dialling.addWidget(QtWidgets.QLabel("dip"))
+        dialling.addWidget(self.dip)
+        dialling.addWidget(self.station, stretch=1)
+
+        self.add_button = QtWidgets.QPushButton("Add this reading")
+        self.add_button.setEnabled(False)
+        self.add_button.clicked.connect(self.add_reading)
+
+        putting_in = QtWidgets.QGroupBox("Put one on it")
+        in_laid = QtWidgets.QVBoxLayout(putting_in)
+        in_laid.addWidget(self.pick_point)
+        in_laid.addWidget(self.where)
+        in_laid.addLayout(dialling)
+        in_laid.addWidget(self.add_button)
+
+        # One Undo for both, because what it undoes is the last press that wrote
+        # and there is no sense in which a window has two pasts.
         self.undo_button = QtWidgets.QPushButton("Undo")
         self.undo_button.setEnabled(False)
         self.undo_button.setToolTip(
@@ -3738,22 +3851,21 @@ class ReadingsHere(QtWidgets.QWidget):
         )
         self.undo_button.clicked.connect(self.undo_last)
 
-        taking_out = QtWidgets.QHBoxLayout()
-        taking_out.addWidget(self.detach_button)
-        taking_out.addStretch(1)
-        taking_out.addWidget(self.undo_button)
-
         self.step = QtWidgets.QLabel()
         self.step.setWordWrap(True)
         self.step.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        back = QtWidgets.QHBoxLayout()
+        back.addWidget(self.step, stretch=1)
+        back.addWidget(self.undo_button)
 
         laid = QtWidgets.QVBoxLayout(self)
         laid.addWidget(self.about)
         laid.addWidget(self.carries)
         laid.addWidget(self.table, stretch=1)
-        laid.addWidget(self.why)
-        laid.addLayout(taking_out)
-        laid.addWidget(self.step)
+        laid.addWidget(taking_out)
+        laid.addWidget(putting_in)
+        laid.addLayout(back)
 
         self.retarget()
 
@@ -3893,41 +4005,143 @@ class ReadingsHere(QtWidgets.QWidget):
         self._tell()
 
     def _tell(self):
-        """What is missing before the press can happen, and the press's state."""
+        """What is missing before a press can happen, and both presses' state."""
 
         at = self._picked_row()
         why = self.why.text().strip()
+        open_here = self.panel.index is not None
 
         self.detach_button.setEnabled(at is not None and bool(why))
+        self.add_button.setEnabled(self._point is not None)
+        self.pick_point.setEnabled(open_here)
         self.undo_button.setEnabled(self.panel.may_undo())
+        self.step.setText(self._step_said(at, why, open_here))
+
+    def _step_said(self, at, why, open_here):
+        """
+        One line about whichever gesture is in the middle of happening.
+
+        **The gesture under way wins**, and that is the whole of the ordering.
+        Two groups of controls could each have something to say at once, and a
+        line reporting both would be a line reporting neither -- so a point
+        waiting for its plane is said ahead of a row waiting for its reason,
+        because the hand that is holding something is the hand to answer.
+        """
+
+        if not open_here:
+            return ""
+
+        if self.wanting_point():
+            return (
+                "Shift-click the map where the measurement was made -- not on "
+                "the trace unless that is where you stood."
+            )
+
+        if self._point is not None:
+            return (
+                "Dial the plane, then `Add this reading`. The dip direction is a "
+                "true azimuth, declination already taken off."
+            )
+
+        if at is not None:
+            claim = self._in_file[at]
+
+            if not why:
+                return (
+                    "Say why, and it goes in the file on the comment that "
+                    "replaces the line."
+                )
+
+            return (
+                f"`Detach this reading` takes {reading_said(claim)} out and "
+                f"leaves the comment"
+                + (
+                    ""
+                    if from_a_file(claim)
+                    else " -- which will be the only copy of it, this one "
+                         "carrying no `raw=`"
+                )
+            )
 
         if not self._in_file:
-            self.step.setText("")
-            return
+            return "Nothing measured along this trace yet."
 
-        if at is None:
-            self.step.setText("Pick the reading this trace should not carry.")
-            return
+        return "Pick the reading this trace should not carry."
 
-        claim = self._in_file[at]
+    # -- and the other direction -------------------------------------------
 
-        if not why:
-            self.step.setText(
-                "Say why, and it goes in the file on the comment that replaces "
-                "the line."
-            )
-            return
+    def wanting_point(self):
+        """Whether the next shift-click on the map belongs to this window."""
 
-        self.step.setText(
-            f"`Detach this reading` takes {reading_said(claim)} out and leaves "
-            f"the comment"
-            + (
-                ""
-                if from_a_file(claim)
-                else " -- which will be the only copy of it, this one carrying "
-                     "no `raw=`"
-            )
+        return self.pick_point.isChecked()
+
+    def _wanting(self, on):
+        if not on:
+            self.showing.emit(None)
+
+        self.point_wanted.emit(bool(on))
+        self._tell()
+
+    def took_point(self, x, y, s, off):
+        """
+        Where the measurement was made, from a click the map routed here.
+
+        Kept unsnapped, and `s` and `off` arrive worked out rather than being
+        recomputed: the map has a path and this window has a structure, and two
+        places projecting a point onto a trace is two places to round it
+        differently.
+        """
+
+        self._point = (float(x), float(y), float(s), float(off))
+        self.pick_point.setChecked(False)
+        self.where.setText(
+            f"{x:.2f}, {y:.2f} -- {s:.0f} m along this trace, {off:.1f} m off it"
         )
+        self._tell()
+
+    def add_reading(self):
+        """The dialled measurement into the block, at the point that was clicked."""
+
+        if self._point is None:
+            return False
+
+        x, y, _, off = self._point
+        attrs = {}
+        named = self.station.text().strip()
+
+        if named:
+            attrs["station"] = named
+
+        # `src=field` because that is what this window is: a number out of a
+        # notebook. The one other value an importer writes is `src=points`, which
+        # means a row of a layer, and nothing typed here is that.
+        attrs["src"] = "field"
+
+        # Written for the reason `imports` writes it: `s` is derived and looks
+        # exact whatever the distance, so without this the file cannot say
+        # whether the compass was on the fault or near it.
+        attrs["off"] = f"{off:.1f}"
+
+        line = reading_line(x, y, self.dip_dir.value(), self.dip.value(), attrs)
+        refused = self.panel.insert_claim(line)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        self.said.emit(
+            f"added {line.strip()} -- Undo takes it out, Save writes the file"
+        )
+
+        self._point = None
+        self.where.setText("")
+        self.station.clear()
+        self.showing.emit(None)
+        self.wrote.emit()
+        self.retarget()
+
+        return True
 
     def detach_picked(self):
         """The reading on the picked row out, with the reason in its place."""
@@ -7215,9 +7429,39 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             return
 
-        self.pick(
-            x, y,
-            anchor=bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier),
+        shifted = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
+
+        # Before `pick`, because while that button is down this *is* what a
+        # shift-click means. Decided here with the other two for the reason
+        # written above: which modifier wins is a sentence somebody can read, and
+        # not the order of the branches inside `pick`.
+        if shifted and self.readings_panel.wanting_point():
+            self._point_for_reading(x, y)
+
+            return
+
+        self.pick(x, y, anchor=shifted)
+
+    def _point_for_reading(self, x, y):
+        """A click sent to the measurements window, unsnapped, with its distance."""
+
+        if self.index is None:
+            self.say("nothing selected to measure on")
+            return
+
+        structure = self.document.dataset.structures[self.index]
+
+        if len(structure.path) < 2:
+            self.say(f"{structure.ident} has no path to measure against")
+            return
+
+        here = self.in_file(x, y)
+        s, off = place_on(structure.path, *here)
+
+        self.readings_panel.took_point(*here, s, off)
+        self.say(
+            f"the measurement goes at {s:.0f} m along {structure.ident}, "
+            f"{off:.1f} m off it -- dial the plane and press `Add this reading`"
         )
 
     def pick(self, x, y, anchor=False):

@@ -3428,6 +3428,110 @@ def main():
               and "from=plane-dem" in added[0],
               f"{len(added)} line(s) changed")
 
+        # -- a measurement put on a trace by hand ---------------------------
+
+        print("\n-- a measurement put on a trace by hand --\n")
+
+        fitting.open_readings()
+        QtWidgets.QApplication.processEvents()
+
+        putting = fitting.readings_panel
+        SHIFT = QtCore.Qt.KeyboardModifier.ShiftModifier
+
+        check("a trace with nothing measured on it says so",
+              putting.table.rowCount() == 0
+              and "Nothing measured" in putting.step.text(),
+              putting.step.text())
+
+        # 80 m off the trace, which is the number the whole gesture turns on: a
+        # shift-click for a fit's end snaps onto the path, and a station is
+        # somewhere a person stood. Taken off the apex so that the point is
+        # unambiguously beside the trace rather than along it.
+        apex = point_on(vee.path, APEX_S)
+        beside = (apex[0], apex[1] + 80.0)
+
+        fitting.statusBar().clearMessage()
+        click(*beside, SHIFT)
+
+        check("unarmed, a shift-click there is still an anchor and not a station",
+              putting._point is None)
+
+        putting.pick_point.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        check("arming it says what the next click is for",
+              "where the measurement was made" in putting.step.text()
+              and not putting.add_button.isEnabled(),
+              putting.step.text()[:70])
+
+        click(*beside, SHIFT)
+
+        # Not 80.0: the click goes through the canvas as integer pixels, and on a
+        # view this wide one pixel is metres. What the check is about is that the
+        # number is the distance and not zero -- a snapped anchor writes 0.0 --
+        # so the expected `off=` is read back from the point rather than written
+        # out, and the tolerance is the pixel.
+        off_clicked = putting._point[3] if putting._point else None
+
+        check("and the click lands unsnapped, with its distance from the trace",
+              off_clicked is not None and abs(off_clicked - 80.0) < 10.0,
+              f"off by {off_clicked:.1f} m, for a click aimed 80 m out"
+              if off_clicked else "nothing")
+
+        # Disarmed by the click it was waiting for, a mode that outlives what it
+        # was turned on for being a mode that takes the next click too.
+        check("the arming is spent, and the dial is what is left to do",
+              not putting.pick_point.isChecked()
+              and putting.add_button.isEnabled()
+              and "Dial the plane" in putting.step.text(),
+              putting.step.text()[:60])
+
+        putting.dip_dir.setValue(236)
+        putting.dip.setValue(57)
+        putting.station.setText("S99")
+        QtWidgets.QApplication.processEvents()
+
+        before_reading = traced.read_text(encoding="utf-8")
+        putting.add_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("the reading goes into the block, applied in the press",
+              putting.table.rowCount() == 1
+              and len(fitting.document.dataset.structures[rows["VEE"]].attitudes) == 1,
+              f"{putting.table.rowCount()} row(s)")
+
+        written_line = putting._in_file[0].line.strip()
+
+        # Whole degrees, like every imported attitude in the AOI, and `off=` from
+        # the click rather than 0.0 -- which a snapped anchor would have written,
+        # calling a measurement 80 m away a measurement on the fault.
+        check("as whole degrees, with src=field and the distance it was made at",
+              "plane 236/57" in written_line
+              and "station=S99" in written_line
+              and "src=field" in written_line
+              and f"off={off_clicked:.1f}" in written_line,
+              written_line[:90])
+
+        # Nothing about north, because nothing was computed from grid
+        # coordinates: a compass corrected for declination already reads in the
+        # azimuth this format writes.
+        check("and nothing about north, there being no convergence to undo",
+              "north=" not in written_line and "converg=" not in written_line)
+
+        fitting.save()
+        put_in = changed_lines(before_reading, traced.read_text(encoding="utf-8"))
+
+        check("and it reaches the file, one line and no others",
+              len(put_in) == 1 and put_in[0] == f"+{written_line[:0]}  {written_line}",
+              f"{len(put_in)} line(s): {put_in[0][:60] if put_in else ''}")
+
+        putting.undo_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("Undo takes it back out again",
+              putting.table.rowCount() == 0
+              and fitting.document.dataset.structures[rows["VEE"]].attitudes == [])
+
         # -- the pin put by hand, and the band that measures it -------------
         #
         # The order of work this was missing. Everything above pins the plane

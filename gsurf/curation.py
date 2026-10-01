@@ -1220,6 +1220,40 @@ def from_a_file(row):
     )
 
 
+def reading_line(x, y, dip_dir, dip, attrs=None, indent="  "):
+    """
+    One measurement as the line a file holds, built the format's own way.
+
+    `fits.as_line`'s counterpart, and it borrows that function's argument whole:
+    the anchor and the attributes are spelled with `gstruct`'s own `_a` and `_kw`
+    rather than with new ones here, because two spellings of a quoted value are
+    two spellings that drift.
+
+    **Whole degrees, where a fit gets one decimal**, and the difference is not
+    cosmetic. A fit's decimal exists because the number written is a true azimuth
+    computed in grid and corrected by `converg=`, and at `.0f` a correction under
+    half a degree vanishes while claiming to have happened. A reading typed from
+    field notes has no correction to lose: a compass corrected for declination
+    already reads in true azimuth, which is the azimuth this format writes, so
+    there is nothing for a decimal to carry. Every imported `attitude` in the AOI
+    is written this way, and a hand-made one that looked different would look
+    like it came from somewhere else.
+
+    Nothing about north goes on the line for the same reason. `north=`/`converg=`
+    are what a producer says when it computed a plane from projected coordinates;
+    a measurement was not computed, and FORMAT.md's rule -- the number in the
+    file is always a true azimuth -- already covers it.
+    """
+
+    gstruct = module()
+
+    return (
+        f"{indent}attitude {gstruct._a((float(x), float(y)))} plane "
+        f"{float(dip_dir):.0f}/{float(dip):.0f}"
+        f"{gstruct._kw(attrs or {})}"
+    )
+
+
 def detachment_note(row, why, today, indent="  "):
     """
     The comment lines that stand where a detached reading stood.

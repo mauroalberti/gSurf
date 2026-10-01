@@ -1415,6 +1415,30 @@ the comment is the entire justification for removing the line rather than
 deleting it — so the button is dead until there is a sentence, and the sentence
 goes in the file word for word.
 
+**And the other direction, which is why QGIS was in the loop at all.** `Point on
+the map` arms the window, the next shift-click says where the measurement was
+made, two dials and a station name make the plane, and `Add this reading` writes
+it. The arming is a mode held by a button that stays down, because a shift-click
+already means two things and a third meaning carried by a modifier nobody is told
+about is how a click disappears — which this tool has done once already. It is
+spent by the click it was waiting for.
+
+**The point is not snapped, and that is the whole difference from the gesture
+beside it.** A fit's ends are progressives *along* a trace, so a shift-click for
+one snaps onto the path; a station is somewhere a person stood, and `off=` is the
+record of how far that was — *a station 80 m off a fault is a different claim from
+one standing on it*, which is why `imports` writes the number and why writing a
+snapped `off=0.0` would have been a lie in the one field that exists to prevent
+it. The check clicks 80 m out and reads 85.3 m back, the canvas quantising to
+pixels, and asserts the distance rather than a constant.
+
+Whole degrees, where a fit gets one decimal, and nothing about north on the line.
+Both come off FORMAT.md's rule that the number in a file is always a true azimuth:
+a fit's decimal carries a `converg=` correction that would vanish at `.0f` while
+claiming to have happened, and a compass corrected for declination has no
+correction to carry. Every imported `attitude` in the AOI is written this way, and
+a hand-made one that looked different would look like it came from somewhere else.
+
 `readings_in` lists `lineation` as well as `attitude`, although no file in this
 project holds one. A window counting only `attitude` would say *1 reading* over
 the synthetic block that states four, and a curator cannot be asked to know which
