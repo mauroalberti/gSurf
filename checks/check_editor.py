@@ -2234,28 +2234,87 @@ def main():
         print("\n-- a reading taken off a trace --\n")
 
         # F001's own compass reading, the shape of S26 on `Mt. Alpi faults.2`:
-        # one measurement whose plane the trace cannot have. Taking it out is a
-        # splice like the fit's, and what it leaves behind is the difference.
+        # one measurement whose plane the trace cannot have. Driven through the
+        # window, because the gesture is the thing being checked -- the splice
+        # under it is the fit's, already checked, and shared on purpose.
         window.select(0)
         QtWidgets.QApplication.processEvents()
 
+        window.open_readings()
+        QtWidgets.QApplication.processEvents()
+
+        readings_ui = window.readings_panel
         alpha_before = window.document.text_of(0)
         reading = next(
             row for row in readings_in(alpha_before, document.dataset.structures[0].path)
         )
-        detaching = detachment_note(reading, "belongs to the thrust", "01.10.2026")
 
-        refused = window.panel.comment_out(reading.at, reading.line, detaching)
+        check("the window has a row for the one measurement on this trace",
+              readings_ui.table.rowCount() == 1
+              and readings_ui._in_file[0].line.strip() == reading.line.strip(),
+              f"{readings_ui.table.rowCount()} row(s)")
+
+        def reading_cells(row):
+            return [
+                readings_ui.table.item(row, column).text()
+                if readings_ui.table.item(row, column) else ""
+                for column in range(readings_ui.table.columnCount())
+            ]
+
+        # The column that is the point of the table. ALPHA runs due east for a
+        # kilometre and the reading sits at 800 m, so its reach is 550 to 1000 --
+        # clipped at the end of the trace, which is the case worth having in a
+        # check, and 450 m of a 1000 m fault answered for by one compass reading.
+        check("and says where it answers, which is in none of the file",
+              reading_cells(0)[:3] == ["800 m  (S1)", "90/30", "550 to 1000 m"],
+              str(reading_cells(0)[:3]))
+
+        banded = []
+        readings_ui.showing.connect(banded.append)
+
+        readings_ui.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        check("picking it lights that stretch on the map",
+              banded and banded[-1] is not None
+              and [round(one) for one in banded[-1]] == [550, 1000],
+              str(banded[-1]))
+
+        # The reason is typed before the press and not after, because a box that
+        # can be left empty is left empty -- and the comment is the whole of why
+        # this is a detachment rather than a delete.
+        check("but the press is dead until there is a reason for it",
+              not readings_ui.detach_button.isEnabled()
+              and "Say why" in readings_ui.step.text(),
+              readings_ui.step.text())
+
+        readings_ui.why.setText("belongs to the thrust")
+        QtWidgets.QApplication.processEvents()
+
+        check("with one typed it comes alive, and says what it will leave",
+              readings_ui.detach_button.isEnabled()
+              and "S1 90/30" in readings_ui.step.text()
+              and "only copy" in readings_ui.step.text(),
+              readings_ui.step.text()[:80])
+
+        readings_ui.detach_button.click()
         QtWidgets.QApplication.processEvents()
 
         alpha_after = window.document.text_of(0)
+        detaching = detachment_note(
+            reading, "belongs to the thrust", time.strftime("%d.%m.%Y")
+        )
 
         check("the reading's line is not in the block any more",
-              refused is None
-              and reading.line.strip() not in [
+              reading.line.strip() not in [
                   one.strip() for one in alpha_after.splitlines()
-              ],
-              str(refused))
+              ]
+              and readings_ui.table.rowCount() == 0,
+              f"{readings_ui.table.rowCount()} row(s) left")
+
+        check("and it says so, naming what went",
+              "detached S1 90/30" in window.statusBar().currentMessage(),
+              window.statusBar().currentMessage()[:70])
 
         # The point of the whole choice: `attitude_at` already answers *assente*
         # where nobody measured, so a line deleted silently would read tomorrow
@@ -2280,19 +2339,25 @@ def main():
               len(gstruct.loads("\n".join(window.document.lines)).structures) == 4)
 
         # Undo, because a detachment is a judgement and judgements are revised.
-        check("and the detachment is on the undo stack", window.panel.may_undo())
+        check("and the Undo beside it is live, the press having written",
+              readings_ui.undo_button.isEnabled())
 
-        window.panel.undo_applied()
+        readings_ui.undo_button.click()
         QtWidgets.QApplication.processEvents()
 
         check("Undo puts the reading back and takes the comment away",
               reading.line.strip() in [
                   one.strip() for one in window.document.text_of(0).splitlines()
               ]
-              and detaching.splitlines()[0] not in window.document.text_of(0))
+              and detaching.splitlines()[0] not in window.document.text_of(0)
+              and readings_ui.table.rowCount() == 1,
+              f"{readings_ui.table.rowCount()} row(s) back")
 
         # Then done again, so that the Save below has it to carry.
-        window.panel.comment_out(reading.at, reading.line, detaching)
+        readings_ui.table.selectRow(0)
+        readings_ui.why.setText("belongs to the thrust")
+        QtWidgets.QApplication.processEvents()
+        readings_ui.detach_button.click()
         QtWidgets.QApplication.processEvents()
 
         # -- saving -------------------------------------------------------
@@ -2303,14 +2368,12 @@ def main():
         window.save()
         saved = path.read_text(encoding="utf-8")
 
+        # Built from `detaching` rather than written out, the note carrying
+        # today's date: a check with the day it was written in it passes once.
         check("saving writes the lines that changed and nothing else",
               changed_lines(before, saved) == [
-                  '-  attitude @600800.00,4420000.00 plane 90/30 station=S1 src=field',
-                  '+  # 01.10.2026: detached S1 90/30 -- belongs to the thrust',
-                  '+  #   was: attitude @600800.00,4420000.00 plane 90/30 '
-                  'station=S1 src=field',
-                  '+  #   typed here, with no `raw=`: this comment is the only '
-                  'copy left of it',
+                  "-  attitude @600800.00,4420000.00 plane 90/30 station=S1 src=field",
+              ] + [f"+{one}" for one in detaching.splitlines()] + [
                   '+  span use @603000.00,4420200.00 @603000.00,4420600.00 '
                   'rejected reason="check"'
               ],

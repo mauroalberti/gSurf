@@ -187,6 +187,7 @@ so there is nothing worth hiding and nothing hidden.
 from __future__ import annotations
 
 import textwrap
+import time
 from collections import Counter
 from typing import NamedTuple
 
@@ -210,7 +211,9 @@ from gsurf.curation import (
     anchors_written,
     covered_metres,
     degrees_not_metres,
+    detachment_note,
     fits_in,
+    from_a_file,
     interval_of,
     is_gstruct,
     module,
@@ -219,6 +222,8 @@ from gsurf.curation import (
     plane_of,
     point_on,
     provenance_of,
+    reading_said,
+    readings_in,
     rows_of,
     stretch,
     with_attrs,
@@ -542,6 +547,17 @@ FIT_WINDOW_PX = (560, 800)
 # `how` and not `from`, that being taken by the near end of the stretch. It is
 # the file's own `from=`: `trace-dem`, `plane-dem`, `table`, `reach`.
 CARRIED_COLUMNS = ("from", "to", "plane", "read over", "how")
+
+# What the readings window shows, and the difference from the two above is the
+# second column. A fit answers over the stretch it was computed on, written into
+# the line; a reading answers over the ground nothing nearer answers for, which
+# is not in the line at all -- it is `DEFAULT_MAX_GAP` either side of a point,
+# worked out here. Which is exactly the quantity nobody can see in a file, and
+# the reason S26 governed 500 m at the far end of a trace it was snapped onto.
+READING_COLUMNS = ("at", "reads", "answers over", "source", "the rest")
+
+# Narrower than the fit window and shorter: one table, no sweep, no steering.
+READING_WINDOW_PX = (560, 460)
 
 # Below this, a stretch counts as claimed to the last metre rather than claimed
 # in part. A metre: two orders of magnitude above the two decimals an anchor is
@@ -3612,6 +3628,349 @@ class PlaneSteering(QtWidgets.QWidget):
             self.steered.emit(*self.plane())
 
 
+class ReadingsHere(QtWidgets.QWidget):
+    """
+    The measurements claimed along one trace, and the one gesture that is new.
+
+    `FitFromDem`'s sibling, and separate from it for the reason `fits_in` gives:
+    a fit is what a computation returned and a reading is what a compass was
+    pointed at, so one table over both would be one gesture over two kinds of
+    claim with different grounds behind them. The division is also what makes
+    this window's Detach safe to offer at all -- it is never a press away from a
+    fit, which goes out through its own button with its own argument.
+
+    **What it exists for is a case the file could not state.** S26 reads 140/35
+    on `Mt. Alpi faults.2`, a `?transcurrent`: a 35-degree plane on a fault that
+    cannot have one. Its three nearest neighbours read 107/35, 115/30 and
+    120/30, the one of those that sits on a structure sits on a `?thrusts`, and
+    that structure's own comment names a sovrascorrimento. The compass was
+    right. What was wrong was `off=7.4` -- an importer snapping a point onto the
+    nearest trace -- and nothing in this tool could undo an importer's guess.
+
+    **The second column is the point of the table.** A fit carries the stretch it
+    was computed over, written in the line; a reading carries a point, and the
+    ground it answers for is `DEFAULT_MAX_GAP` either side of it, which is in no
+    file anywhere. That is the number that made S26 a problem worth finding: it
+    governs the last 150 m of its trace, and -- through the `misurata-lontana`
+    tier, where nothing nearer answers -- the first 500 m as well, from 3.4 km
+    away. Shown as metres along the trace, and lit on the map by the same band
+    the fit window uses, because the band means one thing and this is a stretch
+    under discussion like any other.
+
+    **Detach, not Delete.** The word is the claim: what the press removes is the
+    line saying this measurement belongs to this structure, and `detachment_note`
+    is where the rest of that argument lives. The reading does not evaporate --
+    it becomes the comment that says it was here and why it went.
+
+    **Why is typed before the press, not after.** A reason box that could be left
+    empty is a reason box that is left empty, and the comment is the whole
+    justification for removing the line rather than deleting it. So the button is
+    dead until there is a sentence, and the sentence goes in the file verbatim.
+    """
+
+    # The stretch to light on the map, as `(s0, s1)` or None -- the same signal
+    # and the same sink as the fit window's, `_show_fitting` being the one place
+    # that decides what the band means.
+    showing = QtCore.pyqtSignal(object)
+
+    # For the status bar, which belongs to the map.
+    said = QtCore.pyqtSignal(str)
+
+    # That the block changed under everything else looking at it.
+    wrote = QtCore.pyqtSignal()
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+
+        self.panel = panel
+
+        # The reading rows of the selected block, in file order, as `curation.Row`.
+        # Each knows its line and where that line sits, which is what the splice
+        # needs. The index into this list is the row number, and the table is
+        # never sorted -- `rows_of`'s rule, kept here because the correspondence
+        # is what Detach aims through.
+        self._in_file = []
+
+        self.about = QtWidgets.QLabel()
+        self.about.setWordWrap(True)
+        self.about.setStyleSheet("font-weight: bold;")
+
+        self.carries = QtWidgets.QLabel()
+        self.carries.setWordWrap(True)
+        self.carries.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.table = QtWidgets.QTableWidget(0, len(READING_COLUMNS))
+        self.table.setHorizontalHeaderLabels(READING_COLUMNS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(False)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.table.itemSelectionChanged.connect(self._picked)
+
+        self.why = QtWidgets.QLineEdit()
+        self.why.setPlaceholderText(
+            "why this measurement is not of this structure"
+        )
+        self.why.setToolTip(
+            "Goes into the file word for word, on the comment that stands where "
+            "the reading stood. The next person to open the block reads this and "
+            "nothing else about it, so a sentence naming what the plane belongs "
+            "to is worth more than `wrong`."
+        )
+        self.why.textChanged.connect(self._tell)
+
+        self.detach_button = QtWidgets.QPushButton("Detach this reading")
+        self.detach_button.setEnabled(False)
+        self.detach_button.clicked.connect(self.detach_picked)
+
+        self.undo_button = QtWidgets.QPushButton("Undo")
+        self.undo_button.setEnabled(False)
+        self.undo_button.setToolTip(
+            "Put the block back as it was before the last press that wrote in "
+            "it. Nothing reaches the file until Save."
+        )
+        self.undo_button.clicked.connect(self.undo_last)
+
+        taking_out = QtWidgets.QHBoxLayout()
+        taking_out.addWidget(self.detach_button)
+        taking_out.addStretch(1)
+        taking_out.addWidget(self.undo_button)
+
+        self.step = QtWidgets.QLabel()
+        self.step.setWordWrap(True)
+        self.step.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        laid = QtWidgets.QVBoxLayout(self)
+        laid.addWidget(self.about)
+        laid.addWidget(self.carries)
+        laid.addWidget(self.table, stretch=1)
+        laid.addWidget(self.why)
+        laid.addLayout(taking_out)
+        laid.addWidget(self.step)
+
+        self.retarget()
+
+    # -- what the file claims here -----------------------------------------
+
+    def _structure(self):
+        if self.panel.index is None:
+            return None
+
+        return self.panel.document.dataset.structures[self.panel.index]
+
+    def retarget(self):
+        """Points at whatever the panel has open, and reads the block again."""
+
+        structure = self._structure()
+
+        self._in_file = []
+        self.table.clearContents()
+        self.table.setRowCount(0)
+
+        if structure is None:
+            self.about.setText("Nothing selected")
+            self.carries.setText("")
+            self._tell()
+            return
+
+        gstruct = module()
+
+        self.about.setText(
+            f"{structure.ident} -- {gstruct.path_length(structure.path):.0f} m"
+        )
+
+        self._in_file = readings_in(
+            self.panel.document.text_of(self.panel.index), structure.path
+        )
+
+        self.table.setRowCount(len(self._in_file))
+
+        for row in range(len(self._in_file)):
+            self._write_row(row)
+
+        self.table.resizeColumnsToContents()
+        self.carries.setText(self._carries_said())
+        self._tell()
+
+    def _carries_said(self):
+        """What the block states, and the reach that is not written in any of it."""
+
+        how_many = len(self._in_file)
+
+        if not how_many:
+            return (
+                "No measurement in the file along this trace -- so whatever "
+                "answers here, a fit made it."
+            )
+
+        return (
+            f"{how_many} measurement{'' if how_many == 1 else 's'}, and each of "
+            f"them outranks every fit for {DEFAULT_MAX_GAP:.0f} m either side of "
+            f"where it sits. Past that, the nearest one still answers wherever "
+            f"no fit does -- which is how a reading comes to speak for ground "
+            f"kilometres away from it."
+        )
+
+    def _reach_of(self, row):
+        """The stretch a reading answers over, clipped to the trace, or None."""
+
+        structure = self._structure()
+
+        if row.place is None or structure is None:
+            return None
+
+        gstruct = module()
+        length = gstruct.path_length(structure.path)
+
+        return (
+            max(0.0, row.place - DEFAULT_MAX_GAP),
+            min(length, row.place + DEFAULT_MAX_GAP),
+        )
+
+    def _write_row(self, row):
+        claim = self._in_file[row]
+        reach = self._reach_of(claim)
+        attrs = claim.attrs or {}
+
+        rest = " ".join(
+            f"{key}={value}"
+            for key, value in attrs.items()
+            if key not in ("station", "src") and not key.startswith("raw.")
+        )
+
+        cells = (
+            f"{claim.place:.0f} m" if claim.place is not None else "off the trace",
+            (
+                f"{claim.plane[0]:.0f}/{claim.plane[1]:.0f}"
+                if claim.plane is not None
+                else claim.word
+            ),
+            f"{reach[0]:.0f} to {reach[1]:.0f} m" if reach is not None else "",
+            attrs.get("src", ""),
+            rest,
+        )
+
+        for column, text in enumerate(cells):
+            item = QtWidgets.QTableWidgetItem(text)
+
+            if column == 0:
+                # The station name rides on the first cell rather than taking a
+                # column of its own: it is how a geologist says which reading
+                # this is, and it is also absent from anything typed here.
+                named = attrs.get("station")
+
+                if named:
+                    item.setText(f"{cells[0]}  ({named})")
+
+                item.setToolTip(claim.line.strip())
+
+            self.table.setItem(row, column, item)
+
+    # -- the gesture --------------------------------------------------------
+
+    def _picked_row(self):
+        picked = self.table.selectionModel()
+        rows = picked.selectedRows() if picked is not None else []
+
+        if not rows:
+            return None
+
+        at = rows[0].row()
+
+        return at if at < len(self._in_file) else None
+
+    def _picked(self):
+        at = self._picked_row()
+
+        self.showing.emit(None if at is None else self._reach_of(self._in_file[at]))
+        self._tell()
+
+    def _tell(self):
+        """What is missing before the press can happen, and the press's state."""
+
+        at = self._picked_row()
+        why = self.why.text().strip()
+
+        self.detach_button.setEnabled(at is not None and bool(why))
+        self.undo_button.setEnabled(self.panel.may_undo())
+
+        if not self._in_file:
+            self.step.setText("")
+            return
+
+        if at is None:
+            self.step.setText("Pick the reading this trace should not carry.")
+            return
+
+        claim = self._in_file[at]
+
+        if not why:
+            self.step.setText(
+                "Say why, and it goes in the file on the comment that replaces "
+                "the line."
+            )
+            return
+
+        self.step.setText(
+            f"`Detach this reading` takes {reading_said(claim)} out and leaves "
+            f"the comment"
+            + (
+                ""
+                if from_a_file(claim)
+                else " -- which will be the only copy of it, this one carrying "
+                     "no `raw=`"
+            )
+        )
+
+    def detach_picked(self):
+        """The reading on the picked row out, with the reason in its place."""
+
+        at = self._picked_row()
+        why = self.why.text().strip()
+
+        if at is None or not why:
+            return False
+
+        claim = self._in_file[at]
+        note = detachment_note(claim, why, time.strftime("%d.%m.%Y"))
+        refused = self.panel.comment_out(claim.at, claim.line, note)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        self.said.emit(
+            f"detached {reading_said(claim)} -- the comment says so in the "
+            f"block, Undo puts the line back, Save writes the file"
+        )
+        self.why.clear()
+        self.showing.emit(None)
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+    def undo_last(self):
+        """The block before the last press that wrote in it, put back."""
+
+        if not self.panel.undo_applied():
+            return False
+
+        self.said.emit("the block is back as it was before the last press")
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+
 class FitFromDem(QtWidgets.QWidget):
     """
     Reading the topography along one trace: press, look at what came out, keep it.
@@ -4918,6 +5277,25 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.fit_window.visibility_changed.connect(self._fitting_visible)
         self._fit_placed = False
 
+        # The readings beside the fits, and a second window rather than a second
+        # table in that one: `fits_in` refuses to mix what a computation returned
+        # with what a compass was pointed at, and the gesture here -- taking a
+        # measurement off a trace -- must never be one row away from the gesture
+        # that deletes a fit. Its band goes to the same sink, `_show_fitting`
+        # being the one place that decides what a band on the map means.
+        self.readings_panel = ReadingsHere(self.panel)
+        self.readings_panel.showing.connect(self._show_fitting)
+        self.readings_panel.said.connect(self.say)
+        self.readings_panel.wrote.connect(self._readings_wrote)
+
+        self.readings_window = SatelliteWindow(
+            "gSurf - measurements along this trace",
+            self.readings_panel,
+            READING_WINDOW_PX,
+            parent=self,
+        )
+        self._readings_placed = False
+
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(
             "Write the file, replacing the lines of the structures that were "
@@ -5037,6 +5415,17 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.fit_action.triggered.connect(self.open_fitting)
         reading.addAction(self.fit_action)
 
+        # In the same menu and never greyed, which is the one difference from the
+        # entry above it: this window needs no DEM, only the block. A file opened
+        # without any raster at all can still be asked what it measures and told
+        # that a measurement is not of this fault.
+        self.readings_action = QtGui.QAction(
+            "&Measurements along this trace...", self
+        )
+        self.readings_action.setShortcut("Ctrl+M")
+        self.readings_action.triggered.connect(self.open_readings)
+        reading.addAction(self.readings_action)
+
         # Greyed for the reason the button is greyed, and off the same answer
         # rather than a second copy of it: a menu entry that opens a window with
         # a refusal in it costs the gesture before it answers, and two places
@@ -5101,6 +5490,54 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.say(
             "The steered plane is off the map: its dial went with the window "
             "(Ctrl+D brings both back, on the same plane)."
+        )
+
+    def open_readings(self):
+        """
+        Brings up the measurements window on the selected trace.
+
+        Retargeted on every opening, unlike the fit window, and the difference is
+        what each holds. That one carries a list nobody has decided about yet and
+        throwing it away on a click meant to raise a window is a real loss; this
+        one holds nothing but what the file says, so reading the block again is
+        free and is the only way it cannot be stale.
+        """
+
+        self.readings_panel.retarget()
+        self._place_readings()
+        self.readings_window.show()
+        self.readings_window.raise_()
+        self.readings_window.activateWindow()
+
+    def _readings_wrote(self):
+        """A detachment reaches everything else that draws the block."""
+
+        # The map's bands and the row's `holds` fraction both come off the model,
+        # and a reading taken out moves the second: a trace answering for its
+        # last 150 m through a measurement answers for none of it afterwards.
+        self.fit_panel.retarget()
+        self._tell_next()
+
+    def _place_readings(self):
+        """Offset further in than the fit window, so the two do not land as one."""
+
+        if self._readings_placed:
+            return
+
+        self._readings_placed = True
+
+        available = self.screen().availableGeometry()
+        frame = self.frameGeometry()
+
+        self.readings_window.move(
+            min(
+                frame.left() + FIT_OFFSET_PX[0] * 2,
+                available.right() - self.readings_window.width(),
+            ),
+            min(
+                frame.top() + FIT_OFFSET_PX[1] * 2,
+                available.bottom() - self.readings_window.height(),
+            ),
         )
 
     def _place_fitting(self):
@@ -5176,7 +5613,11 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             self.addAction(action)
 
-            for satellite in (*self.group.satellites.values(), self.fit_window):
+            for satellite in (
+                *self.group.satellites.values(),
+                self.fit_window,
+                self.readings_window,
+            ):
                 satellite.addAction(action)
 
     def _panel_title(self):
@@ -5632,6 +6073,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         # it is -- and a list thrown away on a move that did not happen would be
         # a list lost to a click that changed nothing.
         self.fit_panel.retarget()
+        self.readings_panel.retarget()
 
         # Said last, because every line of it is about this trace: which one is
         # open is the first thing the next step depends on.

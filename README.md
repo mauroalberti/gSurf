@@ -1362,6 +1362,64 @@ through `Document.replace`, because the model beside the text is what the map an
 the tables read; and it selects what it restored, an undo you cannot see being
 indistinguishable from one that did nothing.
 
+**The measurements are a second window, Ctrl+M, and the gesture in it is
+`Detach this reading`.** What asked for it was S26 on `Mt. Alpi faults.2`: a
+`?transcurrent` carrying a compass reading of 140/35, a plane that fault cannot
+have. The three nearest readings to it are 107/35, 115/30 and 120/30, the one of
+those that sits on a structure sits on a `?thrusts` whose own comment names a
+sovrascorrimento — so the compass was right and `off=7.4` was not. An importer
+had snapped a low-angle surface onto the nearest trace, and nothing in the tool
+could undo an importer's guess.
+
+Separate from the fit window rather than a second table in it, which is
+`fits_in`'s rule arriving in the interface: a fit is what a computation returned
+and a reading is what a compass was pointed at, so one table over both would be
+one gesture over two kinds of claim with different grounds behind them — and this
+press must never be one row away from the one that deletes a fit. The band goes
+to the same sink all the same, `_show_fitting` being the single place that
+decides what a band on the map means.
+
+**The column that matters is not in the file.** A fit carries the stretch it was
+computed over; a reading carries a point, and the ground it answers for is
+`DEFAULT_MAX_GAP` either side of it — in no file anywhere, and the number that
+made S26 worth finding. It governed the last 150 m of its trace *and*, through
+the `misurata-lontana` tier where nothing nearer answers, the first 500 m, from
+3.4 km away. The table says `3172 to 3531 m` and lights it on the map.
+
+**Detach and not Delete**, because what the press removes is the line saying this
+measurement belongs to this structure, and what stands there afterwards is the
+comment that records it:
+
+```
+  # 01.10.2026: detached S26 140/35 -- superficie a basso angolo, famiglia di S19/S21/S22
+  #   was: attitude @583825.14,4439154.99 plane 140/35 station=S26 src=points raw="dip_dir=140 dip=35" off=7.4 …
+```
+
+A `#` was chosen over a new keyword and the trade is stated rather than hidden.
+It costs nothing in `FORMAT.md`, in the parser or in the precedence, and survives
+the Save because `Document` replaces the lines of one structure and never calls
+`dumps` — which would eat it. What it does not do is reach `attitude_at`: a
+detachment the file computes with is a 0.3 conversation about vocabulary, and
+this is what makes the decision legible in the meantime. Without it the loss is
+specific, not vague: `attitude_at` already answers *assente* where nobody
+measured, so a reading deleted silently reads tomorrow as ground nobody walked.
+
+The whole original line goes into the note and not a summary of it — `off=` and
+`raw.comments.station=` are the only surviving record of what the importer put
+there and why it was wrong. And `raw=` decides how much is at stake: a line
+carrying its source string came out of a file that still holds it, so detaching
+undoes a guess; a line typed here is the only copy there is, and the note says so
+on itself, because the window that asked will have closed. **The reason is typed
+before the press, not after** — a box that can be left empty is left empty, and
+the comment is the entire justification for removing the line rather than
+deleting it — so the button is dead until there is a sentence, and the sentence
+goes in the file word for word.
+
+`readings_in` lists `lineation` as well as `attitude`, although no file in this
+project holds one. A window counting only `attitude` would say *1 reading* over
+the synthetic block that states four, and a curator cannot be asked to know which
+keywords the tool reads.
+
 One thing the second surface made visible. The panel's stretch band is fed by a
 guard that remembers what the panel last *emitted*, so a caret crossing a line
 does not cost a blit per character — sound while the panel is the only thing
@@ -1743,11 +1801,14 @@ reconstructed, so a file of mixed endings keeps each line's own. The four
 assertions on this in `check_editor.py` exist because its fixture is a Python
 literal: on its own it could only ever have proved the LF case, and it did.
 
-There is no delete, and that is the format's answer rather than a missing
-button: a contact that does not hold is said not to hold — `span use * *
+**A structure cannot be deleted**, and that is the format's answer rather than a
+missing button: a contact that does not hold is said not to hold — `span use * *
 rejected`, with the reason on it — which leaves both the geometry and the
 grounds in the file. Removing the lines would leave neither, and nobody could
-afterwards tell a fault that was rejected from one that was never mapped.
+afterwards tell a fault that was rejected from one that was never mapped. The two
+gestures that do take a line out are both narrower than that and both argue for
+themselves: a `fit` is a plane a computation returned and goes without trace, a
+reading is somebody's measurement and goes as the comment that records it.
 
 That refusal is the one place where editing a file raises what it requires of a
 reader, and the header is left saying otherwise. `use` is an axis of 0.2, both
