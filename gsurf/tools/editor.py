@@ -467,10 +467,17 @@ MAX_GAP_RANGE = (0.0, 20000.0)
 # `use` and not one of the other two axes, because it is the one that decides:
 # `certainty` and `exposure` describe the contact, and this is the tool for
 # saying what holds.
+#- A `fit` for somebody to finish, named because two windows start one: the box's
+# own button and the steering's. The steering needs it because the step line kept
+# saying `press + fit in the box` to a hand that was in another window, and
+# because without a fresh line the caret stays wherever it was parked -- which is
+# how a steered plane ended up written over a compass reading.
+FIT_TEMPLATE = "  fit plane * * 000/00 from="
+
 TEMPLATES = (
     ("+ span", '  span use * * rejected reason=""'),
     ("+ attitude", "  attitude * plane 000/00 station= src=field"),
-    ("+ fit", "  fit plane * * 000/00 from="),
+    ("+ fit", FIT_TEMPLATE),
 )
 
 PANEL_WIDTH_PX = 520
@@ -2781,9 +2788,34 @@ class EditorPanel(QtWidgets.QWidget):
         )
 
     def has_plane_slot(self):
-        """Whether the caret's line has somewhere to write a plane."""
+        """
+        Whether the caret's line is a `fit` with somewhere to write a plane.
 
-        return with_plane(self.line_now(), 0.0, 0.0) is not None
+        **A `fit` and nothing else**, which `with_plane` does not say on its own:
+        `PLANE_AT` carries `attitude` as well, and has to, the importers writing
+        measurements through it. What the steering is, though, is a producer of
+        fits -- it computes a plane from a hand, a dial and a DEM and stamps
+        `from=plane-dem` on it -- and an `attitude` is somebody's compass reading.
+        There is no state of that window in which replacing a reading with a
+        computed number is the thing being asked.
+
+        Not a hypothetical. The caret parks on the last line before the path, and
+        on `Mt. Alpi faults.2` that is the reading at station S26: the step line
+        said `turn the dial, then press Keep this plane`, one press put the
+        steered plane into it -- *and applied in the same press*, the anchor being
+        written -- and the file was left holding `plane 237.0/60.0 ... src=points
+        raw="dip_dir=140 dip=35" from=plane-dem`. A measurement overwritten by a
+        computation, carrying the provenance of both, with no `fit` created
+        anywhere. It survived only because the import had kept `raw=`.
+        """
+
+        line = self.line_now()
+        tokens = line.split()
+
+        if not tokens or tokens[0] != "fit":
+            return False
+
+        return with_plane(line, 0.0, 0.0) is not None
 
     def pinned_at(self):
         """
@@ -2840,6 +2872,13 @@ class EditorPanel(QtWidgets.QWidget):
         having no gate and no residual to put in them. What it has instead is a
         person who looked, and `from=plane-dem` is the honest name for that.
         """
+
+        # Asked here and not only where the button is enabled: enablement is
+        # recomputed when the caret's *plane* changes, and moving from a reading
+        # to a `fit` that happens to carry the same numbers changes no plane. The
+        # gate has to be on the write.
+        if not self.has_plane_slot():
+            return None
 
         written = with_plane(self.line_now(), dip_dir, dip)
 
@@ -3008,9 +3047,15 @@ class EditorPanel(QtWidgets.QWidget):
         if not anchors_written(self.line_now()):
             return None
 
+        # Said with the new line in it and not only with the way to edit this one,
+        # because of how it was read: *inizio/fine erano già definiti e quindi non
+        # si procedeva*. The condition was true and the sentence was about the
+        # wrong thing -- the ends it names belong to a line the caret happened to
+        # be parked on, and the stretch being chosen had not been written down
+        # anywhere yet. `+ fit` is the step that was missing.
         return (
-            "this line's ends are both written: select one to replace it, or "
-            "put the caret on a line that still has a `*`"
+            "this line's ends are already written: press `+ fit` for a new line "
+            "to click them on, or select one of them here to replace it"
         )
 
     def _order_ends(self):
@@ -3098,6 +3143,7 @@ class PlaneSteering(QtWidgets.QWidget):
     take_asked = QtCore.pyqtSignal()
     armed_changed = QtCore.pyqtSignal(bool)
     unpin_asked = QtCore.pyqtSignal()
+    start_asked = QtCore.pyqtSignal()
 
     # QDial puts its minimum at six o'clock, not at twelve, and it runs
     # clockwise like an azimuth -- so between its scale and dip direction there
@@ -3229,6 +3275,25 @@ class PlaneSteering(QtWidgets.QWidget):
         self.take = QtWidgets.QPushButton("Keep this plane")
         self.take.clicked.connect(lambda: self.take_asked.emit())
 
+        # **The line to keep it in, startable from here.** The same button is in
+        # the box, three windows away, and the step line kept pointing at it
+        # there: *press `+ fit` in the box*. That is not advice anybody follows
+        # with one hand on a dial and the other on the map, so the state it was
+        # the way out of -- the caret parked on whatever line was last before the
+        # path -- was the state every attempt was made from.
+        #
+        # First in the row, left of `Keep`, which is the order the two go in: this
+        # one makes the line, that one fills it. Never disabled, because writing a
+        # template is not a judgement about anything -- it is what a hand does
+        # *instead* of pressing a button that is grey.
+        self.start = QtWidgets.QPushButton("+ fit")
+        self.start.setToolTip(
+            "Write a new `fit` line above the path and put the caret on it, with "
+            "its first end armed. Its two ends come up empty: shift-click the map "
+            "for each, which is how the stretch this plane is about gets said."
+        )
+        self.start.clicked.connect(lambda: self.start_asked.emit())
+
         # Disabled rather than hidden, and that is the whole design of it. A pin
         # put by hand is a mode -- the plane stops following the caret until it
         # is given back -- and a mode with no visible way out is a trap. Shown
@@ -3280,6 +3345,7 @@ class PlaneSteering(QtWidgets.QWidget):
         turning.addLayout(bars, 1)
 
         pressing = QtWidgets.QHBoxLayout()
+        pressing.addWidget(self.start)
         pressing.addWidget(self.take)
         pressing.addWidget(self.release)
         pressing.addStretch(1)
@@ -4792,6 +4858,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.steering.take_asked.connect(self._take_plane)
         self.steering.armed_changed.connect(self._steering_armed)
         self.steering.unpin_asked.connect(self.unpin)
+        self.steering.start_asked.connect(self._start_fit)
 
         self.fit_panel.put_steering(self.steering)
 
@@ -5642,9 +5709,35 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.map_view.blit()
 
     def _tell_next(self):
-        """The next gesture, into the steering's own line. Cheap enough per frame."""
+        """
+        The next gesture, into the steering's own line. Cheap enough per frame.
 
+        And whether the press is live, worked out from the same state at the same
+        moment. It used to be set on the panel's `holding` signal alone, which
+        fires when the caret's *plane* changes -- so moving from a reading to a
+        `fit` carrying the same two numbers changed nothing and left the button in
+        the state the other line put it in. `QLabel.setText` and
+        `QPushButton.setEnabled` both drop a value they already have, so asking
+        both questions on every frame of the dial costs nothing.
+        """
+
+        self.steering.set_writable(self.panel.has_plane_slot())
         self.steering.tell_next(self._next_step())
+
+    def _start_fit(self):
+        """A `fit` for the steered plane to go in, asked for from its own window."""
+
+        if self.panel.index is None:
+            self.say("nothing selected to put a fit on")
+
+            return
+
+        self.panel.add_line(FIT_TEMPLATE)
+        self.say(
+            "a new `fit` above the path, with its first end armed -- shift-click "
+            "the map for each end, then `Keep this plane`"
+        )
+        self._tell_next()
 
     def _by_clicking(self, said):
         """
@@ -5733,22 +5826,47 @@ class EditorWindow(QtWidgets.QMainWindow):
                 "on a line that claims a stretch"
             )
 
+        # `press + fit` first, and the button is now in this window. It used to
+        # name the box's one -- three windows away from a hand on a dial -- and
+        # then offered the caret as the alternative, which is the gesture that
+        # parked somebody on a compass reading and let the dial be written into
+        # it. The caret stays offered, because clicking into a computed `fit` and
+        # re-steering it is half of what this window is for; it stays second.
         if not self.panel.has_plane_slot():
+            word = (self.panel.line_now().split() or [""])[0]
+            whose = f" -- the caret is on `{word}`" if word else ""
+
             return (
-                "put the caret on a `fit` or `attitude` line in the box, or "
-                "press `+ fit` to start one"
+                f"press `+ fit` to start a line for this plane, or put the caret "
+                f"on a `fit` in the box{whose}"
             )
 
         line = self.panel.line_now()
         carried = plane_of(line)
         dialled = tuple(round(one, PLANE_DECIMALS) for one in self.steering.plane())
+        elsewhere = carried is None or tuple(
+            round(one, PLANE_DECIMALS) for one in carried
+        ) != dialled
+
+        # A `fit` the file already has, with the dial somewhere else: the press
+        # would replace that plane, in one press, and it is the state this window
+        # *opens* in -- the caret parks on the last line before the path, which on
+        # a trace with fits is one of them. Legitimate, and not a thing to be
+        # walked into: what the line said here was `turn the dial, then press Keep
+        # this plane`, which is an instruction to overwrite somebody's answer with
+        # no mention that that is what it is.
+        if elsewhere and anchors_written(line) and self.panel.in_document(line):
+            return (
+                f"press `+ fit` for a new line, or `Keep this plane` to replace "
+                f"the {carried[0]:.0f}/{carried[1]:.0f} the file has on this one"
+                if carried is not None
+                else "press `+ fit` for a new line to put this plane on"
+            )
 
         # The line not yet saying what the dial says, which covers the two cases
         # that are the same case: a template still at `000/00`, and a plane
         # steered somewhere else since it was last written.
-        if carried is None or tuple(
-            round(one, PLANE_DECIMALS) for one in carried
-        ) != dialled:
+        if elsewhere:
             return (
                 "turn the dial until the cut runs along the trace, then press "
                 "`Keep this plane`"
@@ -6130,7 +6248,15 @@ class EditorWindow(QtWidgets.QMainWindow):
         })
 
         if written is None:
-            self.say("the line the caret is on has no plane to write into")
+            # Naming the line, because the press is right and the line is wrong,
+            # and a complaint about the press sends the hand back to the dial.
+            word = (self.panel.line_now().split() or ["nothing"])[0]
+
+            self.say(
+                f"a steered plane goes into a `fit` line, and the caret is on "
+                f"`{word}`: press `+ fit` to start one -- it comes up with its "
+                f"two ends empty, which is the stretch this is about"
+            )
 
             return
 

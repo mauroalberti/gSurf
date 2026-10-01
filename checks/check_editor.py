@@ -3100,6 +3100,89 @@ def main():
               ),
               f"{len(kept)} fit(s) on VEE, was {before_keeping}")
 
+        # -- the line a steered plane must not go into ----------------------
+
+        # Where the person this was built for was standing every single time, and
+        # it took them saying *è come se si saltasse il passaggio di definizione
+        # dell'intervallo* to find it. The caret parks on the last line before the
+        # path; on a block whose last line is a compass reading, that is the
+        # reading. The step line then said `turn the dial, then press Keep this
+        # plane`, and the press wrote the steered plane into the measurement --
+        # applied in the same press, the anchor being written, so there was no
+        # stretch to click and no fit anywhere. `montealpi_01.gstruct` was left
+        # holding `plane 237.0/60.0 station=S26 src=points raw="dip_dir=140 dip=35"
+        # from=plane-dem`: a measurement replaced by a computation, carrying the
+        # provenance of both. The reading survived only because the import kept
+        # `raw=`.
+        block_before = fitting.document.text_of(rows["VEE"])
+
+        reading = (
+            '  attitude @600700.00,4420300.00 plane 236.0/57.0 station=S26 '
+            'src=points raw="dip_dir=140 dip=35"'
+        )
+
+        fitting.panel.add_written([reading])
+        fitting.panel.apply_block()
+        QtWidgets.QApplication.processEvents()
+
+        check("the caret parks on the last line before the path, reading or not",
+              fitting.panel.line_now().strip() == reading.strip(),
+              fitting.panel.line_now().strip()[:58])
+
+        steering.show_plane(300.0, 70.0)
+        fitting._steer(300.0, 70.0)
+        QtWidgets.QApplication.processEvents()
+
+        check("and with a measurement under the caret the press is dead",
+              not steering.take.isEnabled() and not fitting.panel.has_plane_slot(),
+              f"enabled {steering.take.isEnabled()}")
+
+        check("and the step is the line to start, naming what the caret is on",
+              "+ fit" in steering.step.text() and "attitude" in steering.step.text(),
+              steering.step.text())
+
+        fitting.statusBar().clearMessage()
+        fitting._take_plane()
+        QtWidgets.QApplication.processEvents()
+
+        check("and pressing it anyway leaves the measurement exactly as it was",
+              reading.strip() in fitting.panel.text.toPlainText()
+              and "`fit` line" in fitting.statusBar().currentMessage(),
+              fitting.statusBar().currentMessage()[:74] or "nothing said")
+
+        # The way out, in the window the hand is in. It is the box's own `+ fit`,
+        # and the step line named it there for days: three windows from a dial.
+        steering.start.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("`+ fit` in the steering starts the line, and the press comes alive",
+              fitting.panel.line_now().strip().startswith("fit plane * *")
+              and steering.take.isEnabled()
+              and "turn the dial" in steering.step.text(),
+              fitting.panel.line_now().strip()[:46])
+
+        # Put back, so what follows measures the fixture and not this detour.
+        fitting.document.replace(rows["VEE"], block_before)
+        fitting.panel._redraw()
+        QtWidgets.QApplication.processEvents()
+
+        check("and the block goes back byte for byte",
+              fitting.document.text_of(rows["VEE"]) == block_before)
+
+        # And the other half of the same parking: a `fit` the file already has,
+        # with the dial somewhere else. The press would replace that plane in one,
+        # which is a legitimate thing to do -- clicking into a computed fit and
+        # re-steering it is half of what this window is for -- and is not a thing
+        # to be walked into by a line that says only `press Keep this plane`.
+        steering.show_plane(300.0, 70.0)
+        fitting._steer(300.0, 70.0)
+        QtWidgets.QApplication.processEvents()
+
+        check("over a fit the file has, the step says what keeping would replace",
+              "+ fit" in steering.step.text()
+              and "replace" in steering.step.text(),
+              steering.step.text())
+
         # Switched off, nothing of it is left on the map. The claim's band is not
         # its to take away -- that belongs to the line, not to the dial.
         steering.on.setChecked(False)

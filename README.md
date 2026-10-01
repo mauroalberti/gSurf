@@ -1537,6 +1537,38 @@ does, so a modified press is a gesture with nowhere to arrive. The check drives 
 through Qt rather than calling `pin_freely`, which is the point — every other check
 of this sequence reaches past the gesture, and the defect lived in the gesture.
 
+**And the plane was going into the wrong line.** The second thing the step line
+could not have said, because it was wrong about the same state: *è come se si
+saltasse il passaggio di definizione dell'intervallo*, and that is exactly what was
+happening. The caret parks on the last line before the path, and on
+`Mt. Alpi faults.2` that is the compass reading at station S26. The step said *turn
+the dial, then press `Keep this plane`*; the press wrote the steered plane into the
+reading; and the reading's anchor being written, it **applied in the same press** —
+so there was never a stretch to click, and no `fit` was created anywhere. The file
+was left holding `plane 237.0/60.0 station=S26 src=points raw="dip_dir=140 dip=35"
+from=plane-dem`: a measurement replaced by a computation, carrying the provenance
+of both. It survived only because the import had kept `raw=`.
+
+Three things, then. **`Keep this plane` writes into a `fit` and nothing else** —
+`PLANE_AT` carries `attitude` too and has to, the importers writing measurements
+through it, but this control is a producer of fits and an `attitude` is somebody's
+compass reading; there is no state of this window in which replacing one with a
+computed number is what is being asked. **`+ fit` is now in the steering**, left of
+`Keep`, because the step line had been saying *press `+ fit` in the box* to a hand
+holding a dial three windows away — and a fresh line is what brings the two empty
+ends back, which *is* the interval step. And **a `fit` the file already has says so**:
+over one of those with the dial somewhere else the line reads *press `+ fit` for a
+new line, or `Keep this plane` to replace the 140/31 the file has on this one*,
+because re-steering a computed fit is half of what this window is for and is not a
+thing to be walked into.
+
+The button's own enablement moved into the same place the line is worked out from.
+It was set on the panel's `holding` signal, which fires when the caret's *plane*
+changes — so moving from a reading to a `fit` carrying the same two numbers changed
+nothing and left the button in the state the other line had put it in. `setText`
+and `setEnabled` both drop a value they already hold, so asking both questions on
+every frame of the dial costs nothing.
+
 **Where it goes wrong is where the geology says it should.** The cut passes
 through the pin within half a cell of the DEM — 1.5 m over four attitudes on the
 check's 5 m fixture — until the plane lies down on the slope, and then it wanders:
