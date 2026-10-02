@@ -1479,6 +1479,102 @@ caret sat in a line claiming the whole trace. `forget_covering` is the fix and
 the check that caught it was measuring something else: it wanted 135 points and
 got 5.
 
+### Amending one, Ctrl+R
+
+A third window, because it is the only gesture here that writes **over** a claim
+somebody already made. Add puts a line where there was none and Detach takes one
+out leaving the reason; both are decisions about whether a line exists, and the
+file afterwards says what it said plus or minus a claim. This changes what a
+claim *is*, and the old one survives only where something puts it somewhere.
+
+**The format decides what that something has to be, and decides it differently
+for the two halves of a reading.** FORMAT.md's first rule keeps the source string
+beside the normalised value, and on all 44 readings in the AOI that string is the
+plane: `raw="dip_dir=140 dip=35"`, agreeing with its own slot on every one of
+them. So rewriting the plane loses nothing — the file goes on saying what the
+source said, a few characters further along the same line, and the difference
+between the two *is* the curation. The anchor has no such copy, ever, because the
+source geometry **is** the anchor: a point out of a layer, written down. Move it
+and nothing anywhere remembers where the importer put it.
+
+So a move always leaves the comment and a correction of the plane usually does
+not. That is `owed_record`, and the comment carries the reason it exists, so that
+a block holding three amendments with comments and a fourth without says which
+rule each of them fell under:
+
+```
+  # 02.10.2026: amended S99 236/57 -- mis-dialled: the notebook reads 250
+  #   was: attitude @601709.97,4420395.02 plane 236/57 station=S99 src=field off=0.0
+  #   kept because typed here, with no `raw=` to stand beside the new number
+```
+
+The two exceptions are measured rather than assumed. A reading typed in by the
+window above has no `raw=` at all; and a reading whose `raw=` an earlier
+amendment has already overtaken holds two planes, so the slot is the only copy of
+the current one. Neither is `from_a_file`, which asks whether *any* `raw.` key is
+present — right for a detachment, where the whole line goes, and wrong here:
+`raw.comments.station="Possibly within CSC or CTC on CSC"` is a source string
+about a note and holds no plane.
+
+**What the window shows before the press is what the move does to the answer, and
+that is not the same question as where the dot goes.** A reading outranks every
+fit for `DEFAULT_MAX_GAP` either side of itself and, past that, still answers
+wherever no fit does, so moving one redraws the provenance of the whole trace — a
+computation over several lines at once. The candidate line is therefore parsed,
+through `Document.reading_of` and the file's own header, and the trace is sampled
+before and after. Ten milliseconds on the real file.
+
+Two numbers come out, and they are different. Nudge S26 109 m along `F0055` and
+**106 m of 3531 are answered by a different line while the plane changes over
+none of them**: S26 is the only measurement there, so it answers everywhere
+either way and only the tier moves, `misurata` to `misurata-lontana`. Drag S22
+281 m along `F0058` and 839 m change, and the plane with them — because S25 sits
+16 m away and reads 145/35 against S22's 120/30. A box reporting one number would
+call those two moves the same size, and one of them changes no answer at all.
+
+Which quantity is counted took two corrections, both from the AOI. The tier alone
+is too coarse: on `F0058` it moves over 34 m where *which of the two readings
+answers* moves over 841, so the detail line reported the small change and left
+the large one out. And `attitude_at`'s provenance string whole is too fine, since
+it ends in the distance it answered from and that changes at every metre — 3284 m
+of `F0055` reported as changed where the answer was the same reading throughout.
+`answering` is the middle: the station, or the verdict, with the distance taken
+off. The plane goes into the key as well as being counted on its own, so that the
+two numbers nest the way the sentence reads them — `misurata-lontana` names no
+station, so without it the plane could change over ground the box had just said
+nobody new was answering.
+
+**`off=` is written, never typed.** Nothing downstream reads it — `Anchored.resolve`
+recomputes the distance and `attitude_at` never asks — which is exactly what makes
+a stale one pure misinformation: all it can do is contradict the coordinates beside
+it. One reading in `merid_faults` is already out by a tenth. It is shown in the
+attribute table and greyed, and the cell shows what the press *would* write rather
+than what is there, a reading dragged onto the trace over a row still reading
+`off=44.2` being the same stale copy the key is greyed for. `src` is greyed beside
+it because a curator editing it forges a provenance, and the whole precedence
+rests on telling a compass from a computation; `raw` and `raw.*` because a
+conserved string somebody has edited is not one.
+
+**A wrapped line is refused rather than amended.** `loads` folds a line indented
+four or more into the record above it and merges its attributes in; `rows_of`
+reads one physical line at a time and cannot see that happening. A rewrite built
+from a row's attributes would leave the continuations in place to be applied over
+it, so the press would appear to have worked and change nothing — the failure
+this codebase keeps meeting, a gesture producing a valid line meaning something
+nobody chose. `continued_at` finds them, the window says what would go wrong, and
+the check asserts that no reading in either AOI file is wrapped. FORMAT.md's own
+example is.
+
+Two smaller things the same work turned up. `with_values` splices with
+`gstruct._TOK`, the parser's own lexer, and not on whitespace: the first draft
+used whitespace, and `site_note="Possibly within CSC or CTC on CSC"` is six
+tokens, so taking that key off cut the first and left `within CSC or CTC on CSC"`
+standing as positional tokens — a line that still parses, claiming nothing anybody
+wrote. And the four claimants on the shift-click are now one list in
+`_only_claimant`: a pair of methods each disarming the other is a rule that is
+correct for two and silently incomplete for three, and the third had already
+arrived.
+
 **And the plane steered by hand, for everything that button is quiet about.** The
 gate is right to refuse most traces — a plane through a straight trace is
 arbitrary and not merely imprecise, and 27 of 185 attempts pass it on the AOI —

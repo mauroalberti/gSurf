@@ -538,6 +538,41 @@ class Document:
 
         return "\n".join(self.lines[block.start:block.end])
 
+    def reading_of(self, text):
+        """
+        What one block would mean if it were applied, as a `Structure`, or None.
+
+        **`replace` without the replacing**, for the windows that have to show
+        the consequence of a press before the press. The consequence of moving a
+        reading is not where the dot goes, it is what `attitude_at` answers
+        along the trace afterwards -- which is a computation over several lines
+        at once, and the one thing reading a file cannot tell you.
+
+        Through `loads` under this file's own header rather than by mutating the
+        model, and the difference is worth the parse. A moved anchor has to be
+        re-projected to be worth anything, and `resolve` is what `loads` ends
+        with; a copy of a `Structure` with one field poked would be this tool's
+        idea of what the parser does, shown to a curator as the file's answer.
+        Here the thing measured is the text that is about to be written.
+
+        None where it would not parse, the refusal itself belonging to the press:
+        a window asking what a candidate means while somebody is still typing in
+        it gets a half-written line more often than not, and a refusal shown for
+        every keystroke is a refusal nobody reads.
+        """
+
+        gstruct = module()
+
+        try:
+            parsed = gstruct.loads(self._header() + text)
+        except Exception:
+            return None
+
+        if len(parsed.structures) != 1:
+            return None
+
+        return parsed.structures[0]
+
     def replace(self, index, text):
         """
         One structure's block as this text, once it parses. Raises ValueError.
@@ -1121,6 +1156,61 @@ def rows_of(text, path):
     return rows
 
 
+# How far a line has to be indented before `loads` reads it as more of the
+# record above it rather than as a record of its own. Four, which is the
+# parser's own number and not a guess: `loads` tests `indent >= 4` and merges
+# that line's `key=value` pairs into the previous record's attributes.
+CONTINUES_AT = 4
+
+
+def continued_at(text, at):
+    """
+    The lines after `at` that `loads` would fold into the record written on it.
+
+    **A hole in `rows_of`, named here so the windows above can refuse instead of
+    discover.** That function reads one physical line at a time, so a `Row`'s
+    `attrs` is everything the record carries only while the record is on one
+    line. The parser does not work that way: a line indented four or more is
+    read as a continuation and its attributes are merged into the record before
+    it, and nothing in a `Row` can tell you that happened.
+
+    The direction the loss runs in is what makes it worth a function. A line
+    rewritten from its row's attributes does not *drop* the continuations --
+    they stay where they were, untouched, which is this tool's whole rule -- and
+    `loads` then applies them **over** the rewrite. So an amended `note=` would
+    read back as the old one, with the press having visibly happened and
+    changed nothing: the failure mode this codebase keeps meeting, a gesture
+    that produces a valid line meaning something nobody chose.
+
+    Neither file in the AOI has one. Every claim in `merid_faults.gstruct` and
+    in `montealpi_01.gstruct` is on a single line, and the only lines indented
+    four or more in either are path vertices. FORMAT.md's own example is
+    wrapped, though, which is why this is a check rather than an assumption.
+
+    Blank lines and comments do not end the run, because `loads` skips them
+    without letting go of the record they follow -- so a comment between a line
+    and its continuation hides nothing. A vertex of a `path` cannot be mistaken
+    for one of these: `path` itself is indented two, which ends the run before
+    the first vertex is reached.
+    """
+
+    lines = text.splitlines()
+    out = []
+
+    for n in range(at + 1, len(lines)):
+        line = lines[n]
+
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+
+        if len(line) - len(line.lstrip()) < CONTINUES_AT:
+            break
+
+        out.append(n)
+
+    return tuple(out)
+
+
 def _place_of(line, path):
     """Where along the path a single-anchor line sits, or None."""
 
@@ -1326,6 +1416,153 @@ def detachment_note(row, why, today, indent="  "):
     return "\n".join(lines)
 
 
+# How the source string spells a plane, inside the `raw=` of a reading. Matched
+# with a boundary in front of `dip`, or `dip_dir=140` would answer the second
+# pattern as well as the first and every reading would read as dipping 140.
+RAW_DIP_DIR = re.compile(r"(?:^|[\s,;])dip_dir\s*=\s*(-?[\d.]+)")
+RAW_DIP = re.compile(r"(?:^|[\s,;])dip\s*=\s*(-?[\d.]+)")
+
+
+def raw_plane_of(row):
+    """
+    The plane the row's own `raw` attributes state, as `(dip dir, dip)`, or None.
+
+    **Whether the line can still say what the source said**, which is the one
+    question `owed_record` turns on. FORMAT.md's first rule keeps the source
+    string beside the normalised value, so on a reading that came out of a layer
+    the old plane is not lost by rewriting the slot: it is sitting a few
+    characters further along the same line. On a reading typed into this tool
+    there is no such string, and the slot is the only copy there is.
+
+    `from_a_file` is not this test and is not a substitute for it. That one asks
+    whether *any* `raw.` key is present, which is the right question for a
+    detachment -- a line about to vanish takes every `raw.` with it -- and the
+    wrong one here: `raw.comments.station="Possibly within CSC or CTC on CSC"`
+    is a source string about a note and holds no plane at all, so a line
+    carrying only that would pass `from_a_file` while losing its numbers.
+
+    Read out of whichever `raw` key holds both halves, in the order the line
+    wrote them. All 44 readings in the AOI keep it in `raw=` and all 44 agree
+    with their own slot, which is the baseline worth stating: today nothing in
+    these files is a reading whose source string has already been overtaken.
+    """
+
+    for key, value in (row.attrs or {}).items():
+        if key != "raw" and not key.startswith("raw."):
+            continue
+
+        dip_dir = RAW_DIP_DIR.search(f" {value}")
+        dip = RAW_DIP.search(f" {value}")
+
+        if dip_dir is None or dip is None:
+            continue
+
+        try:
+            return float(dip_dir.group(1)), float(dip.group(1))
+        except ValueError:
+            continue
+
+    return None
+
+
+def owed_record(row, anchor, plane):
+    """
+    Why an amendment has to leave a comment behind, or None if it owes none.
+
+    **The rule the format writes for us**, and the whole of why amending a
+    reading is not one operation but two with different costs. Rewriting the
+    plane slot of an imported reading loses nothing: `raw="dip_dir=140 dip=35"`
+    goes on standing beside it, which is rule 1 of FORMAT.md working exactly as
+    intended -- the source string next to the normalised value, and the
+    difference between them *is* the curation, legible on one line. Rewriting
+    the anchor slot loses the only copy of where the source put the point, every
+    time, because the format keeps no `raw.` of a placing.
+
+    So a move is always recorded and a replanning usually is not, and the
+    exceptions are measured rather than assumed: a reading with no source string
+    for its plane (typed here, by `ReadingsHere`) and a reading whose source
+    string has already been overtaken by an earlier amendment both owe the
+    comment, because in neither case is the number about to be written over
+    held anywhere else.
+
+    `anchor` and `plane` are what the press would write, `None` meaning
+    unchanged. Returns the sentence to put in the comment's first line, so that
+    what the file says and what the window said before the press come out of one
+    place and cannot drift.
+    """
+
+    was_anchor = anchor_of(row.line)
+    moved = (
+        anchor is not None
+        and was_anchor is not None
+        and (abs(anchor[0] - was_anchor[0]) > 0.005
+             or abs(anchor[1] - was_anchor[1]) > 0.005)
+    )
+
+    replanned = (
+        plane is not None
+        and row.plane is not None
+        and (abs(plane[0] - row.plane[0]) > 0.05 or abs(plane[1] - row.plane[1]) > 0.05)
+    )
+
+    if moved:
+        # First and unconditionally, because it is the only one of the two that
+        # the file cannot state another way -- and it is said as a loss rather
+        # than as a policy, so that a curator reading the comment tomorrow knows
+        # why this one is here and the plane ones are not.
+        return (
+            "the anchor it came in on is in no `raw.` anywhere, so it is here"
+        )
+
+    if not replanned:
+        return None
+
+    held = raw_plane_of(row)
+
+    if held is None:
+        return "typed here, with no `raw=` to stand beside the new number"
+
+    if abs(held[0] - row.plane[0]) > 0.05 or abs(held[1] - row.plane[1]) > 0.05:
+        return (
+            f"its `raw=` already reads {held[0]:.0f}/{held[1]:.0f} and the slot "
+            f"reads {row.plane[0]:.0f}/{row.plane[1]:.0f}, so the slot is the "
+            f"only copy of the second"
+        )
+
+    return None
+
+
+def amend_note(row, why, today, owed, indent="  "):
+    """
+    The comment that records a reading as it stood, where nothing else can.
+
+    `detachment_note`'s sibling, the same `#` for the same reason -- it costs
+    nothing in FORMAT.md, in the parser or in the precedence, it survives a Save
+    because `Document` replaces lines instead of dumping the file, and the one
+    reader who needs it is the next person to open the block.
+
+    The narrowing is the difference, and it is written on the comment itself.
+    A detachment always leaves this, the line having gone. An amendment leaves
+    it only where the amended line could not otherwise say what the old one
+    said, and `owed` is that reason, decided once in `owed_record` and spent
+    here -- so a comment in the file always carries the argument for its own
+    existence, and a reader who finds three amendments with comments and a
+    fourth without can tell which rule each of them fell under.
+
+    The whole original line goes in, as in a detachment and for its reason: a
+    summary would be this tool's reading of the row, and `off=`, `raw=` and the
+    station codes are the only record of what the importer put there.
+    """
+
+    lines = [
+        f"{indent}# {today}: amended {reading_said(row)} -- {why}".rstrip(" -"),
+        f"{indent}#   was: {row.line.strip()}",
+        f"{indent}#   kept because {owed}",
+    ]
+
+    return "\n".join(lines)
+
+
 def covered_metres(ends, earlier):
     """
     How many metres of a stretch are already claimed by the fits before it.
@@ -1425,6 +1662,49 @@ def with_plane(line, dip_dir, dip, decimals=PLANE_DECIMALS):
     )
 
 
+def with_anchor(line, x, y):
+    """
+    The same line with its single-anchor slot rewritten, or None if it has none.
+
+    `with_plane`'s sibling for the other half of what an `attitude` claims, and
+    a splice for that function's reason: every byte outside the slot stays where
+    it was, so the attributes keep the spacing and the order the file gave them.
+
+    **This is the one slot in the format with no `raw.` beside it**, and that
+    asymmetry decides what the window above has to do. FORMAT.md's first rule
+    keeps the source string next to the normalised value, and on all 44 readings
+    of the AOI that string is the plane -- `raw="dip_dir=140 dip=35"`, agreeing
+    with the slot on every one of them. The anchor has no such copy, because the
+    source geometry *is* the anchor: a point out of a layer, written down. So a
+    plane rewritten here leaves the file still able to say what the source said,
+    and an anchor rewritten here leaves nothing anywhere -- see `owed_record`,
+    where that difference is the rule and not a remark.
+
+    A `*` in the slot is written over like a coordinate, because for a *place* it
+    is not an end of the path but nothing at all: `anchor_of` answers None for it
+    and `Anchored.resolve` leaves `s` unset. Anything else in the slot comes back
+    None rather than overwritten -- `attitude plane 140/35`, a line missing its
+    anchor, would otherwise be "repaired" into `attitude @x,y 140/35`, which
+    parses, claims a plane nobody wrote, and reads as deliberate.
+    """
+
+    tokens = _tokens_of(line)
+    word = tokens[0][0] if tokens else None
+    at = ANCHOR_AT.get(word)
+
+    if at is None or len(tokens) <= at:
+        return None
+
+    held, start, end = tokens[at]
+
+    if not held.startswith("@") and held != "*":
+        return None
+
+    gstruct = module()
+
+    return line[:start] + gstruct._a((float(x), float(y))) + line[end:]
+
+
 def with_attrs(line, attrs):
     """
     The same line with `key=value` filled in where it is missing or empty.
@@ -1490,6 +1770,111 @@ def with_attrs(line, attrs):
         out = out[: tokens[at - 1][2] if at else start] + out[end:]
 
     return out.rstrip() + gstruct._kw(wanted)
+
+
+def with_values(line, values):
+    """
+    The same line with `key=value` set where it sits, appended, or taken off.
+
+    **`with_attrs`'s opposite number, and the two are not one function with a
+    flag.** That one fills a slot a template left open and *refuses* to write
+    over a value somebody wrote -- the refusal is its whole argument, and
+    weakening it with a keyword would weaken it everywhere it is called from.
+    This one exists to carry out a decision about a value that is already there,
+    which is a different act and needs a different thing standing behind it: not
+    a rule in the writer, but a window that shows the old value beside the new
+    one and a press that happens after somebody has looked at both.
+
+    **Replaced where it sits**, rather than cut and re-appended. On every reading
+    in these files `station=` comes first and `raw=` near the end, and a curator
+    who fixed a station name would otherwise find it had moved to the end of the
+    line: a diff full of motion nobody asked for, in a file people read. The
+    same splice rule as `with_plane` and for one more reason here -- rebuilding
+    from tokens would close up the runs of spaces inside a quoted value, and
+    `site_note="Possibly within CSC or CTC on CSC"` is six tokens to anything
+    splitting on whitespace.
+
+    `None` takes a key off. A key the line has not got is appended through
+    `gstruct._kw`, which is the one place the quoting is decided -- `_q` quotes a
+    value holding a space, a quote, a backslash or an `=`, and a `note=` written
+    by a curator is the attribute in these files most likely to hold all four.
+
+    **Where the token ends is asked of the parser's own lexer**, `gstruct._TOK`,
+    and not of whitespace. The first draft of this used `_tokens_of` and the
+    first test of it broke a file: `site_note="Possibly within CSC or CTC on
+    CSC"` is **six** whitespace tokens, so taking that key off cut the first of
+    them and left `within CSC or CTC on CSC"` standing on the line as positional
+    tokens -- a line that still parses, with a stray quote in it, claiming
+    nothing anybody wrote. `rows_of` already refuses to split this way and says
+    why; a writer had to be held to the same rule, and the way to be held to it
+    is to use the same lexer rather than a second reading of the grammar.
+    """
+
+    gstruct = module()
+    found = list(gstruct._TOK.finditer(line))
+    wanted = dict(values)
+    out = line
+
+    for at in reversed(range(len(found))):
+        token = found[at]
+        key = token.group(1)
+
+        if not key or key not in wanted:
+            continue
+
+        value = wanted.pop(key)
+        start, end = token.span()
+
+        if value is None:
+            # From the end of the token before it, so the space that separated
+            # the two goes with it -- `with_attrs`' rule, and the same reason:
+            # cutting the token alone leaves a gap of two spaces, which the
+            # parser does not mind and a reader does.
+            out = out[: found[at - 1].end() if at else start] + out[end:]
+        else:
+            out = out[:start] + f"{key}={gstruct._q(value)}" + out[end:]
+
+    # What is left never appeared on the line, so it goes where attributes go:
+    # at the end. A pair inserted among the positional tokens would be counted
+    # as positional by everything that counts from the keyword -- `anchor_of`,
+    # `plane_of` and `interval_of`, for three.
+    fresh = {
+        key: value for key, value in wanted.items() if value not in (None, "")
+    }
+
+    if not fresh:
+        return out
+
+    return out.rstrip() + gstruct._kw(fresh)
+
+
+# How `attitude_at` writes the distance it answered from, at the end of its
+# provenance string: `misurata:S22@12m` and `misurata-lontana:3422m`, the one
+# with an `@` and the other with a bare colon.
+ANSWERED_FROM = re.compile(r"[:@]-?[\d.]+m$")
+
+
+def answering(said):
+    """
+    Which line is answering, out of a provenance string, with the distance off.
+
+    **For comparing two provenances to each other**, which is a different job
+    from showing one. `attitude_at` ends `misurata` and `misurata-lontana` with
+    how far away the reading it used is, and that distance changes at every
+    metre of the trace -- so two sampled provenances compared string by string
+    differ everywhere, and a reading nudged a hundred metres reads as having
+    changed the whole fault. Measured: 3284 m of `F0055`'s 3531, where the
+    answer is the same reading throughout and 109 m of it changed tier.
+
+    What is left is the identity of the line that answered, as far as the string
+    carries it: the station for `misurata`, the verdict for `fit`, the reason
+    for `rifiutata`, `assente` for nothing. **`misurata-lontana` carries none**,
+    the far tier naming only its distance, so two different distant readings
+    come back equal here -- which is why a caller that needs to tell them apart
+    compares the plane as well, rather than reading this string a second way.
+    """
+
+    return ANSWERED_FROM.sub("", said.split("@")[0])
 
 
 def provenance_of(structure, samples=400, max_gap=DEFAULT_MAX_GAP):

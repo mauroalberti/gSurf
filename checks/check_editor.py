@@ -341,22 +341,28 @@ def main():
 
     from gsurf.curation import (
         Document,
+        amend_note,
+        continued_at,
         detachment_note,
         fits_in,
         from_a_file,
         interval_of,
         nearest_structure,
+        owed_record,
         place_on,
         plane_of,
         point_on,
         provenance_of,
+        raw_plane_of,
         reading_said,
         readings_in,
         rows_of,
         stretch,
+        with_anchor,
         with_attrs,
         with_ends_in_order,
         with_plane,
+        with_values,
     )
     from gsurf.planes import GAP_FADE_CELLS, gaps_on
     from gsurf.session import Session
@@ -5080,6 +5086,490 @@ def main():
               and not exposure_ui.declare_button.isEnabled())
 
         fitting.exposure_window.hide()
+
+        # -- a reading written over -----------------------------------------
+
+        print("\n-- a measurement amended, and what that costs --\n")
+
+        # The writers first, away from any window. All three of these splice one
+        # slot of a line and leave every other byte where it was, which is the
+        # rule the whole tool rests on, and the one of them that broke in testing
+        # broke on a quoted value -- so the fixture carries one.
+        SPELT = (
+            '  attitude @600800.00,4420000.00 plane 140/35 station=S26 '
+            'src=field site_note="Possibly within CSC or CTC on CSC" '
+            'raw="dip_dir=140 dip=35" off=7.4'
+        )
+        spelt_path = [(X0 + 700.0, Y0), (X0 + 900.0, Y0)]
+        spelt = rows_of(f"structure X\n{SPELT}", spelt_path)[0]
+
+        check("a reading's anchor is spliced, and a line without one is refused",
+              with_anchor(SPELT, 600850.0, 4420010.0)
+              == SPELT.replace("@600800.00,4420000.00", "@600850.00,4420010.00")
+              and with_anchor("  attitude plane 140/35", 1.0, 2.0) is None
+              and with_anchor("  attitude * plane 140/35", 1.0, 2.0)
+              == "  attitude @1.00,2.00 plane 140/35")
+
+        # The bug this found, and it is worth the fixture: a quoted value is six
+        # whitespace tokens, so the first draft -- which split on whitespace,
+        # like `interval_of` -- cut `site_note="Possibly` and left `within CSC or
+        # CTC on CSC"` standing on the line as positional tokens. Still parses.
+        # Claims nothing anybody wrote.
+        dropped = with_values(SPELT, {"site_note": None})
+        _, dropped_kw = gstruct_module()._split(dropped)
+
+        check("a quoted value comes off whole, not one word of it",
+              "site_note" not in dropped_kw
+              and "CSC" not in dropped
+              and dropped_kw["raw"] == "dip_dir=140 dip=35"
+              and dropped_kw["station"] == "S26",
+              dropped.strip()[-58:])
+
+        # Where it sits, and the order of the line survives: `station=` is first
+        # on every reading in these files and a value re-appended would move it
+        # to the end, which is a diff full of motion nobody asked for.
+        renamed = with_values(SPELT, {"station": "S26b", "note": 'he said "maybe"'})
+        _, renamed_kw = gstruct_module()._split(renamed)
+
+        check("and a value is replaced where it sits, with a new one appended",
+              renamed.index("station=") == SPELT.index("station=")
+              and renamed_kw["station"] == "S26b"
+              and renamed_kw["note"] == 'he said "maybe"'
+              # ` note=` and not `note=`: `site_note=` holds the second, and the
+              # first draft of this assertion found it and read the appended
+              # attribute as having landed near the front of the line.
+              and renamed.index(" note=") > renamed.index("off="),
+              renamed.strip()[-46:])
+
+        # What decides whether an amendment owes a comment, and it is the format
+        # that decides it: `raw=` keeps the source string beside the normalised
+        # value, so a rewritten plane loses nothing, and the anchor has no such
+        # copy anywhere because the source geometry *is* the anchor.
+        check("the source string is read off the line, and it holds the plane",
+              raw_plane_of(spelt) == (140.0, 35.0)
+              and raw_plane_of(
+                  rows_of(
+                      'structure X\n  attitude @600800.00,4420000.00 plane 140/35 '
+                      'raw.comments.station="within CSC"',
+                      spelt_path,
+                  )[0]
+              ) is None,
+              "and a `raw.` about a note holds none, where `from_a_file` says it does: "
+              f"{from_a_file(spelt)}")
+
+        moved_owes = owed_record(spelt, (600850.0, 4420000.0), None)
+        planed_owes = owed_record(spelt, None, (120.0, 30.0))
+        typed = rows_of(
+            "structure X\n  attitude @600800.00,4420000.00 plane 140/35 "
+            "station=S99 src=field off=0.0",
+            spelt_path,
+        )[0]
+
+        check("a move always owes the comment and a replanning usually does not",
+              moved_owes is not None
+              and "no `raw.`" in moved_owes
+              and planed_owes is None
+              and owed_record(typed, None, (120.0, 30.0)) is not None
+              and owed_record(spelt, (600800.0, 4420000.0), (140.0, 35.0)) is None,
+              moved_owes)
+
+        # And a `raw=` an earlier amendment has overtaken owes it as well, which
+        # is the case the rule would miss if it were `from_a_file`: the line then
+        # holds two planes and the slot is the only copy of the current one.
+        overtaken = rows_of(
+            "structure X\n  attitude @600800.00,4420000.00 plane 120/30 "
+            'station=S26 raw="dip_dir=140 dip=35"',
+            spelt_path,
+        )[0]
+
+        check("and so does one whose source string has already been overtaken",
+              owed_record(overtaken, None, (100.0, 20.0)) is not None
+              and "only copy" in owed_record(overtaken, None, (100.0, 20.0)),
+              owed_record(overtaken, None, (100.0, 20.0)))
+
+        # The hole in `rows_of`, named rather than discovered: `loads` folds a
+        # line indented four or more into the record above it, and a row's attrs
+        # cannot see that. A rewrite would be overlaid by the continuation and
+        # the press would look as though it had worked.
+        wrapped_text = (
+            "structure X\n"
+            "  attitude @600800.00,4420000.00 plane 140/35 station=S26\n"
+            '    note="on the second line"\n'
+            "  path 2\n"
+            "    600700.00 4420000.00\n"
+            "    600900.00 4420000.00\n"
+        )
+        wrapped_row = readings_in(wrapped_text, spelt_path)[0]
+
+        check("a wrapped line is found, and its attribute really is invisible to the row",
+              continued_at(wrapped_text, wrapped_row.at) == (2,)
+              and "note" not in (wrapped_row.attrs or {})
+              and continued_at(wrapped_text, 3) == (4, 5),
+              f"continued on {continued_at(wrapped_text, wrapped_row.at)}, "
+              f"row carries {sorted(wrapped_row.attrs or {})}")
+
+        # And neither AOI file has one, which is why this is a refusal in the
+        # window rather than a case it handles.
+        if AOI.exists():
+            aoi_wrapped = 0
+
+            for name in ("merid_faults.gstruct", "montealpi_01.gstruct"):
+                held = Document(AOI / name)
+
+                for index, structure in enumerate(held.dataset.structures):
+                    text = held.text_of(index)
+
+                    for reading in readings_in(text, structure.path):
+                        aoi_wrapped += len(continued_at(text, reading.at))
+
+            check("and no reading in either AOI file is wrapped",
+                  aoi_wrapped == 0,
+                  f"{aoi_wrapped} continuation line(s) under 44 readings")
+
+        # -- and the window ------------------------------------------------
+
+        # Two readings written straight into the block, because the two branches
+        # of `owed_record` need both kinds: one as an import leaves it, carrying
+        # the source string, and one as `ReadingsHere` leaves it, carrying none.
+        fitting.select(rows["VEE"])
+        QtWidgets.QApplication.processEvents()
+
+        vee = fitting.document.dataset.structures[rows["VEE"]]
+        from_import = point_on(vee.path, 400.0)
+        by_hand = point_on(vee.path, 1800.0)
+
+        panel.insert_claim(
+            f"  attitude @{from_import[0]:.2f},{from_import[1]:.2f} plane 140/35 "
+            f'station=S26 src=points site_note="Possibly within CSC or CTC on CSC" '
+            f'raw="dip_dir=140 dip=35" off=0.0'
+        )
+        panel.insert_claim(
+            f"  attitude @{by_hand[0]:.2f},{by_hand[1]:.2f} plane 236/57 "
+            f"station=S99 src=field off=0.0"
+        )
+        QtWidgets.QApplication.processEvents()
+
+        fitting.open_amend()
+        QtWidgets.QApplication.processEvents()
+
+        amending = fitting.amend_panel
+
+        check("the window lists what the block measures, in file order",
+              amending.table.rowCount() == 2
+              and [row.attrs.get("station") for row in amending._in_file]
+              == ["S26", "S99"],
+              f"{amending.table.rowCount()} row(s): "
+              + ", ".join(row.attrs.get("station", "?") for row in amending._in_file))
+
+        check("and nothing is live until a row is picked",
+              not amending.dip_dir.isEnabled()
+              and not amending.pick_point.isEnabled()
+              and not amending.amend_button.isEnabled()
+              and "Pick the reading" in amending.step.text(),
+              amending.step.text()[:50])
+
+        amending.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        # Its own values and not the last row's, which is the trap `_show_held`
+        # found in the panel: a dial left on another reading's plane is a number
+        # nobody chose sitting in a box that is about to write it.
+        check("a picked row loads its own plane, and the controls come alive",
+              (amending.dip_dir.value(), amending.dip.value()) == (140, 35)
+              and amending.dip_dir.isEnabled()
+              and not amending.amend_button.isEnabled()
+              and "Nothing is different" in amending.cost.text(),
+              f"{amending.dip_dir.value()}/{amending.dip.value()}; "
+              + amending.cost.text()[:40])
+
+        # The attributes, with the three kinds the window will not let anybody
+        # type over greyed rather than hidden: a key nobody can edit is still
+        # part of what the line says.
+        attr_rows = {
+            amending.attrs.item(row, 0).text(): row
+            for row in range(amending.attrs.rowCount())
+        }
+        editable = QtCore.Qt.ItemFlag.ItemIsEditable
+
+        check("its attributes are all there, with src, off and raw not editable",
+              set(attr_rows) == {"station", "src", "site_note", "raw", "off"}
+              and not (amending.attrs.item(attr_rows["src"], 1).flags() & editable)
+              and not (amending.attrs.item(attr_rows["off"], 1).flags() & editable)
+              and not (amending.attrs.item(attr_rows["raw"], 1).flags() & editable)
+              and bool(amending.attrs.item(attr_rows["station"], 1).flags() & editable)
+              and bool(amending.attrs.item(attr_rows["site_note"], 1).flags() & editable),
+              ", ".join(sorted(attr_rows)))
+
+        # The plane: this one carries `raw=`, so the file goes on saying what the
+        # source said and no comment is owed.
+        amending.dip_dir.setValue(120)
+        amending.dip.setValue(30)
+        QtWidgets.QApplication.processEvents()
+
+        # Against `between` recomputed and not against a number typed in here.
+        # The first draft of this line asserted 21 degrees, which is what 140/35
+        # against 120/30 looks like if you subtract the two pairs; the acute
+        # angle between the poles is 12, and `between` is checked against the
+        # DEM's own closed form further up.
+        apart = between((140.0, 35.0), (120.0, 30.0))
+
+        check("dialling a plane says how far it is from the one on the line",
+              f"{apart:.0f}° from the 140/35" in amending.apart.text()
+              and amending.amend_button.isEnabled()
+              and "No comment is owed" in amending.cost.text(),
+              f"{amending.apart.text()}, against {apart:.2f}")
+
+        before_amend = fitting.document.text_of(rows["VEE"])
+        amending.amend_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        amended_line = amending._in_file[0].line.strip()
+        amended_block = fitting.document.text_of(rows["VEE"])
+
+        check("the press rewrites the slot and leaves the source string standing",
+              "plane 120/30" in amended_line
+              and 'raw="dip_dir=140 dip=35"' in amended_line
+              and "# " not in amended_block
+              and len(amended_block.splitlines())
+              == len(before_amend.splitlines()),
+              amended_line[:76])
+
+        # Whole degrees, not `PLANE_DECIMALS`: a compass has no `converg=` for a
+        # decimal to carry, and every `attitude` in the AOI is written whole.
+        check("in whole degrees, like every reading in these files",
+              "plane 120/30" in amended_line and "120.0/30.0" not in amended_line)
+
+        amending.undo_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("and Undo puts the line back as it was",
+              fitting.document.text_of(rows["VEE"]) == before_amend)
+
+        # Now the one with no source string. The same gesture, and this time the
+        # comment is owed -- and the button is dead until there is a reason, for
+        # `ReadingsHere`'s reason: a reason box that could be left empty is one
+        # that is left empty, and the comment is the whole justification.
+        amending.table.selectRow(1)
+        amending.dip_dir.setValue(250)
+        QtWidgets.QApplication.processEvents()
+
+        check("a reading typed here owes the comment, and will not go without a reason",
+              not amending.amend_button.isEnabled()
+              and "Say why" in amending.step.text()
+              and "no `raw=`" in amending.cost.text(),
+              amending.cost.text()[-58:])
+
+        amending.why.setText("mis-dialled: the notebook reads 250")
+        QtWidgets.QApplication.processEvents()
+
+        check("and with one it will",
+              amending.amend_button.isEnabled())
+
+        amending.amend_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        kept = [
+            line.strip()
+            for line in fitting.document.text_of(rows["VEE"]).splitlines()
+            if line.strip().startswith("#")
+        ]
+
+        check("the line as it stood goes into the comment, with the reason it is there",
+              len(kept) == 3
+              and "plane 236/57" in kept[1]
+              and "mis-dialled" in kept[0]
+              and "no `raw=`" in kept[2],
+              " / ".join(one[:40] for one in kept))
+
+        check("and the amended claim is under it, applied",
+              any(
+                  (attitude.plane.dip_dir, attitude.plane.dip) == (250.0, 57.0)
+                  for attitude in
+                  fitting.document.dataset.structures[rows["VEE"]].attitudes
+              ))
+
+        # One press back, not two. An amendment half taken back would leave a
+        # comment standing over a line it no longer describes.
+        amending.undo_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("and one Undo takes the comment and the claim together",
+              fitting.document.text_of(rows["VEE"]) == before_amend)
+
+        # -- and what moving it costs --------------------------------------
+
+        # The measurement this window exists for, and the two numbers in it are
+        # different. VEE carries fits, so a reading dragged across it changes
+        # both who answers and the answer.
+        amending.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        was_place = amending._in_file[0].place
+        amending.took_point(*point_on(vee.path, was_place + 900.0), was_place + 900.0, 3.0)
+        QtWidgets.QApplication.processEvents()
+
+        measured = amending._measure(
+            amending._in_file[0], amending._candidate(amending._in_file[0])[0]
+        )
+
+        check("a move is measured by parsing the candidate and asking everywhere",
+              measured is not None
+              and measured[0] > 100.0
+              and measured[1] > 100.0
+              and f"{measured[0]:.0f} m of" in amending.cost.text()
+              # The nesting the sentence relies on: the plane cannot be
+              # different where the line answering is the same one.
+              and measured[1] <= measured[0] + 1e-6,
+              "not measured" if measured is None else
+              f"{measured[0]:.0f} m change who answers, {measured[1]:.0f} m the plane, "
+              f"of {measured[2]:.0f}")
+
+        # `off=` is written from the anchor in the same press, and the greyed
+        # cell shows what will be written rather than what was: a reading dragged
+        # onto the trace over a row still reading `off=3.0` is the stale copy the
+        # key is greyed out to prevent.
+        moved_line = amending._candidate(amending._in_file[0])[0]
+
+        # The row is found again rather than reused: the attribute table is
+        # rebuilt per reading, and these two readings do not carry their keys in
+        # the same order.
+        off_row = next(
+            row for row in range(amending.attrs.rowCount())
+            if amending.attrs.item(row, 0).text() == "off"
+        )
+
+        check("and off= is rewritten from the anchor, in the press and on screen",
+              "off=0.0" in moved_line
+              and amending.attrs.item(off_row, 1).text() == "0.0"
+              and "on the trace" in amending.where.text(),
+              amending.where.text()[:72])
+
+        amending.on_trace.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        check("and clearing the snap moves what is written, not the click",
+              "off=3.0" in amending._candidate(amending._in_file[0])[0]
+              and "3.0 m off it" in amending.where.text(),
+              amending.where.text()[-40:])
+
+        amending.on_trace.setChecked(True)
+        amending.drop_point.click()
+        QtWidgets.QApplication.processEvents()
+
+        # An attribute on its own, which owes no comment for a reason that is not
+        # the `raw=` one: nothing about the measurement is being written over, so
+        # a sentence about the source string standing beside the new number would
+        # be a non-sequitur over a corrected station name.
+        station_row = next(
+            row for row in range(amending.attrs.rowCount())
+            if amending.attrs.item(row, 0).text() == "station"
+        )
+        amending.attrs.item(station_row, 1).setText("S26b")
+        QtWidgets.QApplication.processEvents()
+
+        check("an attribute alone is writable, and owes nothing for its own reason",
+              amending.amend_button.isEnabled()
+              and "station=S26b" in amending._candidate(amending._in_file[0])[0]
+              and "not being written over" in amending.cost.text()
+              and "`raw=` on the line" not in amending.cost.text(),
+              amending.cost.text()[-66:])
+
+        amending.attrs.item(station_row, 1).setText("S26")
+        QtWidgets.QApplication.processEvents()
+
+        check("and `Leave it where it is` drops the place without clearing the plane",
+              amending._point is None
+              and (amending.dip_dir.value(), amending.dip.value()) == (140, 35)
+              and not amending.amend_button.isEnabled(),
+              f"{amending.dip_dir.value()}/{amending.dip.value()}")
+
+        # The finding that shaped the box, reproduced: EAST carries no fit, so a
+        # reading on it answers everywhere either way. Moving it changes who
+        # answers -- `misurata` becomes `misurata-lontana` -- and changes the
+        # plane over no metre at all. A window reporting one number would call
+        # this the same size of move as the one above.
+        fitting.select(rows["EAST"])
+        QtWidgets.QApplication.processEvents()
+
+        east = fitting.document.dataset.structures[rows["EAST"]]
+        alone = point_on(east.path, 1300.0)
+
+        panel.insert_claim(
+            f"  attitude @{alone[0]:.2f},{alone[1]:.2f} plane 90/45 "
+            f"station=S77 src=field off=0.0"
+        )
+        amending.retarget()
+        amending.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        amending.took_point(*point_on(east.path, 300.0), 300.0, 0.0)
+        QtWidgets.QApplication.processEvents()
+
+        lonely = amending._measure(
+            amending._in_file[0], amending._candidate(amending._in_file[0])[0]
+        )
+
+        check("on a trace with one reading and no fit, who answers moves and the answer does not",
+              lonely is not None
+              and lonely[0] > 100.0
+              and lonely[1] < 1.0
+              # Named by the station, which is the granularity the AOI forced:
+              # `misurata` alone was too coarse to see S22 give way to S25, and
+              # `said` whole too fine, every metre of `misurata-lontana`
+              # carrying its own distance.
+              and "misurata:S77 -> misurata-lontana" in amending.cost.text(),
+              "not measured" if lonely is None else
+              f"{lonely[0]:.0f} m change who answers, {lonely[1]:.0f} m the plane")
+
+        check("and the box says so in those words, rather than calling it no change",
+              "answered by a different line" in amending.cost.text()
+              and "the plane is the same over all of them" in amending.cost.text()
+              # And never more metres than the trace has, which is what
+              # `length / samples` buys: the spacing between samples summed once
+              # per sample is one spacing too many, and on `F0059` that read as
+              # 5712 m of a 5698 m fault.
+              and lonely[0] <= lonely[2] + 1e-6
+              and lonely[1] <= lonely[0] + 1e-6,
+              amending.cost.text()[:78])
+
+        # The fourth claimant on the shift-click, and no two of them armed at
+        # once -- one list in `_only_claimant`, which is what a pair of methods
+        # disarming each other could not be.
+        fitting.readings_panel.pick_point.setChecked(True)
+        amending.pick_point.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        check("arming this one disarms every other claimant on the shift-click",
+              amending.wanting_point()
+              and not fitting.readings_panel.wanting_point()
+              and not fitting.exposure_panel.wanting_ends())
+
+        amending.pick_point.setChecked(False)
+        QtWidgets.QApplication.processEvents()
+
+        # And the refusal, on a wrapped line, in the window rather than in the
+        # abstract: the text is spliced into the block by hand, since nothing in
+        # this tool writes one.
+        wrapped_block = fitting.document.text_of(rows["EAST"]).splitlines()
+        at_reading = next(
+            n for n, line in enumerate(wrapped_block)
+            if line.strip().startswith("attitude")
+        )
+        wrapped_block.insert(at_reading + 1, '    note="on the second line"')
+        panel.text.setPlainText("\n".join(wrapped_block))
+        panel.apply_block()
+        amending.retarget()
+        amending.table.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        check("a wrapped line is refused in the window, with what would go wrong",
+              not amending.amend_button.isEnabled()
+              and not amending.dip_dir.isEnabled()
+              and "continued on 1 more" in amending.cost.text()
+              and "change nothing" in amending.cost.text(),
+              amending.cost.text()[:76])
+
+        fitting.amend_window.hide()
 
         fitting.close()
 

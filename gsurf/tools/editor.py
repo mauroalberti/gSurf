@@ -218,6 +218,30 @@ an exposed dip slope running away down the dip, so no projection of one onto the
 line is a claim anybody made. The `exposure=exposed` span is a person saying
 where this contact crops out, and the fit is written over exactly that, with
 `off=` beside it saying how far away the surface measured actually is.
+
+**And a reading written over.** The three gestures above either add a line or
+take one out; `AmendReading` changes what a line claims, which is the only act
+here with nothing to fall back on -- unless something keeps the old claim, and
+what that has to be is settled by the format rather than by preference. `raw=`
+holds the source string beside the normalised value, so on all 44 readings in
+the AOI the old *plane* is still on the line after the slot is rewritten, a few
+characters further along, and the difference between the two is the curation.
+The old *anchor* is nowhere, ever: the source geometry is the anchor. So a move
+always leaves a comment and a replanning usually does not, the comment says
+which rule put it there, and the two exceptions are measured -- a reading typed
+in here, which has no `raw=`, and one whose `raw=` an earlier amendment has
+already overtaken.
+
+What it shows before the press is what the move does to the *answer*, which is
+not the question of where the dot goes: the candidate line is parsed and the
+trace sampled either side of it, because a reading outranks every fit for 250 m
+and past that still answers wherever no fit does. Two numbers come out and they
+are different -- 109 m along `F0055` changes who answers over 106 m and the
+plane over none of it, where 281 m along `F0058` moves 839 m of both, S25 lying
+16 m from S22 and reading 14 degrees away from it. Counting that took two
+corrections from the same data: the tier alone misses S22 giving way to S25, and
+the provenance string whole counts the distance it answered from, which changes
+at every metre. `curation.answering` is the quantity in between.
 """
 
 from __future__ import annotations
@@ -243,8 +267,11 @@ from gsurf.curation import (
     SUFFIX,
     UNCONSTRAINED,
     Document,
+    amend_note,
     anchor_of,
     anchors_written,
+    answering,
+    continued_at,
     covered_metres,
     degrees_not_metres,
     detachment_note,
@@ -254,6 +281,7 @@ from gsurf.curation import (
     is_gstruct,
     module,
     nearest_structure,
+    owed_record,
     place_on,
     plane_of,
     point_on,
@@ -264,9 +292,11 @@ from gsurf.curation import (
     rows_of,
     span_line,
     stretch,
+    with_anchor,
     with_attrs,
     with_ends_in_order,
     with_plane,
+    with_values,
 )
 from gsurf.convergence import MeridianConvergence
 from gsurf.fits import (
@@ -663,6 +693,45 @@ FACET_CELLS_DRAWN = 2400
 FACET_TINT = "#7b3294"
 FACET_ALPHA = 0.33
 FACET_CELL_PX = 2.6
+
+# What the amend window shows about the attributes of the reading it is pointed
+# at. Two columns, because an attribute is a key and a value and this is the one
+# table in the tool whose cells are typed into rather than picked.
+AMEND_COLUMNS = ("attribute", "value")
+
+# The keys this window shows and refuses to let anybody type over, each for its
+# own reason and none of them for tidiness:
+#
+# - `src` says who produced the line. A curator editing it forges a provenance,
+#   which is the one thing in a file like this that cannot be checked against
+#   anything -- and the whole precedence rests on being able to tell a compass
+#   from a computation.
+# - `off` is derived. It is the distance from the anchor to the trace, which
+#   `Anchored.resolve` recomputes and nothing downstream reads, so a typed one is
+#   a sentence that contradicts the coordinates beside it. This window writes it
+#   from the anchor it is about to write, every time.
+#
+# `raw` and anything under `raw.` go with them, by prefix: FORMAT.md's first rule
+# is that the source string is conserved, and a conserved string somebody has
+# edited is not one. They are also what `owed_record` reads to decide whether the
+# old plane has anywhere to be, so editing them would edit the test as well as
+# the record.
+AMEND_KEPT = ("src", "off")
+AMEND_RAW = ("raw",)
+
+# How many metres of a trace have to change hands before the window says so in
+# metres rather than saying the move changes nothing. A metre, `FULLY_M`'s
+# reason: the provenance is sampled, so a few tenths is the sampling and not a
+# consequence.
+AMEND_MOVED_M = 1.0
+
+# Taller than the readings window by two groups and the consequence box, and
+# narrower than the facet window: no second table of diagnostics.
+AMEND_WINDOW_PX = (620, 860)
+
+# The attribute table is short and must not take height from the readings above
+# it, which is the table that is read first and scrolls. `SWEEP_TABLE_PX`'s rule.
+AMEND_TABLE_PX = 150
 
 # Below this, a stretch counts as claimed to the last metre rather than claimed
 # in part. A metre: two orders of magnitude above the two decimals an anchor is
@@ -2511,6 +2580,32 @@ class EditorPanel(QtWidgets.QWidget):
             at, line, note, "nothing is open to take a reading out of"
         )
 
+    def amend_claim(self, at, line, into):
+        """
+        One line replaced by what it now claims, applied. Why not, or None.
+
+        The third door onto `_rewrite_line` and a third name for it, because
+        the three are three different acts and a shared name would be the only
+        thing saying they are one. `drop_line` leaves a file that says what it
+        said before a computation; `comment_out` leaves a file that can still
+        tell a measurement somebody decided against from ground nobody walked;
+        this one leaves a file making a *different* claim in the same place, and
+        whether anything records the claim it replaced is `owed_record`'s
+        question, settled in the window before the press and arriving here
+        already spliced into `into`.
+
+        So `into` may be one line or three: a comment keeping the old line
+        verbatim, the reason it is being kept, and the amended claim under them.
+        `_rewrite_line` splits on newlines, which is what makes that one call
+        rather than two -- and one call is what makes it one entry on the undo
+        stack. Two presses to undo an amendment would be an amendment that can
+        be half taken back, leaving a comment over a line it no longer describes.
+        """
+
+        return self._rewrite_line(
+            at, line, into, "nothing is open to amend a reading in"
+        )
+
     def insert_claim(self, line):
         """
         One finished line into the block, applied. Why it would not go, or None.
@@ -4354,6 +4449,1178 @@ class ReadingsHere(QtWidgets.QWidget):
             f"block, Undo puts the line back, Save writes the file"
         )
         self.why.clear()
+        self.showing.emit(None)
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+    def undo_last(self):
+        """The block before the last press that wrote in it, put back."""
+
+        if not self.panel.undo_applied():
+            return False
+
+        self.said.emit("the block is back as it was before the last press")
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+
+class AmendReading(QtWidgets.QWidget):
+    """
+    One measurement already in the file, moved or corrected, against what it costs.
+
+    `ReadingsHere`'s third gesture and a window of its own, because it is the
+    only one here that writes **over** something. Add puts a line where there
+    was none and Detach takes one out leaving the reason; both of those are
+    decisions about a line's existence, and the file afterwards says what it
+    said plus or minus a claim. This one changes what a claim *is*, with no
+    second copy of the old one anywhere unless something puts it there.
+
+    **The format decides what that something has to be, and it decides it
+    differently for the two halves of a reading.** FORMAT.md's first rule keeps
+    the source string beside the normalised value, and on all 44 readings in the
+    AOI that string is the plane: `raw="dip_dir=140 dip=35"`, agreeing with the
+    slot on every one of them. So rewriting the plane slot loses nothing -- the
+    file goes on saying what the source said, a few characters further along the
+    same line, and the difference between the two *is* the curation. The anchor
+    has no such copy, ever, because the source geometry **is** the anchor: a
+    point out of a layer, written down. Move it and nothing anywhere remembers
+    where the importer put it.
+
+    Hence: **a move is always recorded in a comment and a correction of the plane
+    usually is not**, which is `owed_record`, and the comment carries the reason
+    it exists so that a block holding three amendments with comments and a fourth
+    without says which rule each of them fell under. The two exceptions are
+    measured rather than assumed -- a reading typed in by `ReadingsHere`, which
+    has no `raw=`, and a reading whose `raw=` an earlier amendment has already
+    overtaken.
+
+    **What it shows before the press is what the move does to the answer, and
+    that is not the same question as where the dot goes.** A reading outranks
+    every fit for `DEFAULT_MAX_GAP` either side of itself and, past that, still
+    answers wherever no fit does. Moving it therefore redraws the provenance of
+    the whole trace, which is a computation over several lines at once and the
+    one thing reading a file cannot tell you. So the candidate line is parsed --
+    `Document.reading_of`, the real parser under the file's own header -- and the
+    trace is sampled before and after.
+
+    Two numbers come out of that and they are different, which is the finding
+    that shaped this box. Drag S26 1200 m back along `F0055` and **867 m of 3531
+    change who answers while the plane changes over none of it**: S26 is the only
+    measurement on that trace, so it answers everywhere either way and only the
+    tier moves, `misurata` to `misurata-lontana`. Do the same to S20 on `F0074`,
+    where a fit is competing, and 999 m change both. A window reporting only the
+    first would call those two moves the same size, and one of them changes no
+    answer at all.
+
+    **`off=` is written, never typed.** It is the distance from the anchor to the
+    trace, nothing downstream reads it -- `Anchored.resolve` recomputes the
+    distance and `attitude_at` never asks -- which is exactly what makes a stale
+    one pure misinformation: the only thing it can do is contradict the
+    coordinates beside it. One reading in the file is already out by a tenth.
+    `src` and the `raw.` keys are shown and not editable for their own reasons,
+    written on `AMEND_KEPT`.
+
+    **A wrapped line is refused rather than amended**, and that is `continued_at`:
+    `loads` folds a line indented four or more into the record above it, `rows_of`
+    reads one physical line at a time and cannot see that happening, so a rewrite
+    built from a row's attributes would be silently overlaid by the continuation
+    and the press would appear to have worked. No claim in either AOI file is
+    wrapped; FORMAT.md's own example is.
+    """
+
+    # The stretch to light on the map, as `(s0, s1)` or None. The same sink as
+    # the other three windows', `_show_fitting` being the one place that decides
+    # what a band means -- and here it is the reach the reading would answer
+    # over *after* the move, once there is a candidate, because the stretch
+    # under discussion is the one the press would create.
+    showing = QtCore.pyqtSignal(object)
+
+    # That the next shift-click on the map is for this window's new place. The
+    # fourth claimant on one gesture, so it is a mode held by a button that
+    # stays down, and the exclusivity is settled in `_only_claimant`.
+    point_wanted = QtCore.pyqtSignal(bool)
+
+    # For the status bar, which belongs to the map.
+    said = QtCore.pyqtSignal(str)
+
+    # That the block changed under everything else looking at it.
+    wrote = QtCore.pyqtSignal()
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+
+        self.panel = panel
+
+        # The reading rows of the selected block, in file order, as
+        # `curation.Row`. Unsorted, `rows_of`' rule: the index into this list is
+        # the index the splice aims through.
+        self._in_file = []
+
+        # Where the press would put it, as `(x, y, s, off)` from the map, or
+        # None for "not moved". Kept as the click arrived, snapped at the press
+        # -- `ReadingsHere.took_point`'s argument, and the same reason: a click
+        # already taken is the one chance to change one's mind about which of
+        # the two statements the line should make.
+        self._point = None
+
+        # The consequence, cached on the candidate line it was measured for. A
+        # parse of the block plus 400 provenance samples per keystroke would be
+        # paid for nothing: the same line measures the same.
+        self._measured = None
+        self._measured_for = None
+
+        self.about = QtWidgets.QLabel()
+        self.about.setWordWrap(True)
+        self.about.setStyleSheet("font-weight: bold;")
+
+        self.table = QtWidgets.QTableWidget(0, len(READING_COLUMNS))
+        self.table.setHorizontalHeaderLabels(READING_COLUMNS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(False)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.table.itemSelectionChanged.connect(self._picked)
+
+        # -- where it is ---------------------------------------------------
+
+        self.was = QtWidgets.QLabel()
+        self.was.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.pick_point = QtWidgets.QPushButton("New place on the map")
+        self.pick_point.setCheckable(True)
+        self.pick_point.setEnabled(False)
+        self.pick_point.setToolTip(
+            "Then shift-click the map where the measurement belongs. What that "
+            "costs is shown below before anything is written: moving a reading "
+            "moves the ground it outranks every fit over, which is 250 m either "
+            "side of it."
+        )
+        self.pick_point.toggled.connect(self._wanting)
+
+        self.on_trace = QtWidgets.QCheckBox("put it on the trace itself")
+        self.on_trace.setChecked(True)
+        self.on_trace.setToolTip(
+            "Puts the anchor on the trace at the progressive the click projects "
+            "to and writes off=0.0. Checked for the reason `ReadingsHere` gives: "
+            "a fault plane is measured on the fault, and the trace is the fault "
+            "at the surface.\n\n"
+            "Clear it where the distance is the measurement's own -- the five "
+            "readings in these files with a large off= are the dip slopes "
+            "FORMAT.md names, measured 44 to 70 m from the trace because that is "
+            "where the surface is."
+        )
+        self.on_trace.toggled.connect(self._changed)
+
+        self.drop_point = QtWidgets.QPushButton("Leave it where it is")
+        self.drop_point.setEnabled(False)
+        self.drop_point.setToolTip(
+            "Forgets the picked place, so the press amends only what the line "
+            "says and not where it sits."
+        )
+        self.drop_point.clicked.connect(self.forget_point)
+
+        self.where = QtWidgets.QLabel()
+        self.where.setWordWrap(True)
+        self.where.setStyleSheet("font-size: 11px;")
+
+        aiming = QtWidgets.QHBoxLayout()
+        aiming.addWidget(self.pick_point)
+        aiming.addWidget(self.on_trace, stretch=1)
+        aiming.addWidget(self.drop_point)
+
+        moving = QtWidgets.QGroupBox("Where it is")
+        moving_laid = QtWidgets.QVBoxLayout(moving)
+        moving_laid.addWidget(self.was)
+        moving_laid.addLayout(aiming)
+        moving_laid.addWidget(self.where)
+
+        # -- what it says --------------------------------------------------
+
+        self.dip_dir = QtWidgets.QSpinBox()
+        self.dip_dir.setRange(0, 360)
+        self.dip_dir.setSuffix("°")
+        self.dip_dir.setWrapping(True)
+        self.dip_dir.setEnabled(False)
+        self.dip_dir.setToolTip(
+            "Dip direction, in true azimuth. Whole degrees, which is "
+            "`reading_line`'s rule and holds just as well for a correction: a "
+            "compass already corrected for declination reads in the azimuth this "
+            "format writes, so there is no `converg=` for a decimal to carry."
+        )
+        self.dip_dir.valueChanged.connect(self._changed)
+
+        self.dip = QtWidgets.QSpinBox()
+        self.dip.setRange(0, 90)
+        self.dip.setSuffix("°")
+        self.dip.setEnabled(False)
+        self.dip.valueChanged.connect(self._changed)
+
+        self.apart = QtWidgets.QLabel()
+        self.apart.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        dialling = QtWidgets.QHBoxLayout()
+        dialling.addWidget(QtWidgets.QLabel("dip dir"))
+        dialling.addWidget(self.dip_dir)
+        dialling.addWidget(QtWidgets.QLabel("dip"))
+        dialling.addWidget(self.dip)
+        dialling.addWidget(self.apart, stretch=1)
+
+        self.attrs = QtWidgets.QTableWidget(0, len(AMEND_COLUMNS))
+        self.attrs.setHorizontalHeaderLabels(AMEND_COLUMNS)
+        self.attrs.verticalHeader().setVisible(False)
+        self.attrs.setSortingEnabled(False)
+        self.attrs.setMaximumHeight(AMEND_TABLE_PX)
+        self.attrs.horizontalHeader().setStretchLastSection(True)
+        self.attrs.setToolTip(
+            "The line's own attributes. Type in a value to change it, empty it "
+            "to take the key off, and `Another attribute` to add one. The grey "
+            "rows are not editable: `src` says who produced the line, `off` is "
+            "derived from the anchor and written here, and `raw` is the source "
+            "string the format conserves."
+        )
+        self.attrs.itemChanged.connect(self._attr_changed)
+
+        self.add_attr = QtWidgets.QPushButton("Another attribute...")
+        self.add_attr.setEnabled(False)
+        self.add_attr.clicked.connect(self.add_attribute)
+
+        saying = QtWidgets.QGroupBox("What it says")
+        saying_laid = QtWidgets.QVBoxLayout(saying)
+        saying_laid.addLayout(dialling)
+        saying_laid.addWidget(self.attrs, stretch=1)
+        saying_laid.addWidget(self.add_attr)
+
+        # -- and what that costs -------------------------------------------
+
+        self.cost = QtWidgets.QLabel()
+        self.cost.setWordWrap(True)
+        self.cost.setStyleSheet("font-size: 11px;")
+        self.cost.setToolTip(
+            "What the press would do to the answer along this trace, measured "
+            "by parsing the candidate line and asking `attitude_at` everywhere "
+            "before and after -- not by this window's idea of what the parser "
+            "does."
+        )
+
+        costing = QtWidgets.QGroupBox("What that changes")
+        costing_laid = QtWidgets.QVBoxLayout(costing)
+        costing_laid.addWidget(self.cost)
+
+        self.why = QtWidgets.QLineEdit()
+        self.why.setPlaceholderText("why this reading is not as the file has it")
+        self.why.setToolTip(
+            "Goes into the file word for word. Required where the amendment owes "
+            "a comment -- always for a move -- and written into it there; asked "
+            "for anyway where it does not, and then it goes on the status bar "
+            "and into nothing, which the window says."
+        )
+        self.why.textChanged.connect(self._tell)
+
+        self.amend_button = QtWidgets.QPushButton("Amend this reading")
+        self.amend_button.setEnabled(False)
+        self.amend_button.clicked.connect(self.amend)
+
+        self.undo_button = QtWidgets.QPushButton("Undo")
+        self.undo_button.setEnabled(False)
+        self.undo_button.setToolTip(
+            "Put the block back as it was before the last press that wrote in "
+            "it. Nothing reaches the file until Save."
+        )
+        self.undo_button.clicked.connect(self.undo_last)
+
+        self.step = QtWidgets.QLabel()
+        self.step.setWordWrap(True)
+        self.step.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        back = QtWidgets.QHBoxLayout()
+        back.addWidget(self.step, stretch=1)
+        back.addWidget(self.undo_button)
+
+        laid = QtWidgets.QVBoxLayout(self)
+        laid.addWidget(self.about)
+        laid.addWidget(self.table, stretch=1)
+        laid.addWidget(moving)
+        laid.addWidget(saying)
+        laid.addWidget(costing)
+        laid.addWidget(self.why)
+        laid.addWidget(self.amend_button)
+        laid.addLayout(back)
+
+        self.retarget()
+
+    # -- what the file claims here -----------------------------------------
+
+    def _structure(self):
+        if self.panel.index is None:
+            return None
+
+        return self.panel.document.dataset.structures[self.panel.index]
+
+    def retarget(self):
+        """Points at whatever the panel has open, and reads the block again.
+
+        Everything picked goes with it, the point included: a place clicked on
+        the trace just left is a coordinate on another fault, and the controls
+        below would be holding a plane belonging to a reading that is no longer
+        on screen.
+        """
+
+        structure = self._structure()
+
+        self._in_file = []
+        self._point = None
+        self._measured = self._measured_for = None
+        self.table.clearContents()
+        self.table.setRowCount(0)
+        self._fill_attrs(None)
+
+        if structure is None:
+            self.about.setText("Nothing selected")
+            self._tell()
+            return
+
+        gstruct = module()
+
+        self.about.setText(
+            f"{structure.ident} -- {gstruct.path_length(structure.path):.0f} m"
+        )
+
+        self._in_file = readings_in(
+            self.panel.document.text_of(self.panel.index), structure.path
+        )
+
+        self.table.setRowCount(len(self._in_file))
+
+        for row in range(len(self._in_file)):
+            self._write_row(row)
+
+        self.table.resizeColumnsToContents()
+        self._tell()
+
+    def _reach_of(self, row):
+        """The stretch a reading answers over, clipped to the trace, or None.
+
+        `ReadingsHere._reach_of` with one difference: `row` here can be a
+        progressive rather than a `Row`, so that the reach of the place a click
+        picked is worked out by the same arithmetic as the reach of the place the
+        file holds. Two readings of `DEFAULT_MAX_GAP` would be two bands on one
+        map meaning two slightly different things.
+        """
+
+        structure = self._structure()
+        place = row if isinstance(row, float) else row.place
+
+        if place is None or structure is None:
+            return None
+
+        gstruct = module()
+        length = gstruct.path_length(structure.path)
+
+        return (
+            max(0.0, place - DEFAULT_MAX_GAP),
+            min(length, place + DEFAULT_MAX_GAP),
+        )
+
+    def _write_row(self, row):
+        """One row of the readings table. `ReadingsHere._write_row`'s columns."""
+
+        claim = self._in_file[row]
+        reach = self._reach_of(claim)
+        attrs = claim.attrs or {}
+
+        rest = " ".join(
+            f"{key}={value}"
+            for key, value in attrs.items()
+            if key not in ("station", "src") and not key.startswith("raw.")
+        )
+
+        cells = (
+            f"{claim.place:.0f} m" if claim.place is not None else "off the trace",
+            (
+                f"{claim.plane[0]:.0f}/{claim.plane[1]:.0f}"
+                if claim.plane is not None
+                else claim.word
+            ),
+            f"{reach[0]:.0f} to {reach[1]:.0f} m" if reach is not None else "",
+            attrs.get("src", ""),
+            rest,
+        )
+
+        for column, text in enumerate(cells):
+            item = QtWidgets.QTableWidgetItem(text)
+
+            if column == 0:
+                named = attrs.get("station")
+
+                if named:
+                    item.setText(f"{cells[0]}  ({named})")
+
+                item.setToolTip(claim.line.strip())
+
+            self.table.setItem(row, column, item)
+
+    # -- the row under the hand --------------------------------------------
+
+    def _picked_row(self):
+        picked = self.table.selectionModel()
+        rows = picked.selectedRows() if picked is not None else []
+
+        if not rows:
+            return None
+
+        at = rows[0].row()
+
+        return at if at < len(self._in_file) else None
+
+    def _picked(self):
+        """A row picked loads its own values into the controls.
+
+        **Its own, and not the last row's**, which is the trap `_show_held`
+        found in the panel: a dial left on the previous reading's plane is a
+        number nobody chose, sitting in a box that is about to write it. So
+        everything is filled from the row, the picked place is dropped, and
+        what is on screen is the file until somebody changes it.
+        """
+
+        at = self._picked_row()
+
+        self._point = None
+        self._measured = self._measured_for = None
+
+        if at is None:
+            self._fill_attrs(None)
+            self.showing.emit(None)
+            self._tell()
+            return
+
+        claim = self._in_file[at]
+
+        if claim.plane is not None:
+            for box, value in ((self.dip_dir, claim.plane[0]), (self.dip, claim.plane[1])):
+                box.blockSignals(True)
+                box.setValue(int(round(value)))
+                box.blockSignals(False)
+
+        self._fill_attrs(claim)
+        self.showing.emit(self._reach_of(claim))
+        self._tell()
+
+    def _refused(self, claim):
+        """Why this row cannot be amended at all, or None.
+
+        Settled on the row rather than at the press, so that a reading this tool
+        must not rewrite is one somebody is told about before they have typed a
+        reason for changing it.
+        """
+
+        if claim.plane is None:
+            return (
+                f"a `{claim.word}` with no plane this tool can read: what it "
+                f"holds in that slot is not two numbers, so there is nothing "
+                f"here to dial and nothing to write back"
+            )
+
+        if anchor_of(claim.line) is None:
+            return (
+                "no anchor on the line, so it has no place on the trace to move "
+                "from -- a `*` here is not an end of the path, it is a reading "
+                "nobody has pinned"
+            )
+
+        wrapped = continued_at(self.panel.document.text_of(self.panel.index), claim.at)
+
+        if wrapped:
+            return (
+                f"this line is continued on {len(wrapped)} more, and `loads` "
+                f"merges their attributes into it. Rewriting the first would "
+                f"leave those in place to be applied over the amendment, so the "
+                f"press would appear to work and change nothing"
+            )
+
+        return None
+
+    # -- where it is -------------------------------------------------------
+
+    def wanting_point(self):
+        """Whether the next shift-click on the map belongs to this window."""
+
+        return self.pick_point.isChecked()
+
+    def snapping(self):
+        """Whether that click should be put on the trace rather than beside it."""
+
+        return self.on_trace.isChecked()
+
+    def _wanting(self, on):
+        self.point_wanted.emit(bool(on))
+        self._tell()
+
+    def took_point(self, x, y, s, off):
+        """Where the click landed, from the map, with `s` and `off` from there.
+
+        `ReadingsHere.took_point` and the same contract: kept as it arrived, and
+        the snap happens at the press. `s` and `off` come worked out rather than
+        recomputed because the map has the path -- two places projecting a point
+        onto a trace is two places to round it differently.
+        """
+
+        self._point = (float(x), float(y), float(s), float(off))
+        self._measured = self._measured_for = None
+        self.pick_point.setChecked(False)
+        self.showing.emit(self._reach_of(float(s)))
+        self._tell()
+
+    def forget_point(self):
+        """The picked place dropped, leaving the attributes still amendable."""
+
+        at = self._picked_row()
+
+        self._point = None
+        self._measured = self._measured_for = None
+        self.showing.emit(
+            None if at is None else self._reach_of(self._in_file[at])
+        )
+        self._tell()
+
+    def _writing(self):
+        """The anchor and the `off=` the press would write, snapped or not."""
+
+        if self._point is None:
+            return None, None
+
+        x, y, s, off = self._point
+        structure = self._structure()
+
+        if not self.snapping() or structure is None:
+            return (x, y), off
+
+        return point_on(structure.path, s), 0.0
+
+    def _was_said(self, claim):
+        """Where the file has it, in the units the move will be talked about in."""
+
+        anchor = anchor_of(claim.line)
+
+        if anchor is None or claim.place is None:
+            return "no anchor on this line"
+
+        off = (claim.attrs or {}).get("off")
+
+        return (
+            f"the file has it at {anchor[0]:.2f}, {anchor[1]:.2f} -- "
+            f"{claim.place:.0f} m along this trace"
+            + (f", off={off}" if off else "")
+        )
+
+    def _where_said(self, claim):
+        """Where the press would put it, which the checkbox can still move."""
+
+        if self._point is None:
+            return ""
+
+        anchor, off = self._writing()
+        _, _, s, aimed = self._point
+        moved = s - claim.place
+
+        return (
+            f"would go to {anchor[0]:.2f}, {anchor[1]:.2f} -- {s:.0f} m along, "
+            + ("on the trace" if off == 0.0 else f"{off:.1f} m off it")
+            + f"; {abs(moved):.0f} m "
+            + ("further along" if moved > 0 else "back along")
+            + (
+                f". The click itself was {aimed:.0f} m off the trace"
+                if off == 0.0 and aimed > SAME_OUTCROP_M
+                else ""
+            )
+        )
+
+    # -- what it says ------------------------------------------------------
+
+    def _fill_attrs(self, claim):
+        """The line's attributes into the table, the kept ones greyed.
+
+        Rebuilt rather than patched, and the signal is held off while it is: a
+        table whose cells are being written emits `itemChanged` for every one of
+        them, and the handler's job is to notice that somebody typed.
+        """
+
+        self.attrs.blockSignals(True)
+        self.attrs.clearContents()
+        self.attrs.setRowCount(0)
+
+        if claim is not None:
+            held = list((claim.attrs or {}).items())
+            self.attrs.setRowCount(len(held))
+
+            for row, (key, value) in enumerate(held):
+                kept = self._kept(key)
+
+                name = QtWidgets.QTableWidgetItem(key)
+                name.setFlags(name.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+
+                cell = QtWidgets.QTableWidgetItem(value)
+
+                if kept:
+                    cell.setFlags(cell.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+
+                    for item in (name, cell):
+                        item.setForeground(QtGui.QColor("#9a9a9a"))
+                        item.setToolTip(self._kept_why(key))
+
+                self.attrs.setItem(row, 0, name)
+                self.attrs.setItem(row, 1, cell)
+
+        self.attrs.resizeColumnsToContents()
+        self.attrs.blockSignals(False)
+
+    @staticmethod
+    def _kept(key):
+        """Whether this window shows a key without letting anybody type over it."""
+
+        return key in AMEND_KEPT or any(
+            key == one or key.startswith(f"{one}.") for one in AMEND_RAW
+        )
+
+    @staticmethod
+    def _kept_why(key):
+        """The reason this key is not editable, which is different for each."""
+
+        if key == "src":
+            return (
+                "Who produced the line. A curator editing this forges a "
+                "provenance, and the whole precedence rests on telling a compass "
+                "from a computation."
+            )
+
+        if key == "off":
+            return (
+                "Derived from the anchor, and written here from the anchor this "
+                "press writes. Nothing downstream reads it, which is what makes "
+                "a stale one pure misinformation: all it can do is contradict "
+                "the coordinates beside it."
+            )
+
+        return (
+            "The source string, which FORMAT.md's first rule conserves beside "
+            "the normalised value -- and which `owed_record` reads to decide "
+            "whether the old plane has anywhere to be. A conserved string "
+            "somebody has edited is not one."
+        )
+
+    def _attr_changed(self, item):
+        """A typed cell re-measures the candidate. Added keys come in empty."""
+
+        if item.column() == 1:
+            self._changed()
+
+    def add_attribute(self):
+        """An empty row for a key the line has not got.
+
+        The key is typed as well as the value, because the format's attributes
+        are open -- `note`, `date`, `site_note` and the `raw.` namespace are all
+        an importer's inventions -- and a window offering a fixed list would be
+        this tool deciding what a geologist is allowed to record.
+        """
+
+        at = self.attrs.rowCount()
+
+        self.attrs.blockSignals(True)
+        self.attrs.insertRow(at)
+        self.attrs.setItem(at, 0, QtWidgets.QTableWidgetItem(""))
+        self.attrs.setItem(at, 1, QtWidgets.QTableWidgetItem(""))
+        self.attrs.blockSignals(False)
+
+        self.attrs.editItem(self.attrs.item(at, 0))
+
+    def _typed_attrs(self, claim):
+        """The table against the line, as `{key: value or None}`: the differences.
+
+        Differences and not the whole table, for `gstruct_writer`'s reason: a
+        line rewritten from a dictionary comes back in the dictionary's spacing,
+        and `with_values` splices only the keys that moved. An emptied value is
+        `None`, which takes the key off.
+        """
+
+        held = dict(claim.attrs or {})
+        out = {}
+
+        for row in range(self.attrs.rowCount()):
+            name = self.attrs.item(row, 0)
+            cell = self.attrs.item(row, 1)
+
+            if name is None:
+                continue
+
+            key = name.text().strip()
+            value = (cell.text() if cell is not None else "").strip()
+
+            if not key or self._kept(key):
+                continue
+
+            if key in held:
+                if value != held[key]:
+                    out[key] = value or None
+
+                held.pop(key)
+            elif value:
+                out[key] = value
+
+        # A row taken out of the table -- which nothing here offers yet, but the
+        # difference has to be computed against the table and not against what
+        # the table was built from, or a key would survive its own row.
+        for key in held:
+            if not self._kept(key):
+                out[key] = None
+
+        return out
+
+    # -- the candidate, and what it costs ----------------------------------
+
+    def _candidate(self, claim):
+        """The line the press would write, with the anchor and plane it carries.
+
+        Returns `(line, anchor, plane)`, the first None where there is nothing
+        to write. Built by splicing the row's own line three times rather than
+        by rebuilding it from `reading_line`: the comment at the end of a line,
+        the order of its attributes and the spacing somebody lined up are all
+        outside the slots being changed, and this tool's rule is that they stay
+        where they are.
+
+        **Whole degrees, as `reading_line` writes them**, and the decimal is
+        taken off deliberately rather than left at `PLANE_DECIMALS`. That
+        default exists because a fit's number was computed in grid and corrected
+        by `converg=`, which at `.0f` would vanish while claiming to have
+        happened. A compass has no correction to lose, every `attitude` in the
+        AOI is written whole, and one written otherwise would look as though it
+        had come from somewhere else.
+        """
+
+        anchor, off = self._writing()
+        plane = (float(self.dip_dir.value()), float(self.dip.value()))
+        line = claim.line
+
+        if anchor is not None:
+            line = with_anchor(line, *anchor)
+
+            if line is None:
+                return None, None, None
+
+            # Written from the anchor that is about to go on the line, in the
+            # same press, which is the only way the two cannot disagree.
+            line = with_values(line, {"off": f"{off:.1f}"})
+
+        if plane != claim.plane:
+            line = with_plane(line, plane[0], plane[1], decimals=0)
+
+            if line is None:
+                return None, None, None
+
+        typed = self._typed_attrs(claim)
+
+        if typed:
+            line = with_values(line, typed)
+
+        if line == claim.line:
+            return None, None, None
+
+        return line, anchor, plane
+
+    def _measure(self, claim, line):
+        """What the candidate does to the answer along this trace, or None.
+
+        Cached on the line, which is what the measurement is of. Returns
+        `(moved_m, replanned_m, length, before, after)` in metres of trace.
+        """
+
+        if self._measured_for == line:
+            return self._measured
+
+        self._measured = self._measured_for = None
+
+        structure = self._structure()
+
+        if structure is None:
+            return None
+
+        text = self.panel.document.text_of(self.panel.index)
+        lines = text.splitlines()
+
+        if not 0 <= claim.at < len(lines):
+            return None
+
+        lines[claim.at] = line
+        after = self.panel.document.reading_of("\n".join(lines))
+
+        if after is None:
+            return None
+
+        max_gap = self.panel.max_gap
+        before_p = provenance_of(structure, max_gap=max_gap)
+        after_p = provenance_of(after, max_gap=max_gap)
+
+        if not before_p or len(before_p) != len(after_p):
+            return None
+
+        length = before_p[-1][0]
+
+        # What one sample stands for, and `length / samples` rather than
+        # `length / (samples - 1)`: the second is the spacing *between* samples,
+        # and summing it once per sample gives one spacing more than the trace
+        # has. Measured, on `F0059`: 5712 m reported of a 5698 m fault, which is
+        # a sentence that cannot be true of anything.
+        step = length / len(before_p)
+
+        # Who answers and what the answer is, counted apart. They are different
+        # quantities and the difference is this box's whole point: on `F0055` a
+        # move changes who answers over 109 m and the plane over none of it, S26
+        # being the only measurement on that trace.
+        #
+        # **Keyed on the line and not on the tier**, which the AOI corrected
+        # twice. The tier alone -- `misurata`, `fit`, `misurata-lontana` -- was
+        # too coarse: on `F0058`, where S22 and S25 sit 16 m apart and disagree
+        # by 14 degrees, one or the other is the nearest reading nearly
+        # everywhere, so the tier moved over 34 m while *which of the two
+        # answers* moved over 841. And `said` whole was too fine, because it
+        # ends in the distance it answered from, which changes at every metre.
+        # `answering` is the middle, and it is the identity the string carries.
+        #
+        # The plane goes into the first key as well as being counted on its own,
+        # so that the two numbers nest the way the sentence reads them. Without
+        # it they would not: `misurata-lontana` names no station, so two
+        # different far readings compare equal there and the plane could change
+        # over ground this said nobody new was answering.
+        moved = sum(
+            step for b, a in zip(before_p, after_p)
+            if (answering(b[2]), b[1]) != (answering(a[2]), a[1])
+        )
+        replanned = sum(step for b, a in zip(before_p, after_p) if b[1] != a[1])
+
+        self._measured = (moved, replanned, length, before_p, after_p)
+        self._measured_for = line
+
+        return self._measured
+
+    def _cost_said(self, claim, line, anchor, plane):
+        """What the press would change, in metres of this trace, and what it owes."""
+
+        if line is None:
+            return (
+                "Nothing is different from what the file says, so there is "
+                "nothing to write."
+            )
+
+        measured = self._measure(claim, line)
+
+        if measured is None:
+            return (
+                "The candidate line does not parse, so what it would change "
+                "cannot be measured -- `Amend this reading` will refuse it with "
+                "the parser's own words."
+            )
+
+        moved, replanned, length, before_p, after_p = measured
+        said = []
+
+        if moved < AMEND_MOVED_M and replanned < AMEND_MOVED_M:
+            said.append(
+                f"No metre of these {length:.0f} answers differently afterwards."
+                + (
+                    " The line changes and the answer does not, which for an "
+                    "attribute is the normal case: nothing downstream reads one."
+                    if anchor is None
+                    else " The reading moves and keeps on being the nearest one "
+                    "everywhere, which is what a trace with a single "
+                    "measurement on it does."
+                )
+            )
+        else:
+            said.append(
+                f"{moved:.0f} m of {length:.0f} are answered by a different "
+                f"line afterwards, and "
+                + (
+                    f"over {replanned:.0f} of those the plane is different too."
+                    if replanned >= AMEND_MOVED_M
+                    else "the plane is the same over all of them -- the same "
+                    "reading still answers, from further off."
+                )
+            )
+
+            changes = self._where_it_turns(before_p, after_p)
+
+            if changes:
+                said.append(changes)
+
+        owed = owed_record(claim, anchor, plane)
+
+        if owed is not None:
+            said.append(f"The line as it stands goes into a comment: {owed}.")
+        elif plane is not None and plane != claim.plane:
+            said.append(
+                f"No comment is owed: `raw=` on the line already reads "
+                f"{claim.plane[0]:.0f}/{claim.plane[1]:.0f}, so the file goes on "
+                f"saying what the source said."
+            )
+        else:
+            # Said apart from the sentence above it, because the reason is a
+            # different one and the `raw=` sentence over an attribute edit is a
+            # non-sequitur: nothing about the measurement is being written over,
+            # so there is nothing for the source string to be standing beside.
+            said.append(
+                "No comment is owed: the measurement itself is not being "
+                "written over."
+            )
+
+        return " ".join(said)
+
+    @staticmethod
+    def _where_it_turns(before_p, after_p, most=3):
+        """The first few stretches that change hands, named by both answers.
+
+        The runs and not the samples: `runs_of`' argument, and it is stronger
+        here -- what is being reported is where the answer changes, and between
+        two changes there is one answer to report.
+
+        Named by the station or the verdict and not by the tier, `_measure`'s
+        correction and the same case behind it: on `F0058` the tier changes over
+        14 m and which of two readings answers changes over 841, so a line
+        reporting tiers reported the small one and left the large one out.
+        """
+
+        runs = []
+
+        for before, after in zip(before_p, after_p):
+            s = before[0]
+            was = answering(before[2])
+            now = answering(after[2])
+
+            if was == now:
+                continue
+
+            if runs and runs[-1][1] == (was, now):
+                runs[-1][0] = (runs[-1][0][0], s)
+                continue
+
+            runs.append([(s, s), (was, now)])
+
+        if not runs:
+            return ""
+
+        said = ", ".join(
+            f"{a:.0f}-{b:.0f} m {was} -> {now}"
+            for (a, b), (was, now) in runs[:most]
+        )
+
+        return said + (f", and {len(runs) - most} more" if len(runs) > most else "")
+
+    # -- telling -----------------------------------------------------------
+
+    def _changed(self):
+        """A control moved: the candidate is stale, so the measurement is too."""
+
+        self._measured = self._measured_for = None
+        self._tell()
+
+    def _tell(self):
+        """Every control's state, and one line about the gesture under way."""
+
+        at = self._picked_row()
+        claim = None if at is None else self._in_file[at]
+        refused = None if claim is None else self._refused(claim)
+        live = claim is not None and refused is None
+        why = self.why.text().strip()
+
+        line = anchor = plane = None
+
+        if live:
+            line, anchor, plane = self._candidate(claim)
+
+        owed = None if not live else owed_record(claim, anchor, plane)
+
+        for control in (self.pick_point, self.dip_dir, self.dip, self.add_attr):
+            control.setEnabled(live)
+
+        self.drop_point.setEnabled(live and self._point is not None)
+        self.why.setEnabled(live)
+
+        # Required where a comment will be written and offered where none will:
+        # the comment is the whole justification for writing over a coordinate
+        # nothing else holds, and a reason box that could be left empty is a
+        # reason box that is left empty.
+        self.amend_button.setEnabled(
+            live and line is not None and (owed is None or bool(why))
+        )
+
+        self.undo_button.setEnabled(self.panel.may_undo())
+
+        self.was.setText("" if claim is None else self._was_said(claim))
+        self.where.setText("" if claim is None else self._where_said(claim))
+        self.apart.setText("" if not live else self._apart_said(claim, plane))
+        self.cost.setText(
+            refused or ("" if not live else self._cost_said(claim, line, anchor, plane))
+        )
+        self.step.setText(self._step_said(claim, refused, line, owed, why))
+        self._show_off()
+
+    def _show_off(self):
+        """The greyed `off` cell showing what the press would write, not what was.
+
+        Because this window writes that number and the table shows it: left
+        alone, a reading dragged onto the trace would sit above a row saying
+        `off=44.2` while the press wrote `off=0.0`, which is the same stale copy
+        the key is greyed out to prevent.
+        """
+
+        _, off = self._writing()
+
+        for row in range(self.attrs.rowCount()):
+            name = self.attrs.item(row, 0)
+
+            if name is None or name.text().strip() != "off":
+                continue
+
+            cell = self.attrs.item(row, 1)
+
+            if cell is None:
+                continue
+
+            at = self._picked_row()
+            was = (
+                "" if at is None
+                else (self._in_file[at].attrs or {}).get("off", "")
+            )
+
+            self.attrs.blockSignals(True)
+            cell.setText(was if off is None else f"{off:.1f}")
+            self.attrs.blockSignals(False)
+
+    @staticmethod
+    def _apart_said(claim, plane):
+        """How far the dialled plane is from the one the line holds."""
+
+        if claim.plane is None:
+            return ""
+
+        if plane is None or plane == claim.plane:
+            return f"what the line says: {claim.plane[0]:.0f}/{claim.plane[1]:.0f}"
+
+        return (
+            f"{between(claim.plane, plane):.0f}° from the "
+            f"{claim.plane[0]:.0f}/{claim.plane[1]:.0f} the line says"
+        )
+
+    def _step_said(self, claim, refused, line, owed, why):
+        """One line about whichever gesture is in the middle of happening."""
+
+        if self.panel.index is None:
+            return ""
+
+        if not self._in_file:
+            return "Nothing measured along this trace to amend."
+
+        if claim is None:
+            return "Pick the reading that is not as the file has it."
+
+        if refused is not None:
+            return "This one cannot be amended here -- see above."
+
+        if self.wanting_point():
+            return (
+                "Shift-click the map where it belongs"
+                + (
+                    " -- it goes on the trace at the progressive it projects to."
+                    if self.snapping()
+                    else ", and it stays where you click."
+                )
+            )
+
+        if line is None:
+            return (
+                "Move the point, dial the plane, or type over an attribute. "
+                "What any of that costs is measured below before anything is "
+                "written."
+            )
+
+        if owed is not None and not why:
+            return (
+                "Say why, and it goes into the comment that keeps the line as "
+                "it stands -- which is owed here and is not owed for every "
+                "amendment, so the comment carries the reason it exists."
+            )
+
+        if owed is None and not why:
+            return (
+                "`Amend this reading` writes it. A reason is not required here "
+                "and is worth typing anyway: it goes on the status bar, where "
+                "the next press overwrites it."
+            )
+
+        return "`Amend this reading` writes it, and Undo takes it back."
+
+    # -- the press ---------------------------------------------------------
+
+    def amend(self):
+        """The candidate line into the block, with the comment where one is owed."""
+
+        at = self._picked_row()
+
+        if at is None:
+            return False
+
+        claim = self._in_file[at]
+
+        if self._refused(claim) is not None:
+            return False
+
+        line, anchor, plane = self._candidate(claim)
+
+        if line is None:
+            return False
+
+        why = self.why.text().strip()
+        owed = owed_record(claim, anchor, plane)
+
+        if owed is not None and not why:
+            return False
+
+        into = (
+            line
+            if owed is None
+            else amend_note(claim, why, time.strftime("%d.%m.%Y"), owed)
+            + "\n"
+            + line
+        )
+
+        refused = self.panel.amend_claim(claim.at, claim.line, into)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        self.said.emit(
+            f"amended {reading_said(claim)}"
+            + (f" -- {why}" if why else "")
+            + (
+                ", and the line as it stands is in the comment above it"
+                if owed is not None
+                else ""
+            )
+            + " -- Undo puts it back, Save writes the file"
+        )
+
+        self.why.clear()
+        self._point = None
         self.showing.emit(None)
         self.wrote.emit()
         self.retarget()
@@ -7325,6 +8592,25 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
         self._readings_placed = False
 
+        # And the one that writes over what that one lists, which is why it is a
+        # third window and not a third group inside it. Add and Detach are
+        # decisions about whether a line exists; this changes what a line claims,
+        # and the old claim survives only where something puts it somewhere --
+        # see `AmendReading`, where the format decides what that something is.
+        self.amend_panel = AmendReading(self.panel)
+        self.amend_panel.showing.connect(self._show_fitting)
+        self.amend_panel.said.connect(self.say)
+        self.amend_panel.wrote.connect(self._amend_wrote)
+        self.amend_panel.point_wanted.connect(self._amend_wants_point)
+
+        self.amend_window = SatelliteWindow(
+            "gSurf - amend a measurement",
+            self.amend_panel,
+            AMEND_WINDOW_PX,
+            parent=self,
+        )
+        self._amend_placed = False
+
         # The third of these, on the axis neither of the other two can touch. Its
         # band goes to the same sink for the same reason, and it writes through
         # the same `insert_claim`: what is different is only that what it claims
@@ -7490,6 +8776,15 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_action.triggered.connect(self.open_readings)
         reading.addAction(self.readings_action)
 
+        # Beside it and never greyed either, for the same reason: what it needs
+        # is the block. It is a separate entry rather than a button inside that
+        # window because of what it does -- the only gesture in this tool that
+        # writes over a claim somebody already made.
+        self.amend_action = QtGui.QAction("Amend a measu&rement...", self)
+        self.amend_action.setShortcut("Ctrl+R")
+        self.amend_action.triggered.connect(self.open_amend)
+        reading.addAction(self.amend_action)
+
         # Never greyed either, and the argument is stronger here than for the
         # readings: this one asserts a field observation, and the DEM in it is
         # evidence beside the assertion rather than a condition on it. A session
@@ -7626,23 +8921,39 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_panel.retarget()
         self._tell_next()
 
-    def _exposure_wants_ends(self, on):
-        """Arming one claimant on the shift-click disarms the other.
+    def _only_claimant(self, armed):
+        """Arming one claimant on the shift-click disarms every other.
 
         Two modes held at once would leave `_on_map_pressed` deciding which of
         them a click belongs to by the order of its branches, which is the thing
         that function's own comment refuses to do. So the exclusivity is here,
         where it is a sentence: the last button pressed is the one that is armed.
+
+        **One list, written once**, which it was not when there were two of
+        these: a pair of methods each disarming the other is a rule that is
+        correct for two claimants and silently incomplete for three. The third
+        arrived and the pair still compiled.
         """
 
+        for button in (
+            self.readings_panel.pick_point,
+            self.exposure_panel.pick_ends,
+            self.amend_panel.pick_point,
+        ):
+            if button is not armed:
+                button.setChecked(False)
+
+    def _exposure_wants_ends(self, on):
         if on:
-            self.readings_panel.pick_point.setChecked(False)
+            self._only_claimant(self.exposure_panel.pick_ends)
 
     def _readings_want_point(self, on):
-        """The same rule the other way round. See `_exposure_wants_ends`."""
-
         if on:
-            self.exposure_panel.pick_ends.setChecked(False)
+            self._only_claimant(self.readings_panel.pick_point)
+
+    def _amend_wants_point(self, on):
+        if on:
+            self._only_claimant(self.amend_panel.pick_point)
 
     def open_facet(self):
         """
@@ -7749,7 +9060,61 @@ class EditorWindow(QtWidgets.QMainWindow):
         # and a reading taken out moves the second: a trace answering for its
         # last 150 m through a measurement answers for none of it afterwards.
         self.fit_panel.retarget()
+        self.amend_panel.retarget()
         self._tell_next()
+
+    def _amend_wrote(self):
+        """An amended reading reaches everything else that draws the block."""
+
+        # Everything a detachment reaches, and the facet window as well: its
+        # seeds are the readings, their licence is read at the progressive each
+        # of them sits at, and a moved reading is a seed at another place -- so
+        # a grown region left on screen would belong to a site nothing claims
+        # any more.
+        self.fit_panel.retarget()
+        self.readings_panel.retarget()
+        self.facet_panel.retarget()
+        self._tell_next()
+
+    def open_amend(self):
+        """
+        Brings up the amend window on the selected trace.
+
+        Retargeted on every opening, like the other three readers and for their
+        reason: what it holds is the file's own readings. The picked place goes
+        with the retarget, which matters more here than in any of them -- a
+        coordinate clicked before this window was last closed is a place on the
+        map that a press would write into a line, and the one thing it must not
+        do is still be held when somebody comes back to a different reading.
+        """
+
+        self.amend_panel.retarget()
+        self._place_amend()
+        self.amend_window.show()
+        self.amend_window.raise_()
+        self.amend_window.activateWindow()
+
+    def _place_amend(self):
+        """Offset further in again, so the five do not land as one."""
+
+        if self._amend_placed:
+            return
+
+        self._amend_placed = True
+
+        available = self.screen().availableGeometry()
+        frame = self.frameGeometry()
+
+        self.amend_window.move(
+            min(
+                frame.left() + FIT_OFFSET_PX[0] * 5,
+                available.right() - self.amend_window.width(),
+            ),
+            min(
+                frame.top() + FIT_OFFSET_PX[1] * 5,
+                available.bottom() - self.amend_window.height(),
+            ),
+        )
 
     def _place_readings(self):
         """Offset further in than the fit window, so the two do not land as one."""
@@ -7855,6 +9220,7 @@ class EditorWindow(QtWidgets.QMainWindow):
                 *self.group.satellites.values(),
                 self.fit_window,
                 self.readings_window,
+                self.amend_window,
                 self.exposure_window,
                 self.facet_window,
             ):
@@ -8332,6 +9698,12 @@ class EditorWindow(QtWidgets.QMainWindow):
         # a list lost to a click that changed nothing.
         self.fit_panel.retarget()
         self.readings_panel.retarget()
+
+        # And this one drops a picked coordinate as well as a list, which is the
+        # one of these that would be dangerous left behind: a place clicked on
+        # the trace just left, still held, is a point on another fault that the
+        # next press would write into a line as a correction.
+        self.amend_panel.retarget()
 
         # And this one has more than a list to drop: its picked ends are
         # progressives, which on the next trace are a different stretch. See
@@ -9494,11 +10866,16 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             return
 
-        # The third claimant, and the two cannot both be armed -- see
-        # `_exposure_wants_ends`, which is where that is enforced rather than
-        # here, so this branch's place in the order decides nothing.
+        # The third and fourth claimants, and no two of them can be armed at
+        # once -- see `_only_claimant`, which is where that is enforced rather
+        # than here, so the order of these branches decides nothing.
         if shifted and self.exposure_panel.wanting_ends():
             self._end_for_exposure(x, y)
+
+            return
+
+        if shifted and self.amend_panel.wanting_point():
+            self._point_for_amendment(x, y)
 
             return
 
@@ -9564,6 +10941,41 @@ class EditorWindow(QtWidgets.QMainWindow):
             + ("on the trace" if self.readings_panel.snapping()
                else f"{off:.1f} m off it")
             + " -- dial the plane and press `Add this reading`"
+        )
+
+    def _point_for_amendment(self, x, y):
+        """A click sent to the amend window, projected the same way.
+
+        `_point_for_reading`'s twin and deliberately the same arithmetic: a
+        reading added and a reading moved end up in the same slot of the same
+        kind of line, so two projections rounding differently would make the
+        two gestures write two slightly different anchors for one click.
+
+        What it says afterwards is not the same, and that is the difference
+        worth having here: an addition has only to be dialled, where a move is
+        about to overwrite the one copy of where the reading already was, and
+        the metres it changes hands over are measured in the window.
+        """
+
+        if self.index is None:
+            self.say("nothing selected to amend on")
+            return
+
+        structure = self.document.dataset.structures[self.index]
+
+        if len(structure.path) < 2:
+            self.say(f"{structure.ident} has no path to amend against")
+            return
+
+        here = self.in_file(x, y)
+        s, off = place_on(structure.path, *here)
+
+        self.amend_panel.took_point(*here, s, off)
+        self.say(
+            f"it would go at {s:.0f} m along {structure.ident}, "
+            + ("on the trace" if self.amend_panel.snapping()
+               else f"{off:.1f} m off it")
+            + " -- what that changes is in the window"
         )
 
     def pick(self, x, y, anchor=False):
