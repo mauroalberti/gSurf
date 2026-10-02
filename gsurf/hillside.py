@@ -167,6 +167,25 @@ def attitude_of(normal):
     return dip_dir, dip
 
 
+def normal_of(dip_dir, dip):
+    """
+    `(dip direction, dip)` as the upward normal in east-north-up, a unit vector.
+
+    `attitude_of` read backwards, and written here beside it so that the pair
+    cannot drift: a round trip through the two is the identity, which is what
+    `facets` leans on when it asks which cells of a DEM belong to a measured
+    plane.
+    """
+
+    azimuth, tilt = math.radians(float(dip_dir)), math.radians(float(dip))
+
+    return np.array([
+        math.sin(azimuth) * math.sin(tilt),
+        math.cos(azimuth) * math.sin(tilt),
+        math.cos(tilt),
+    ])
+
+
 def corridor_of(points, step=ALONG, across=CORRIDOR):
     """
     Where the hillside is sampled beside a stretch: `(N, 2)` ground coordinates.

@@ -198,6 +198,26 @@ own best plane by 7 to 210 times what nearest-cell sampling costs, so every
 `drape=` written in that file is an angle to a plane the ground does not hold.
 Shorten the stretch and the residual comes down. That is a thing to see while
 choosing where the claim goes, and not a threshold to be checked against.
+
+**And then the surface itself.** Where a contact is declared exposed the DTM is
+not sampling a hill, it is sampling the fault, and `FacetHere` grows the region
+whose own slope matches a measured plane and fits a plane to that -- hectares
+instead of a line. Three things it does that `gstruct/facets.py` did not, each
+because the measurement asked for it. The **radius is a control**: at the
+reference's 500 m, five of the eight facets of this AOI are still growing where
+the window stops, and S19's plane turns eleven degrees when it is opened to
+1000, towards the 107/35 its own compass reads -- so `Grow it further` sweeps a
+ladder and reports how far the plane *moved*, which is the only way to tell a
+surface measured further out from a surface that was never one plane. The
+**seed is marked as the seed** in the angles, because the region is the cells
+within the tolerance of that plane and its agreement with the result is
+arithmetic, not evidence: `vs_field` in the old script was that angle, read as
+corroboration. And the **stretch comes from the licence**, not from the region:
+these facets lie a median of 47 to 296 m off their own trace and out to 714 m,
+an exposed dip slope running away down the dip, so no projection of one onto the
+line is a claim anybody made. The `exposure=exposed` span is a person saying
+where this contact crops out, and the fit is written over exactly that, with
+`off=` beside it saying how far away the surface measured actually is.
 """
 
 from __future__ import annotations
@@ -257,6 +277,7 @@ from gsurf.fits import (
     fits_along,
     gate_for,
 )
+from gsurf import facets
 from gsurf.hillside import between, hillside_on
 from gsurf.planes import (
     FROM_STEERED,
@@ -595,6 +616,53 @@ EXPOSURE_COLUMNS = ("from", "to", "says", "in force", "why")
 # Taller than the readings window by the evidence box, which is four lines of
 # text and the angles to whatever the stretch already carries.
 EXPOSURE_WINDOW_PX = (620, 640)
+
+# What the facet window shows about the measurements it could grow from. The
+# licence is a column and not a filter: a reading on ground nobody has declared
+# is the thing to go and declare, so hiding it would hide the next step.
+SEED_COLUMNS = ("at", "reads", "licensed over", "grown")
+
+# And what the radius sweep shows, which is the measurement this window is for.
+# `rim` last because it is the one that invalidates the two before it: an area
+# measured against the edge of the window is a lower bound wearing a number.
+SWEEP_COLUMNS = ("radius", "area", "plane", "moved", "rim")
+
+# How far from the site to look, offered rather than assumed. `facets.RADIUS` is
+# 500 m, which is the reference implementation's number, and on the AOI it cuts
+# 5 of the 8 facets off at the window: opened to 1000 m, S26 goes from 47 to 95
+# hectares and S19's plane moves 11 degrees, from 121/30 to 110/30, towards the
+# 107/35 its compass reads. So the radius is not a frame around the answer, it
+# is part of it -- the same thing `FIT_LENGTHS` says about a window length, and
+# handled the same way: a ladder to ask along, no default beyond the first.
+FACET_RADII = (500.0, 1000.0, 2000.0, 3000.0)
+
+# How far the plane may move across the ladder and still be one surface measured
+# further out. Three degrees, which is not a gate on anything -- nothing is
+# refused by it -- but the threshold of a sentence: below it the four radii are
+# four measurements of one plane, and above it the radius is choosing the answer.
+# Measured: S26, S22, S20 and S21 move 0 to 2 degrees, where S19 moves 5 and its
+# wider answer is the one that agrees with its compass.
+FACET_ONE_PLANE = 3.0
+
+# Two tables, the diagnostics and the angles: taller than the fit window.
+FACET_WINDOW_PX = (660, 820)
+
+# The sweep is four rows and must not take height from the seeds above it, which
+# is the table that is read first and scrolls.
+SWEEP_TABLE_PX = 132
+
+# How the grown region is drawn on the map: its own cells, thinned, as a stipple
+# under everything. A stipple and not an outline, because the region is what it
+# is -- a hull would draw the ground between two lobes as though it belonged --
+# and because the cells go through `on_map` one by one, so the picture is right
+# even where the map's projection is not the file's.
+#
+# Thinned to this many, which is about what a 95 ha facet has at a 20 m stride:
+# past that the stipple is a solid wash and the trace under it stops reading.
+FACET_CELLS_DRAWN = 2400
+FACET_TINT = "#7b3294"
+FACET_ALPHA = 0.33
+FACET_CELL_PX = 2.6
 
 # Below this, a stretch counts as claimed to the last metre rather than claimed
 # in part. A metre: two orders of magnitude above the two decimals an anchor is
@@ -5099,6 +5167,838 @@ class ExposureHere(QtWidgets.QWidget):
         return True
 
 
+class FacetHere(QtWidgets.QWidget):
+    """
+    The attitude of the surface itself, where somebody has said it crops out.
+
+    `ExposureHere` writes the licence and this spends it. FORMAT.md's rule is
+    that a plane fitted to a facet runs only under `exposure=exposed`, and the
+    reason is not procedural: the region is grown by taking cells whose own slope
+    matches a measured plane, so on *any* hillside near *any* fault it will find
+    something. What makes the answer a measurement of the fault rather than of
+    the hill is a person having stood there and said the fault is what crops out.
+
+    **The radius is part of the answer, not a frame around it.** This is the one
+    thing the reference implementation hid, and the measurement is plain:
+    `facets.RADIUS` is 500 m, and at 500 m five of the eight facets of this AOI
+    are still growing when the window stops. Opened to 1000 m, S26 goes from 47
+    to 95 hectares with its plane steady at 142/30 -- a bigger measurement of the
+    same surface -- while S19 moves from 121/30 to 110/30, eleven degrees, toward
+    the 107/35 its own compass reads. One of those is a surface being measured
+    further and the other is a surface that was never one plane, and the only way
+    to tell is to ask at several radii and watch. So `Grow it further` sweeps the
+    ladder and the table reports **how far the plane moved**, with the rim flag
+    beside it, because an area that reaches the edge of the window is a lower
+    bound wearing a number.
+
+    **The stretch comes from the licence and not from the region.** A `fit`
+    claims an interval of trace and a facet is a region; the obvious repair to
+    `export_geology.py`'s `* *` was to anchor the fit over the ground the facet
+    covers, and the data refuses it. These facets sit a median of 47 to 296 m
+    from their own trace and out to 714 m, because an exposed dip slope runs away
+    down the dip and the trace is its up-dip edge: strict containment gives 20 m
+    of a 27 hectare surface, and nothing at all on two of the eight. So the
+    interval written is the `exposure=exposed` span in force at the seed --
+    somebody's own statement of where this contact crops out -- and `off=` goes
+    on the line beside it, so the next reader can see how far from the trace the
+    surface measured actually lies without recomputing anything.
+
+    **And the angle to the seed is not evidence.** It cannot be: the region is
+    the cells within `tol` of that plane, so the result is inside `tol` of it by
+    construction. `export_geology.py` wrote it as `vs_field` and read it as
+    corroboration, which is the mistake this window is built not to repeat -- the
+    seed's row in the angles table says `grew it`, and the readings that did not
+    grow it are the ones worth reading.
+    """
+
+    showing = QtCore.pyqtSignal(object)
+    said = QtCore.pyqtSignal(str)
+    wrote = QtCore.pyqtSignal()
+
+    # The facet to draw on the map, or None. A region and not a stretch, which is
+    # why it does not go to the band's sink: see `EditorWindow._show_facet`.
+    drawing = QtCore.pyqtSignal(object)
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+
+        self.panel = panel
+
+        # The readings of the open block, as `curation.Row`, in file order.
+        self._seeds = []
+
+        # The facet last grown, and which row and radius it came from.
+        self._facet = None
+        self._grown_from = None
+
+        # And how far its cells lie from the trace, measured once with it. Kept
+        # rather than recomputed in `_measured_said`, which `_tell` calls on
+        # every keystroke and every change of either dial: the quantity is a
+        # distance from 600 cells to every segment of a path, and it cannot
+        # change while the facet does not.
+        self._offsets = None
+
+        self.about = QtWidgets.QLabel()
+        self.about.setWordWrap(True)
+        self.about.setStyleSheet("font-weight: bold;")
+
+        self.licence = QtWidgets.QLabel()
+        self.licence.setWordWrap(True)
+        self.licence.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.seeds = QtWidgets.QTableWidget(0, len(SEED_COLUMNS))
+        self.seeds.setHorizontalHeaderLabels(SEED_COLUMNS)
+        self.seeds.verticalHeader().setVisible(False)
+        self.seeds.setSortingEnabled(False)
+        self.seeds.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.seeds.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.seeds.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.seeds.itemSelectionChanged.connect(self._picked)
+
+        # -- the two numbers the method is made of -----------------------------
+
+        self.radius = QtWidgets.QComboBox()
+
+        for metres in FACET_RADII:
+            self.radius.addItem(f"{metres:.0f} m", metres)
+
+        self.radius.setToolTip(
+            "How far from the site to look. Not a frame around the answer: at "
+            "500 m five of the eight facets of this area are still growing when "
+            "the window stops, and one of them turns eleven degrees when it is "
+            "opened to 1000. `Grow it further` is how to tell a surface being "
+            "measured further from a surface that was never one plane."
+        )
+        self.radius.currentIndexChanged.connect(self._tell)
+
+        self.tolerance = QtWidgets.QSpinBox()
+        self.tolerance.setRange(2, 40)
+        self.tolerance.setValue(int(facets.TOL))
+        self.tolerance.setSuffix("\N{DEGREE SIGN}")
+        self.tolerance.setToolTip(
+            "How far a cell's own slope may sit from the measured plane and "
+            "still count as the same surface. This is the assertion the method "
+            "is made of, so it is here to be moved -- and it is also why the "
+            "angle between the result and the seed says nothing: the region is "
+            "the cells within this many degrees of that plane."
+        )
+        self.tolerance.valueChanged.connect(self._tell)
+
+        self.grow_button = QtWidgets.QPushButton("Grow the facet")
+        self.grow_button.setEnabled(False)
+        self.grow_button.clicked.connect(self.grow)
+
+        self.sweep_button = QtWidgets.QPushButton("Grow it further")
+        self.sweep_button.setEnabled(False)
+        self.sweep_button.setToolTip(
+            "The same site at every radius on the ladder, so that how much the "
+            "plane moves is on screen beside how much bigger the surface got."
+        )
+        self.sweep_button.clicked.connect(self.sweep)
+
+        dialling = QtWidgets.QHBoxLayout()
+        dialling.addWidget(QtWidgets.QLabel("look out to"))
+        dialling.addWidget(self.radius)
+        dialling.addWidget(QtWidgets.QLabel("within"))
+        dialling.addWidget(self.tolerance)
+        dialling.addStretch(1)
+        dialling.addWidget(self.grow_button)
+        dialling.addWidget(self.sweep_button)
+
+        growing = QtWidgets.QGroupBox("Grow it")
+        grow_laid = QtWidgets.QVBoxLayout(growing)
+        grow_laid.addLayout(dialling)
+
+        self.measured = QtWidgets.QLabel()
+        self.measured.setWordWrap(True)
+        self.measured.setStyleSheet("font-size: 11px;")
+        grow_laid.addWidget(self.measured)
+
+        self.sweep_table = QtWidgets.QTableWidget(0, len(SWEEP_COLUMNS))
+        self.sweep_table.setHorizontalHeaderLabels(SWEEP_COLUMNS)
+        self.sweep_table.verticalHeader().setVisible(False)
+        self.sweep_table.setSortingEnabled(False)
+        self.sweep_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.sweep_table.setMaximumHeight(SWEEP_TABLE_PX)
+        grow_laid.addWidget(self.sweep_table)
+
+        # -- what else was measured along the same ground ----------------------
+
+        self.angles = QtWidgets.QLabel()
+        self.angles.setWordWrap(True)
+        self.angles.setStyleSheet("font-size: 11px; color: #333333;")
+
+        against = QtWidgets.QGroupBox("Against what else was read there")
+        against_laid = QtWidgets.QVBoxLayout(against)
+        against_laid.addWidget(self.angles)
+
+        # -- and the line ------------------------------------------------------
+
+        self.keep_button = QtWidgets.QPushButton("Keep this fit")
+        self.keep_button.setEnabled(False)
+        self.keep_button.clicked.connect(self.keep)
+
+        self.undo_button = QtWidgets.QPushButton("Undo")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.undo_last)
+
+        self.step = QtWidgets.QLabel()
+        self.step.setWordWrap(True)
+        self.step.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        keeping = QtWidgets.QHBoxLayout()
+        keeping.addWidget(self.keep_button)
+        keeping.addStretch(1)
+        keeping.addWidget(self.undo_button)
+
+        laid = QtWidgets.QVBoxLayout(self)
+        laid.addWidget(self.about)
+        laid.addWidget(self.licence)
+        laid.addWidget(self.seeds, stretch=1)
+        laid.addWidget(growing)
+        laid.addWidget(against)
+        laid.addWidget(self.step)
+        laid.addLayout(keeping)
+
+        self.retarget()
+
+    # -- what is here to grow from -----------------------------------------
+
+    def _structure(self):
+        if self.panel.index is None:
+            return None
+
+        return self.panel.document.dataset.structures[self.panel.index]
+
+    def refusal(self):
+        """Why no facet can be grown in this session at all, or None."""
+
+        if self.panel.dem is None:
+            return (
+                "No DEM in this session. A facet is a region of topography, so "
+                "this is the one thing here that cannot be done without one."
+            )
+
+        return self.panel.dem_said
+
+    def retarget(self):
+        """Points at whatever the panel has open, and reads its readings again."""
+
+        structure = self._structure()
+
+        self._seeds = []
+        self._forget()
+        self.seeds.clearContents()
+        self.seeds.setRowCount(0)
+
+        if structure is None:
+            self.about.setText("Nothing selected")
+            self.licence.setText("")
+            self._tell()
+
+            return
+
+        gstruct = module()
+
+        self.about.setText(
+            f"{structure.ident} -- {gstruct.path_length(structure.path):.0f} m"
+        )
+
+        self._seeds = [
+            row
+            for row in readings_in(
+                self.panel.document.text_of(self.panel.index), structure.path
+            )
+            if row.plane is not None and row.place is not None
+        ]
+
+        self.seeds.setRowCount(len(self._seeds))
+
+        for row in range(len(self._seeds)):
+            self._write_seed(row)
+
+        self.seeds.resizeColumnsToContents()
+        self.licence.setText(self._licence_said())
+        self._tell()
+
+    def _licensed(self, row):
+        """The `exposure=exposed` span in force where a reading sits, or None.
+
+        `span_at` and not a search of the lines, because the question is which
+        span *answers* there: the axis allows any number of overlapping spans and
+        the last one covering wins, so a file can hold `exposed` over a stretch
+        and `covered` written under it over part of that stretch. The licence is
+        what holds, and that is one call.
+        """
+
+        structure = self._structure()
+
+        if structure is None or row.place is None:
+            return None
+
+        span = structure.span_at(EXPOSURE_AXIS, row.place)
+
+        return span if span is not None and span.value == LICENSING else None
+
+    def _licence_said(self):
+        """What this trace has been declared to be, in one line."""
+
+        structure = self._structure()
+
+        if structure is None:
+            return ""
+
+        exposed = [
+            span
+            for span in structure.spans
+            if span.axis == EXPOSURE_AXIS and span.value == LICENSING
+        ]
+
+        if not exposed:
+            return (
+                "Nothing on this trace is declared exposed, so there is nothing "
+                "to grow: the calculation is licensed by an "
+                "`exposure=exposed` span, and that is written in `Exposure "
+                "along this trace` (Ctrl+E)."
+            )
+
+        metres = sum(
+            (span.s1 - span.s0)
+            for span in exposed
+            if span.s0 is not None and span.s1 is not None and span.s1 > span.s0
+        )
+
+        return (
+            f"{len(exposed)} stretch{'' if len(exposed) == 1 else 'es'} declared "
+            f"exposed, {metres:.0f} m of trace in all. A fit grown here is "
+            f"written over the one in force at the site, which is the claim "
+            f"being capped by its own licence."
+        )
+
+    def _write_seed(self, row):
+        claim = self._seeds[row]
+        span = self._licensed(claim)
+        attrs = claim.attrs or {}
+        named = attrs.get("station")
+
+        cells = (
+            f"{claim.place:.0f} m" + (f"  ({named})" if named else ""),
+            f"{claim.plane[0]:.0f}/{claim.plane[1]:.0f}",
+            (
+                f"{span.s0:.0f} to {span.s1:.0f} m"
+                if span is not None and span.s0 is not None
+                else "not declared"
+            ),
+            "",
+        )
+
+        for column, text in enumerate(cells):
+            item = QtWidgets.QTableWidgetItem(text)
+
+            if column == 0:
+                item.setToolTip(claim.line.strip())
+
+            if column == 2 and span is not None:
+                item.setBackground(QtGui.QColor(EXPOSED_TINT))
+
+            self.seeds.setItem(row, column, item)
+
+    def _picked_row(self):
+        picked = self.seeds.selectionModel()
+        rows = picked.selectedRows() if picked is not None else []
+
+        if not rows:
+            return None
+
+        at = rows[0].row()
+
+        return at if at < len(self._seeds) else None
+
+    def _picked(self):
+        self._forget()
+        self._tell()
+
+    def _forget(self):
+        """The grown facet dropped, which any change of question has to do."""
+
+        self._facet = None
+        self._grown_from = None
+        self._offsets = None
+        self.sweep_table.clearContents()
+        self.sweep_table.setRowCount(0)
+        self.drawing.emit(None)
+        self.showing.emit(None)
+
+    # -- growing it --------------------------------------------------------
+
+    def _grow_at(self, radius):
+        """The facet at one radius for the picked row, or None. Nothing shown."""
+
+        at = self._picked_row()
+        structure = self._structure()
+
+        if at is None or structure is None or self.refusal():
+            return None
+
+        claim = self._seeds[at]
+        anchor = anchor_of(claim.line)
+
+        if anchor is None:
+            return None
+
+        return facets.facet_on(
+            anchor,
+            claim.plane,
+            self.panel.dem,
+            convergence=self.panel.convergence,
+            radius=float(radius),
+            tol=float(self.tolerance.value()),
+        )
+
+    def _keep_grown(self, at, facet, radius):
+        """One grown facet taken as the window's answer: measured, drawn, shown."""
+
+        structure = self._structure()
+
+        self._facet = facet
+        self._grown_from = (at, radius, self.tolerance.value())
+        self._offsets = (
+            facets.offsets_on(facet, structure.path)
+            if facet is not None and structure is not None
+            else None
+        )
+
+        self.drawing.emit(facet)
+
+        if facet is None:
+            return
+
+        span = self._licensed(self._seeds[at])
+
+        if span is not None and span.s0 is not None:
+            self.showing.emit((span.s0, span.s1))
+
+        self._fill_seed_grown(at)
+
+    def grow(self):
+        """The facet at the chosen radius, measured and drawn and not written."""
+
+        at = self._picked_row()
+
+        if at is None:
+            return False
+
+        radius = self.radius.currentData()
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtGui.QCursor(QtCore.Qt.CursorShape.WaitCursor)
+        )
+        try:
+            self._keep_grown(at, self._grow_at(radius), radius)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        if self._facet is None:
+            self.said.emit(self._nothing_grew())
+            self._tell()
+
+            return False
+
+        self.said.emit(
+            f"grown {self._facet.area_ha:.0f} ha at "
+            f"{self._facet.dip_dir:.0f}/{self._facet.dip:.0f}"
+            + (
+                " -- still growing where the window stops, so this is a lower "
+                "bound: try a longer radius"
+                if self._facet.at_the_rim else ""
+            )
+        )
+        self._tell()
+
+        return True
+
+    def _nothing_grew(self):
+        """
+        Why a press came back with nothing, as one of the things it can be.
+
+        Said rather than left as an empty box, because the reasons are different
+        facts about the ground: a site whose own cell and whose neighbours all
+        fail the tolerance is a surface that does not crop out as morphology at
+        all, and no method reading a DTM will find its attitude. That is an
+        answer, and `facets.facet_on` returning None is how it arrives.
+        """
+
+        return (
+            f"nothing grew from here within "
+            f"{self.tolerance.value()}\N{DEGREE SIGN}: either the site's own "
+            f"cells do not match the plane that was measured, or what does "
+            f"match is under "
+            f"{facets.MIN_AREA_HA:.0f} ha. The surface is not morphology here, "
+            f"and a DTM cannot give its attitude"
+        )
+
+    def sweep(self):
+        """The same site at every radius, with how far the plane moved."""
+
+        at = self._picked_row()
+
+        if at is None:
+            return False
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtGui.QCursor(QtCore.Qt.CursorShape.WaitCursor)
+        )
+        try:
+            grown = [(metres, self._grow_at(metres)) for metres in FACET_RADII]
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        rows = [one for one in grown if one[1] is not None]
+
+        self.sweep_table.setRowCount(len(rows))
+
+        first = rows[0][1] if rows else None
+        chosen = self.radius.currentData()
+
+        for row, (metres, facet) in enumerate(rows):
+            moved = between(first.plane, facet.plane) if first is not None else 0.0
+
+            cells = (
+                f"{metres:.0f} m",
+                f"{facet.area_ha:.0f} ha",
+                f"{facet.dip_dir:.0f}/{facet.dip:.0f}",
+                f"{moved:.0f}\N{DEGREE SIGN}",
+                "at the rim" if facet.at_the_rim else "",
+            )
+
+            for column, text in enumerate(cells):
+                item = QtWidgets.QTableWidgetItem(text)
+
+                if column == 4 and facet.at_the_rim:
+                    item.setForeground(QtGui.QColor("#b2182b"))
+
+                self.sweep_table.setItem(row, column, item)
+
+        self.sweep_table.resizeColumnsToContents()
+
+        if not rows:
+            self.said.emit(self._nothing_grew())
+
+            return False
+
+        # The chosen radius's own facet is kept out of the sweep rather than
+        # recomputed, so that the press leaves the window pointing at a
+        # measurement and not at a table of them -- and so that the sentence
+        # below is the last thing said, where a second `grow()` would have
+        # overwritten it with its own.
+        at_chosen = next(
+            (facet for metres, facet in rows if metres == chosen), None
+        )
+
+        if at_chosen is not None:
+            self._keep_grown(at, at_chosen, chosen)
+
+        self._tell()
+
+        widest = max(
+            between(rows[0][1].plane, facet.plane) for _, facet in rows
+        )
+
+        # The sentence is about the spread and not about the largest, because the
+        # question the sweep answers is whether there is one plane here: a
+        # surface measured further is the same answer over more ground, and a
+        # surface that was never one plane is a different answer each time.
+        self.said.emit(
+            f"{len(rows)} radii: the plane moves "
+            f"{widest:.0f}\N{DEGREE SIGN} across them"
+            + (
+                " -- one surface, measured further out"
+                if widest < FACET_ONE_PLANE
+                else " -- more than a measurement of one surface moves, so the "
+                     "radius is choosing the answer"
+            )
+        )
+
+        return True
+
+    def _measured_said(self):
+        """The facet in words: the plane, how big, how planar, and how far off."""
+
+        refused = self.refusal()
+
+        if refused:
+            return refused
+
+        got = self._facet
+
+        if got is None:
+            return ""
+
+        away = self._offsets
+
+        said = (
+            f"{got.area_ha:.0f} ha over {got.n} cells, dipping "
+            f"{got.dip_dir:.0f}/{got.dip:.0f}"
+            + (
+                f" ({got.converg:+.2f} of convergence taken off)"
+                if got.north == "true" else " from grid north"
+            )
+            + f", {got.span:.0f} m across.\n"
+            f"It misses its own best plane by {got.rms:.1f} m over those "
+            f"{got.span:.0f} m -- {got.waviness:.1f}\N{DEGREE SIGN} of "
+            f"waviness -- through {got.relief:.0f} m of relief. None of that is "
+            f"sampling: a facet is fitted to the cells themselves."
+        )
+
+        if away is not None and len(away):
+            said += (
+                f"\nThe surface lies a median of {np.median(away):.0f} m from "
+                f"the trace, out to {away.max():.0f} m -- which is what an "
+                f"exposed dip slope does, running away down the dip from its "
+                f"own trace."
+            )
+
+        if got.at_the_rim:
+            said += (
+                f"\nAnd it is still growing where the window stops, so "
+                f"{got.area_ha:.0f} ha is a lower bound and not a measurement. "
+                f"A longer radius is the next thing to try."
+            )
+
+        return said
+
+    def _angles_said(self):
+        """
+        Every reading on the licensed stretch, with its angle, the seed marked.
+
+        Marked and not excluded, which is the point: the seed has to be visible
+        *as* the seed, because its angle is bounded by the tolerance by
+        construction and a reader who does not know which row grew the region
+        would read the smallest number in the table as the best agreement.
+        """
+
+        got = self._facet
+        at = self._picked_row()
+        structure = self._structure()
+
+        if got is None or at is None or structure is None:
+            return ""
+
+        seed = self._seeds[at]
+        span = self._licensed(seed)
+        told = []
+
+        for attitude in structure.attitudes:
+            if attitude.s is None or attitude.plane is None:
+                continue
+
+            if span is not None and span.s0 is not None:
+                if not (span.s0 <= attitude.s <= span.s1):
+                    continue
+
+            named = attitude.attrs.get("station") or "a reading"
+            apart = between(
+                got.plane, (attitude.plane.dip_dir, attitude.plane.dip)
+            )
+            same = (
+                seed.place is not None
+                and abs(attitude.s - seed.place) < SAME_OUTCROP_M
+            )
+
+            told.append(
+                f"{named} {attitude.plane} is {apart:.0f}\N{DEGREE SIGN} off it"
+                + ("  <- grew it, so this angle is inside the tolerance by "
+                   "construction" if same else "")
+            )
+
+        if not told:
+            return "Nothing else is measured on the licensed stretch."
+
+        return "\n".join(told)
+
+    # -- the line ----------------------------------------------------------
+
+    def _tell(self):
+        """What is missing before each press can happen."""
+
+        at = self._picked_row()
+        refused = bool(self.refusal())
+        stale = self._grown_from != (
+            at, self.radius.currentData(), self.tolerance.value()
+        )
+
+        self.radius.setEnabled(not refused)
+        self.tolerance.setEnabled(not refused)
+        self.grow_button.setEnabled(at is not None and not refused)
+        self.sweep_button.setEnabled(at is not None and not refused)
+        self.keep_button.setEnabled(
+            self._facet is not None and not stale and self._licence_for() is not None
+        )
+        self.undo_button.setEnabled(self.panel.may_undo())
+        self.measured.setText(self._measured_said())
+        self.angles.setText(self._angles_said())
+        self.step.setText(self._step_said(at, stale))
+
+    def _licence_for(self):
+        """The span a kept fit would be written over, or None if there is none."""
+
+        at = self._picked_row()
+
+        return None if at is None else self._licensed(self._seeds[at])
+
+    def _step_said(self, at, stale):
+        """One line about whichever half of the gesture is still missing."""
+
+        refused = self.refusal()
+
+        if refused:
+            return refused
+
+        if self.panel.index is None:
+            return ""
+
+        if not self._seeds:
+            return (
+                "Nothing is measured along this trace, and a facet is grown "
+                "from a measurement: the plane says which cells belong to the "
+                "same surface."
+            )
+
+        if at is None:
+            return "Pick the reading to grow from."
+
+        if self._licensed(self._seeds[at]) is None:
+            return (
+                "That reading is not on ground declared exposed. Grow it to "
+                "look, by all means -- but a fit cannot be written, because the "
+                "licence is the stretch it would be written over (Ctrl+E)."
+            )
+
+        if self._facet is None or stale:
+            return "`Grow the facet`, and look at what came out."
+
+        span = self._licensed(self._seeds[at])
+
+        return (
+            f"`Keep this fit` writes it over the declared stretch, "
+            f"{span.s0:.0f} to {span.s1:.0f} m"
+            if span.s0 is not None
+            else "`Keep this fit` writes it over the whole trace, which is what "
+                 "the licence says"
+        )
+
+    def _fill_seed_grown(self, at):
+        """The last column of the row that was grown, so the table remembers."""
+
+        got = self._facet
+
+        if got is None or at >= self.seeds.rowCount():
+            return
+
+        self.seeds.setItem(at, 3, QtWidgets.QTableWidgetItem(
+            f"{got.area_ha:.0f} ha {got.dip_dir:.0f}/{got.dip:.0f}"
+            + (" (rim)" if got.at_the_rim else "")
+        ))
+        self.seeds.resizeColumnsToContents()
+
+    def keep(self):
+        """The grown facet as one anchored `fit` line in the block."""
+
+        got = self._facet
+        at = self._picked_row()
+        span = self._licence_for()
+
+        if got is None or at is None or span is None:
+            return False
+
+        away = self._offsets if self._offsets is not None else np.zeros(0)
+        seed = self._seeds[at]
+        attrs = {
+            "from": facets.FROM_FACET,
+            "src": "gsurf",
+            # The licence written on the line, which FORMAT.md asks for: a fit
+            # whose precondition is a curatorial act has to name the act.
+            "licence": facets.LICENCE,
+            "north": got.north,
+            "dem": self.panel.dem.path.name,
+            "seed": (seed.attrs or {}).get("station", "")
+                    or f"{seed.place:.0f}m",
+            "tol": f"{got.tol:.0f}",
+            "radius": f"{got.radius:.0f}",
+            "ncell": str(got.n),
+            "area_ha": f"{got.area_ha:.1f}",
+            # `across` and not the reference's `span`, which on a `fit` line
+            # would sit beside the interval the fit claims and read as a second
+            # statement about it. This is the region's own diagonal in plan,
+            # which is a different quantity: on F0058 it is 987 m next to a
+            # trace 981 m long, and the two numbers are not comparable.
+            "across": f"{got.span:.0f}",
+            "res": f"{got.rms:.1f}",
+            "wavy": f"{got.waviness:.1f}",
+            "relief": f"{got.relief:.0f}",
+        }
+
+        if got.north == "true":
+            attrs["converg"] = f"{got.converg:+.2f}"
+
+        if len(away):
+            # How far the measured surface lies from the line the fit is written
+            # on. Not a quality: a dip slope is *supposed* to run away down the
+            # dip. It is the number that says what kind of claim this is.
+            attrs["off"] = f"{np.median(away):.0f}"
+            attrs["offmax"] = f"{away.max():.0f}"
+
+        if got.at_the_rim:
+            # Said on the line, because the window closes and the number does
+            # not: an area measured against the edge of the window is a lower
+            # bound, and a reader cannot tell that from the figure alone.
+            attrs["rim"] = "reached"
+
+        line = as_line(
+            module().Fit(
+                plane=module().Plane(got.dip_dir, got.dip),
+                start=span.start,
+                end=span.end,
+                attrs=attrs,
+            )
+        )
+        refused = self.panel.insert_claim(line)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        self.said.emit(
+            f"kept {line.strip()[:80]}... -- Undo takes it out, Save writes the "
+            f"file"
+        )
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+    def undo_last(self):
+        """The block before the last press that wrote in it, put back."""
+
+        if not self.panel.undo_applied():
+            return False
+
+        self.said.emit("the block is back as it was before the last press")
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+
 class FitFromDem(QtWidgets.QWidget):
     """
     Reading the topography along one trace: press, look at what came out, keep it.
@@ -6443,6 +7343,23 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
         self._exposure_placed = False
 
+        # And the one that spends what that one writes. Its band is the licensed
+        # stretch, so it goes to the same sink; its region does not, a stretch of
+        # trace and a patch of hillside being two different pictures.
+        self.facet_panel = FacetHere(self.panel)
+        self.facet_panel.showing.connect(self._show_fitting)
+        self.facet_panel.drawing.connect(self._show_facet)
+        self.facet_panel.said.connect(self.say)
+        self.facet_panel.wrote.connect(self._facet_wrote)
+
+        self.facet_window = SatelliteWindow(
+            "gSurf - the surface where it crops out",
+            self.facet_panel,
+            FACET_WINDOW_PX,
+            parent=self,
+        )
+        self._facet_placed = False
+
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(
             "Write the file, replacing the lines of the structures that were "
@@ -6582,6 +7499,23 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.exposure_action.triggered.connect(self.open_exposure)
         reading.addAction(self.exposure_action)
 
+        # Greyed with the fit window and off the same answer, for that entry's
+        # reason: a facet is a region of topography, so unlike the two above it
+        # this one cannot be done at all without a DEM these traces may be read
+        # against.
+        self.facet_action = QtGui.QAction(
+            "The surface where it crops out...", self
+        )
+        self.facet_action.setShortcut("Ctrl+T")
+        self.facet_action.triggered.connect(self.open_facet)
+        reading.addAction(self.facet_action)
+
+        facet_refused = self.facet_panel.refusal()
+
+        if facet_refused:
+            self.facet_action.setEnabled(False)
+            self.facet_action.setToolTip(facet_refused)
+
         # Greyed for the reason the button is greyed, and off the same answer
         # rather than a second copy of it: a menu entry that opens a window with
         # a refusal in it costs the gesture before it answers, and two places
@@ -6710,6 +7644,82 @@ class EditorWindow(QtWidgets.QMainWindow):
         if on:
             self.exposure_panel.pick_ends.setChecked(False)
 
+    def open_facet(self):
+        """
+        Brings up the facet window on the selected trace.
+
+        Retargeted on every opening, like the other two readers: what it holds
+        is the file's readings and the licence over them, so reading them again
+        is free. The grown facet goes with the retarget, which is right -- a
+        region measured before the window was last closed is a picture of ground
+        nobody is looking at, and leaving it would leave it drawn on the map.
+        """
+
+        self.facet_panel.retarget()
+        self._place_facet()
+        self.facet_window.show()
+        self.facet_window.raise_()
+        self.facet_window.activateWindow()
+
+    def _facet_wrote(self):
+        """A kept facet fit reaches everything else that draws the block."""
+
+        self.fit_panel.retarget()
+        self.readings_panel.retarget()
+        self._tell_next()
+
+    def _show_facet(self, facet):
+        """
+        The grown region on the map, as its own cells, or taken off.
+
+        Through `on_map` cell by cell rather than as a raster laid on an extent:
+        the map can be in a projection the file is not, and a region is the one
+        thing here that would come out wrong rather than merely shifted -- an
+        image placed by its corners in another projection is skewed in between,
+        and a skewed facet would look like a measurement of a surface that is
+        not there.
+        """
+
+        if facet is None:
+            self.facet_drawn.set_data([], [])
+            self.map_view.blit()
+
+            return
+
+        drawn = np.asarray(
+            self.on_map(facets.cells_of(facet, cap=FACET_CELLS_DRAWN)),
+            dtype=float,
+        )
+
+        if not len(drawn):
+            self.facet_drawn.set_data([], [])
+        else:
+            self.facet_drawn.set_data(drawn[:, 0], drawn[:, 1])
+
+        self.map_view.blit()
+
+    def _place_facet(self):
+        """Offset further in again, so the four do not land as one."""
+
+        if self._facet_placed:
+            return
+
+        self._facet_placed = True
+
+        available = self.screen().availableGeometry()
+        frame = self.frameGeometry()
+
+        self.facet_window.move(
+            min(
+                frame.left() + FIT_OFFSET_PX[0] * 4,
+                available.right() - self.facet_window.width(),
+            ),
+            min(
+                frame.top() + FIT_OFFSET_PX[1] * 4,
+                available.bottom() - self.facet_window.height(),
+            ),
+        )
+
     def _place_exposure(self):
         """Offset further in again, so the three do not land as one."""
 
@@ -6836,10 +7846,17 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             self.addAction(action)
 
+            # Every window this tool owns, and the list is one place on purpose:
+            # a window added here and forgotten there is a Ctrl+S that works
+            # from four windows out of six, which fails silently and only
+            # sometimes -- the same failure the net was argued into this list
+            # for.
             for satellite in (
                 *self.group.satellites.values(),
                 self.fit_window,
                 self.readings_window,
+                self.exposure_window,
+                self.facet_window,
             ):
                 satellite.addAction(action)
 
@@ -7026,6 +8043,24 @@ class EditorWindow(QtWidgets.QMainWindow):
                 Line2D(
                     [], [], color=CLAIMED_TINT, lw=CLAIMED_WIDTH,
                     alpha=CLAIMED_ALPHA, solid_capstyle="butt", zorder=5.5,
+                )
+            )
+        )
+
+        # The grown facet, as a stipple of its own cells. Lowest of everything
+        # that is about a claim, because it is the only artist here that is
+        # about a *region*: a band is drawn along the trace and a cut crosses
+        # it, and both have to stay legible over this.
+        #
+        # Square markers, so the stipple reads as cells of a grid rather than as
+        # a scatter of measurements -- there are already round dots on this map
+        # and they are stations, which is the one thing this must not look like.
+        self.facet_drawn = self.map_view.add_animated(
+            axes.add_line(
+                Line2D(
+                    [], [], color=FACET_TINT, marker="s",
+                    markersize=FACET_CELL_PX, markeredgewidth=0.0,
+                    alpha=FACET_ALPHA, linestyle="none", zorder=5.1,
                 )
             )
         )
@@ -7302,6 +8337,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         # progressives, which on the next trace are a different stretch. See
         # `_forget_stretch`.
         self.exposure_panel.retarget()
+
+        # The facet window drops the region it grew, which takes it off the map:
+        # a patch of hillside measured from a station on the trace just left
+        # would otherwise sit there under a different fault.
+        self.facet_panel.retarget()
 
         # Said last, because every line of it is about this trace: which one is
         # open is the first thing the next step depends on.

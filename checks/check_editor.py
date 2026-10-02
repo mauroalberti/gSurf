@@ -28,6 +28,7 @@ the reach -- the fit takes it back. Any other answer is a number to explain.
 import difflib
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -125,6 +126,97 @@ def plane_dem(directory, name="plane.tif", crs="EPSG:25833"):
         out.write(np.repeat(z[None, :], rows, axis=0).astype("float32"), 1)
 
     return where
+
+
+# The square of hillside the facet fixture is built around: 800 m by 800 m of
+# ground at exactly RELIEF_DIP_DIR/RELIEF_DIP, with other attitudes outside it.
+# `plane_dem` cannot test a facet's extent -- a region grown on a raster that is
+# one plane everywhere fills whatever window it is given, which is a real case
+# and is the *other* one -- so the point of this raster is a boundary that is
+# geology rather than the edge of the search.
+FACET_X = (800.0, 1600.0)
+FACET_Y = (300.0, 1100.0)
+
+# Where the seed sits: the middle of that square, and the trace runs through it
+# north to south, so the facet reaches 400 m either side of the line. That is the
+# fixture's version of the thing the AOI shows -- a dip slope runs away from its
+# own trace, and the median offset here is a quarter of the square's width.
+FACET_SEED = (1200.0, 700.0)
+
+# And the gentler slope outside the square, in degrees: far enough from 30 that
+# `facets.TOL` stops the region at the boundary, and a slope rather than a cliff,
+# so nothing in the answer comes from a discontinuity being smoothed.
+FACET_OUTSIDE_DIP = 5.0
+
+
+def facet_dem(directory, name="facet.tif", crs="EPSG:25833"):
+    """
+    One square of 30-degree east slope, with other attitudes all around it.
+
+    Built by integrating a prescribed gradient rather than by patching planes
+    together: `dz/dx` is a function of x alone and `dz/dy` of y alone, so the
+    field is curl-free and the surface it integrates to is continuous
+    everywhere. Patching would have left a cliff at the boundary, and then the
+    extent of the grown region would be an artefact of how a 25 m box filter
+    handles a vertical step.
+    """
+
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    cols, rows = int(2700 / CELL), int(1600 / CELL)
+
+    x = X0 + (np.arange(cols) + 0.5) * CELL
+    y = Y0 + 1400.0 - (np.arange(rows) + 0.5) * CELL
+
+    inside_dip = np.tan(np.radians(RELIEF_DIP))
+    outside_dip = np.tan(np.radians(FACET_OUTSIDE_DIP))
+
+    along_x = np.where(
+        (x >= X0 + FACET_X[0]) & (x <= X0 + FACET_X[1]), inside_dip, outside_dip
+    )
+    along_y = np.where(
+        (y >= Y0 + FACET_Y[0]) & (y <= Y0 + FACET_Y[1]), 0.0, inside_dip
+    )
+
+    # Integrated from each axis's own start, which is all that is needed: a
+    # constant offset is a datum shift and moves no attitude anywhere. `along_y`
+    # is reversed to integrate up the northings and reversed back, the rows of a
+    # raster running south.
+    down_dip = 2000.0 - np.cumsum(along_x) * CELL
+    across = -np.cumsum(along_y[::-1])[::-1] * CELL
+
+    where = Path(directory) / name
+
+    with rasterio.open(
+        where, "w", driver="GTiff", width=cols, height=rows, count=1,
+        dtype="float32", crs=crs,
+        transform=from_origin(X0, Y0 + 1400.0, CELL, CELL),
+    ) as out:
+        out.write((across[:, None] + down_dip[None, :]).astype("float32"), 1)
+
+    return where
+
+
+def facet_source():
+    """One trace through the middle of that square, with a reading on it."""
+
+    x, y = X0 + FACET_SEED[0], Y0 + FACET_SEED[1]
+
+    return "\n".join([
+        "gstruct 0.2",
+        "crs EPSG:25833",
+        "",
+        'structure SLOPE ""',
+        "  kind fault",
+        f"  attitude @{x:.2f},{y:.2f} plane "
+        f"{RELIEF_DIP_DIR:.0f}/{RELIEF_DIP:.0f} station=S1 src=field off=0.0",
+        "  path 2",
+        f"    {x:.2f} {Y0 + FACET_Y[0]:.2f}",
+        f"    {x:.2f} {Y0 + FACET_Y[1]:.2f}",
+        "",
+    ])
 
 
 def densified(points, step=20.0):
@@ -4990,6 +5082,269 @@ def main():
         fitting.exposure_window.hide()
 
         fitting.close()
+
+        # -- the surface itself, where somebody has said it crops out -------
+
+        print("\n-- the facet, grown from a reading --\n")
+
+        from gsurf import facets as facets_module
+        from gsurf.facets import facet_on, offsets_on
+
+        slope_dem = facet_dem(tmp)
+        sloped = written(tmp, "facet.gstruct", facet_source())
+        sloped_spec = dict(path=str(sloped), role="traces")
+        sloped_session = Session.open(
+            dem_path=str(slope_dem), frame_layers=[sloped_spec]
+        )
+        growing = tool.build(sloped_session, {"traces": sloped_spec})
+        seed_at = (X0 + FACET_SEED[0], Y0 + FACET_SEED[1])
+        square_ha = (
+            (FACET_X[1] - FACET_X[0]) * (FACET_Y[1] - FACET_Y[0]) / 1.0e4
+        )
+
+        # The arithmetic first, on a raster whose answer is known by
+        # construction: 800 m by 800 m of ground at exactly 90/30, with other
+        # attitudes all round it.
+        grown = facet_on(
+            seed_at, (RELIEF_DIP_DIR, RELIEF_DIP), growing.panel.dem
+        )
+
+        check("a facet grows to the square of slope and stops at the geology",
+              grown is not None
+              and abs(grown.area_ha - square_ha) < 2.0
+              and not grown.at_the_rim,
+              "nothing grew" if grown is None else
+              f"{grown.area_ha:.1f} ha against the square's {square_ha:.0f}, "
+              f"{'at the rim' if grown.at_the_rim else 'clear of the rim'}")
+
+        check("and the plane it fits is the plane the ground is",
+              grown is not None
+              and between(grown.plane, (RELIEF_DIP_DIR, RELIEF_DIP)) < 0.01,
+              "nothing grew" if grown is None else
+              f"{grown.dip_dir:.3f}/{grown.dip:.3f}, "
+              f"{between(grown.plane, (RELIEF_DIP_DIR, RELIEF_DIP)):.4f} deg off")
+
+        # And the residual has no sampling in it, which is the difference from a
+        # corridor: `hillside` reads trace positions snapped to the nearest cell
+        # and pays 0.72 m for it on this same slope, where a facet is fitted to
+        # the cells themselves.
+        check("and its residual is the surface alone, with no sampling in it",
+              grown is not None
+              and grown.rms < 0.01
+              and grown.waviness < 0.01,
+              "nothing grew" if grown is None else
+              f"{grown.rms:.4f} m over {grown.span:.0f} m across, "
+              f"{grown.waviness:.4f} deg of waviness")
+
+        # Bounded by the geology and not by the search, so opening the radius
+        # finds the same surface. The other case -- a region still growing where
+        # the window stops -- is `plane_dem`, which is one plane everywhere.
+        wider = facet_on(
+            seed_at, (RELIEF_DIP_DIR, RELIEF_DIP), growing.panel.dem,
+            radius=2000.0,
+        )
+        unbounded = facet_on(
+            (X0 + 1200.0, Y0 + 700.0), (RELIEF_DIP_DIR, RELIEF_DIP), panel.dem
+        )
+        unbounded_wider = facet_on(
+            (X0 + 1200.0, Y0 + 700.0), (RELIEF_DIP_DIR, RELIEF_DIP), panel.dem,
+            radius=1000.0,
+        )
+
+        check("a radius opened over a bounded surface finds the same surface",
+              wider is not None
+              and abs(wider.area_ha - grown.area_ha) < 0.1
+              and between(wider.plane, grown.plane) < 0.01,
+              f"{grown.area_ha:.1f} ha at 500 m, {wider.area_ha:.1f} at 2000")
+
+        check("and over one that is not bounded it finds more of it, and says so",
+              unbounded is not None and unbounded_wider is not None
+              and unbounded.at_the_rim and unbounded_wider.at_the_rim
+              and unbounded_wider.area_ha > unbounded.area_ha * 3.0,
+              f"{unbounded.area_ha:.0f} ha at 500 m, "
+              f"{unbounded_wider.area_ha:.0f} at 1000, both at the rim")
+
+        # The offsets, which are why no stretch of trace comes out of this
+        # module: the square reaches 400 m either side of the trace through it,
+        # so the median cell is a quarter of the square's width away.
+        away = offsets_on(grown, growing.document.dataset.structures[0].path)
+
+        check("the surface lies off the trace, which is what a dip slope does",
+              len(away)
+              and abs(np.median(away) - (FACET_X[1] - FACET_X[0]) / 4.0) < 10.0
+              and away.max() > (FACET_X[1] - FACET_X[0]) / 2.0 - 10.0,
+              f"median {np.median(away):.0f} m, max {away.max():.0f} m, "
+              f"over a square {FACET_X[1] - FACET_X[0]:.0f} m wide")
+
+        # -- and the window ------------------------------------------------
+
+        growing.open_facet()
+        QtWidgets.QApplication.processEvents()
+
+        facet_ui = growing.facet_panel
+
+        check("the window lists the reading, and refuses to write without a licence",
+              facet_ui.refusal() is None
+              and facet_ui.seeds.rowCount() == 1
+              and "Nothing on this trace is declared exposed"
+              in facet_ui.licence.text(),
+              facet_ui.licence.text()[:66])
+
+        facet_ui.seeds.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        check("and picking it offers the growing but not the keeping",
+              facet_ui.grow_button.isEnabled()
+              and not facet_ui.keep_button.isEnabled()
+              and "not on ground declared exposed" in facet_ui.step.text(),
+              facet_ui.step.text()[:72])
+
+        regions = []
+        facet_ui.drawing.connect(regions.append)
+
+        facet_ui.grow_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("growing works without a licence: looking is not claiming",
+              facet_ui._facet is not None
+              and len(regions) == 1 and regions[-1] is not None
+              and len(growing.facet_drawn.get_xdata()) > 100
+              and not facet_ui.keep_button.isEnabled(),
+              f"{len(growing.facet_drawn.get_xdata())} cells on the map")
+
+        # A quarter of the square's width, and read out of the sentence rather
+        # than matched against a string: the window grows its own facet with the
+        # convergence applied, so its mask and the one measured above differ by
+        # a cell here and there and their medians by a metre. Which number it is
+        # was settled by the arithmetic; what this asserts is that the sentence
+        # carries it.
+        said_off = re.search(
+            r"median of (\d+) m from the trace", facet_ui.measured.text()
+        )
+        said_area = re.match(r"(\d+) ha over (\d+) cells", facet_ui.measured.text())
+
+        check("and what it says is the area, the waviness and the offset",
+              said_area is not None
+              and abs(int(said_area.group(1)) - square_ha) < 2.0
+              and "of waviness" in facet_ui.measured.text()
+              and said_off is not None
+              and abs(int(said_off.group(1))
+                      - (FACET_X[1] - FACET_X[0]) / 4.0) < 10.0,
+              facet_ui.measured.text().replace("\n", " ")[:104])
+
+        # The whole point of the window: the seed cannot corroborate the answer,
+        # because the answer is the cells within `tol` of the seed.
+        check("and the reading that grew it is marked as the one that grew it",
+              "grew it, so this angle is inside the tolerance"
+              in facet_ui.angles.text(),
+              facet_ui.angles.text()[:92])
+
+        facet_ui.sweep_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        moved = [
+            facet_ui.sweep_table.item(row, 3).text()
+            for row in range(facet_ui.sweep_table.rowCount())
+        ]
+
+        check("the ladder reports how far the plane moved, not only how big it got",
+              facet_ui.sweep_table.rowCount() == len(tool.FACET_RADII)
+              and set(moved) == {"0\N{DEGREE SIGN}"}
+              and "one surface, measured further out"
+              in growing.statusBar().currentMessage(),
+              f"moved {moved} -- {growing.statusBar().currentMessage()[:50]}")
+
+        # Now the licence, written through the window that writes it, which is
+        # also the one place the two are tested as the pipeline they are.
+        growing.open_exposure()
+        growing.exposure_panel.took_end(200.0)
+        growing.exposure_panel.took_end(600.0)
+        growing.exposure_panel.value.setCurrentText("exposed")
+        growing.exposure_panel.why.setText("dip slope, walked")
+        QtWidgets.QApplication.processEvents()
+        growing.exposure_panel.declare()
+        QtWidgets.QApplication.processEvents()
+
+        facet_ui.retarget()
+        facet_ui.seeds.selectRow(0)
+        facet_ui.grow_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("declared, the same reading becomes one a fit can be kept from",
+              "1 stretch declared exposed" in facet_ui.licence.text()
+              and facet_ui.keep_button.isEnabled()
+              and "200 to 600 m" in facet_ui.step.text(),
+              facet_ui.step.text()[-60:])
+
+        before_facet = growing.document.text_of(0)
+        facet_ui.keep_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        kept = [
+            line.strip()
+            for line in changed_lines(before_facet, growing.document.text_of(0))
+            if line.startswith("+")
+        ]
+
+        # Anchored over the licence and not over the region, which is this
+        # module's own conclusion: the facet is 400 m off the trace on both
+        # sides, so no projection of it onto the line is a claim anybody made.
+        check("and the fit is written over the declared stretch, not the region",
+              len(kept) == 1
+              and kept[0].startswith("+  fit plane @")
+              and f"from={facets_module.FROM_FACET}" in kept[0]
+              and f'licence="{facets_module.LICENCE}"' in kept[0],
+              kept[0][:96] if kept else "nothing written")
+
+        facet_fit = next(
+            fit
+            for fit in growing.document.dataset.structures[0].fits
+            if fit.attrs.get("from") == facets_module.FROM_FACET
+        )
+
+        check("over exactly the licensed metres, read back off the file",
+              abs(facet_fit.s0 - 200.0) < 1.0 and abs(facet_fit.s1 - 600.0) < 1.0,
+              f"{facet_fit.s0:.1f} to {facet_fit.s1:.1f} m")
+
+        check("carrying how far from the trace the surface it measured lies",
+              facet_fit.attrs.get("off") == f"{np.median(away):.0f}"
+              and int(facet_fit.attrs["offmax"]) >= 390
+              # Absent and not `rim=no`: the attribute is a warning, and an
+              # attribute saying a warning does not apply is a line carrying the
+              # warning's words with nothing to warn about.
+              and facet_fit.attrs.get("rim") is None
+              and facet_fit.attrs.get("seed") == "S1",
+              "; ".join(
+                  f"{key}={facet_fit.attrs.get(key)}"
+                  for key in ("off", "offmax", "rim", "seed", "tol", "radius")
+              ))
+
+        facet_ui.undo_button.click()
+        QtWidgets.QApplication.processEvents()
+
+        check("and Undo takes the fit back out",
+              not any(
+                  fit.attrs.get("from") == facets_module.FROM_FACET
+                  for fit in growing.document.dataset.structures[0].fits
+              ))
+
+        # A tolerance nothing can satisfy: the answer is that the surface is not
+        # morphology here, which is an answer and arrives as one.
+        facet_ui.tolerance.setValue(2)
+        facet_ui.seeds.selectRow(0)
+        QtWidgets.QApplication.processEvents()
+
+        narrow = facet_on(
+            seed_at, (0.0, 80.0), growing.panel.dem, radius=500.0
+        )
+
+        check("a plane the ground does not hold grows nothing, and says why",
+              narrow is None,
+              "something grew" if narrow else "nothing grew")
+
+        growing.facet_window.hide()
+        growing.exposure_window.hide()
+        growing.close()
 
         # -- what it will not open ----------------------------------------
 
