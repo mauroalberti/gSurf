@@ -182,6 +182,22 @@ before. A panel of widgets would have had to invent an order of operations the
 format already has. What the box is given is the block exactly as it stands in
 the file, path and all -- median six vertices over the 393 faults, longest 35,
 so there is nothing worth hiding and nothing hidden.
+
+**And the axis no producer can fill.** `exposure` is `unknown` on all 393
+structures of both files in this project, `reason=assente-in-sorgente`, because
+`geology.gpkg` has no such column and nothing computed can invent one. It is
+also the axis FORMAT.md hands the one judgement the diagnostics refuse: a fit
+that reproduces the hillside is `concorde-col-versante`, which is 17 of the 27
+fits in `merid_faults`, and whether that means *the surface is the fault* or
+*the trace was drawn along a scarp* is decided by this axis and by nothing else.
+So `ExposureHere` exists, and what it shows while the stretch is being picked is
+the hillside itself -- `hillside.hillside_on`, which is `drape` moved off the fit
+and onto a stretch somebody chose. It draws no conclusion from the angle, and
+the measurement is why: over those 27 traces the whole-trace corridor misses its
+own best plane by 7 to 210 times what nearest-cell sampling costs, so every
+`drape=` written in that file is an angle to a plane the ground does not hold.
+Shorten the stretch and the residual comes down. That is a thing to see while
+choosing where the claim goes, and not a threshold to be checked against.
 """
 
 from __future__ import annotations
@@ -226,6 +242,7 @@ from gsurf.curation import (
     reading_said,
     readings_in,
     rows_of,
+    span_line,
     stretch,
     with_attrs,
     with_ends_in_order,
@@ -240,6 +257,7 @@ from gsurf.fits import (
     fits_along,
     gate_for,
 )
+from gsurf.hillside import between, hillside_on
 from gsurf.planes import (
     FROM_STEERED,
     broken_path,
@@ -559,6 +577,24 @@ READING_COLUMNS = ("at", "reads", "answers over", "source", "the rest")
 
 # Narrower than the fit window and shorter: one table, no sweep, no steering.
 READING_WINDOW_PX = (560, 460)
+
+# The axis the exposure window writes on, and the one value on it with a
+# consequence past being read. FORMAT.md licenses a plane fitted to a facet on
+# `exposure=exposed` and on nothing else, so this is the word that turns a
+# calculation on -- which is why the table tints it and the step line names it.
+EXPOSURE_AXIS = "exposure"
+LICENSING = "exposed"
+EXPOSED_TINT = "#d9ead3"
+
+# What the exposure window shows about the spans already on that axis. `in force`
+# is the column the others are read through: the axis allows any number of
+# overlapping spans and the last one covering a metre wins, so a table without it
+# would list four lines of which one is answering and not say which.
+EXPOSURE_COLUMNS = ("from", "to", "says", "in force", "why")
+
+# Taller than the readings window by the evidence box, which is four lines of
+# text and the angles to whatever the stretch already carries.
+EXPOSURE_WINDOW_PX = (620, 640)
 
 # Below this, a stretch counts as claimed to the last metre rather than claimed
 # in part. A metre: two orders of magnitude above the two decimals an anchor is
@@ -4269,6 +4305,800 @@ class ReadingsHere(QtWidgets.QWidget):
         return True
 
 
+class ExposureHere(QtWidgets.QWidget):
+    """
+    Whether the contact crops out along a stretch, said by the only one who knows.
+
+    **The axis the source cannot fill.** `certainty` and `exposure` are what a
+    source says about a contact, and on these files one of them says nothing:
+    `exposure` is `unknown` on all 393 structures of `montealpi_01.gstruct` and
+    on all 393 of `merid_faults`, written `reason=assente-in-sorgente` because
+    `geology.gpkg` has no such column. The five `exposed` spans in this project
+    were typed into `curation.gstruct` by hand. That is the axis this window is
+    for, and the reason it is the fourth operation here rather than a fifth: the
+    `fit` on a dip slope, FORMAT.md's facet, is **licensed** by a span on it, and
+    without one the calculation has nothing to run on.
+
+    **What FORMAT.md asks of it.** `drape` -- the angle between a fitted plane
+    and the hillside the trace lies on -- classifies and does not reject, and the
+    document says why: the distinction between *a contact exhumed as a dip slope*
+    and *a trace digitised along a break of slope* is not statistical, it is
+    decided by this axis. 17 of the 27 fits in `merid_faults` came back
+    `concorde-col-versante`, so this is not a corner case; it is the state of
+    most of the file, and the thing that resolves it is a sentence a geologist
+    writes.
+
+    **So the hillside is shown and nothing is concluded from it.** `hillside_on`
+    reads the ground 30 and 60 m either side of the picked stretch and fits a
+    plane to it; the window prints that plane, how far it misses the cells, how
+    much relief it was fitted through, and the angle from it to every measurement
+    and every fit the stretch already carries, named one at a time. No threshold,
+    no verdict, no greyed-out button where the angle is large -- a hillside
+    parallel to a measured fault plane is exactly as consistent with the trace
+    having been drawn along a scarp, and the whole point of the axis is that only
+    a person can tell those apart. `vs_field` in `export_geology.py` is what
+    happens when a script tries: the angle it checked was the angle to the very
+    measurement that had grown the region, so the test could not fail.
+
+    **A correction is a line added.** `span_at` returns the *last* span covering
+    a metre, and the writing here goes above the `path`, which is below every
+    assertion already in the block -- so declaring a stretch narrows whatever
+    held over it without touching the line that held. Nothing in here removes a
+    span, and that is the format's own idiom rather than a missing button: the
+    general line stays in the file saying what the source said, and the reason it
+    no longer answers is readable as the line that came after it. The `in force`
+    column is where that is shown, and it is metres and not a tick, because a
+    span can be shadowed over part of itself.
+
+    **And it needs no DEM.** The declaration is a field observation; the hillside
+    is evidence, and evidence that is often absent -- 13 of the 393 traces of
+    `merid_faults` have no DEM under them at all. So the raster half of this
+    window can be empty with the other half still working, which is the same rule
+    the measurements window follows and for the same reason.
+    """
+
+    # The stretch to light on the map, as `(s0, s1)` or None. The same sink as
+    # the other two windows', `_show_fitting` being the one place that decides
+    # what a band on the map means.
+    showing = QtCore.pyqtSignal(object)
+
+    # That the next shift-click on the map is an end of this window's stretch.
+    # The third claimant on that gesture, so it is a held mode with a button that
+    # stays down, for the reason `ReadingsHere.point_wanted` gives.
+    ends_wanted = QtCore.pyqtSignal(bool)
+
+    said = QtCore.pyqtSignal(str)
+    wrote = QtCore.pyqtSignal()
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+
+        self.panel = panel
+
+        # The `span` rows of the open block that sit on this axis, in file order
+        # -- which is the order the rule reads them in. Never sorted, for
+        # `rows_of`'s reason.
+        self._in_file = []
+
+        # The picked ends as progressives, `(s0, s1)`, or None for the whole
+        # trace. Two numbers and not two anchors: the anchors are computed when
+        # the line is written, so that a second thought about which end is which
+        # does not need the clicks taken again.
+        self._ends = None
+
+        # What the first of two clicks left, until the second arrives.
+        self._first = None
+
+        # The last hillside read, against the stretch it was read for, so that
+        # retargeting does not reprint a plane measured somewhere else.
+        self._hillside = None
+        self._hillside_for = None
+
+        self.about = QtWidgets.QLabel()
+        self.about.setWordWrap(True)
+        self.about.setStyleSheet("font-weight: bold;")
+
+        self.rule = QtWidgets.QLabel(
+            "The last span covering a metre is the one in force, so a correction "
+            "on this axis is a line added and not a line changed -- what is "
+            "written here goes below everything already in the block."
+        )
+        self.rule.setWordWrap(True)
+        self.rule.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        self.table = QtWidgets.QTableWidget(0, len(EXPOSURE_COLUMNS))
+        self.table.setHorizontalHeaderLabels(EXPOSURE_COLUMNS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(False)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.table.itemSelectionChanged.connect(self._picked)
+
+        # -- the stretch -------------------------------------------------------
+
+        self.pick_ends = QtWidgets.QPushButton("Ends on the map")
+        self.pick_ends.setCheckable(True)
+        self.pick_ends.setToolTip(
+            "Then shift-click the two ends of the stretch on the map. Each click "
+            "is projected onto this trace; the pair is put in order when it is "
+            "written, because a span written backwards covers no ground."
+        )
+        self.pick_ends.toggled.connect(self._wanting)
+
+        self.whole = QtWidgets.QCheckBox("the whole trace")
+        self.whole.setToolTip(
+            "Writes the two ends as `*`, which is the format's word for an end "
+            "of the path and not a coordinate at it: redigitised past its old "
+            "end, the trace keeps the claim over all of itself.\n\n"
+            "This is what the source's own line says -- `* * unknown` -- so a "
+            "declaration over the whole trace is a statement about the whole "
+            "fault, which is rarely what a dip slope is."
+        )
+        self.whole.toggled.connect(self._whole_changed)
+
+        self.where = QtWidgets.QLabel()
+        self.where.setWordWrap(True)
+        self.where.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        picking = QtWidgets.QHBoxLayout()
+        picking.addWidget(self.pick_ends)
+        picking.addWidget(self.whole, stretch=1)
+
+        stretching = QtWidgets.QGroupBox("The stretch")
+        stretch_laid = QtWidgets.QVBoxLayout(stretching)
+        stretch_laid.addLayout(picking)
+        stretch_laid.addWidget(self.where)
+
+        # -- what the ground there looks like ----------------------------------
+
+        self.ground = QtWidgets.QLabel()
+        self.ground.setWordWrap(True)
+        self.ground.setStyleSheet("font-size: 11px;")
+
+        self.angles = QtWidgets.QLabel()
+        self.angles.setWordWrap(True)
+        self.angles.setStyleSheet("font-size: 11px; color: #333333;")
+
+        caveat = QtWidgets.QLabel(
+            "A hillside parallel to the plane here is what an exhumed dip slope "
+            "looks like, and also what a trace drawn along a break of slope "
+            "looks like. The angle cannot tell them apart; that is the judgement "
+            "this axis exists to record."
+        )
+        caveat.setWordWrap(True)
+        caveat.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        looking = QtWidgets.QGroupBox("The hillside beside that stretch")
+        look_laid = QtWidgets.QVBoxLayout(looking)
+        look_laid.addWidget(self.ground)
+        look_laid.addWidget(self.angles)
+        look_laid.addWidget(caveat)
+
+        # -- and the declaration ----------------------------------------------
+
+        self.value = QtWidgets.QComboBox()
+        self.value.addItems(list(module().EXPOSURE))
+        self.value.setToolTip(
+            "exposed: the surface crops out -- the one value that licenses a "
+            "plane fitted to the facet.\n"
+            "covered: it exists and is hidden under soil, scree or vegetation.\n"
+            "concealed: buried under younger units.\n"
+            "unknown: nobody has looked, which is not the same as covered."
+        )
+        self.value.currentIndexChanged.connect(self._tell)
+
+        self.why = QtWidgets.QLineEdit()
+        self.why.setPlaceholderText("what was seen, and where")
+        self.why.setToolTip(
+            "Goes into the line as reason=, word for word. The value says what, "
+            "and this says why -- which on this axis is the whole of the "
+            "evidence, the source having nothing to say about it at all."
+        )
+        self.why.textChanged.connect(self._tell)
+
+        self.declare_button = QtWidgets.QPushButton("Declare this stretch")
+        self.declare_button.setEnabled(False)
+        self.declare_button.clicked.connect(self.declare)
+
+        saying = QtWidgets.QGroupBox("Say it")
+        say_laid = QtWidgets.QVBoxLayout(saying)
+        valued = QtWidgets.QHBoxLayout()
+        valued.addWidget(QtWidgets.QLabel("exposure"))
+        valued.addWidget(self.value)
+        valued.addWidget(self.why, stretch=1)
+        say_laid.addLayout(valued)
+        say_laid.addWidget(self.declare_button)
+
+        self.undo_button = QtWidgets.QPushButton("Undo")
+        self.undo_button.setEnabled(False)
+        self.undo_button.setToolTip(
+            "Put the block back as it was before the last press that wrote in "
+            "it. Nothing reaches the file until Save."
+        )
+        self.undo_button.clicked.connect(self.undo_last)
+
+        self.step = QtWidgets.QLabel()
+        self.step.setWordWrap(True)
+        self.step.setStyleSheet("color: #6a6a6a; font-size: 11px;")
+
+        back = QtWidgets.QHBoxLayout()
+        back.addWidget(self.step, stretch=1)
+        back.addWidget(self.undo_button)
+
+        laid = QtWidgets.QVBoxLayout(self)
+        laid.addWidget(self.about)
+        laid.addWidget(self.rule)
+        laid.addWidget(self.table, stretch=1)
+        laid.addWidget(stretching)
+        laid.addWidget(looking)
+        laid.addWidget(saying)
+        laid.addLayout(back)
+
+        self.retarget()
+
+    # -- what the file says on this axis -----------------------------------
+
+    def _structure(self):
+        if self.panel.index is None:
+            return None
+
+        return self.panel.document.dataset.structures[self.panel.index]
+
+    def retarget(self):
+        """Points at whatever the panel has open, and reads the axis again."""
+
+        structure = self._structure()
+
+        self._in_file = []
+        self.table.clearContents()
+        self.table.setRowCount(0)
+
+        if structure is None:
+            self.about.setText("Nothing selected")
+            self._forget_stretch()
+
+            return
+
+        gstruct = module()
+
+        self.about.setText(
+            f"{structure.ident} -- {gstruct.path_length(structure.path):.0f} m"
+        )
+
+        self._in_file = [
+            row
+            for row in rows_of(
+                self.panel.document.text_of(self.panel.index), structure.path
+            )
+            if row.word == "span" and row.sort == EXPOSURE_AXIS
+        ]
+
+        self.table.setRowCount(len(self._in_file))
+
+        for row in range(len(self._in_file)):
+            self._write_row(row)
+
+        self.table.resizeColumnsToContents()
+        self._forget_stretch()
+
+    def _forget_stretch(self):
+        """The picked ends dropped, which a change of trace has to do.
+
+        Progressives on one trace are a different stretch on the next, and a
+        stretch kept across a selection would be a claim about ground nobody
+        picked -- silently, since the numbers would still read as metres.
+
+        `the whole trace` is left alone, and the difference is what each of them
+        is about: two progressives are about *that* trace, and the box is about
+        whichever one is open. Working down a list of faults declaring the whole
+        of each is a real session, and clearing the box on every row would be
+        this window forgetting the one thing that was not picked anywhere.
+        """
+
+        self._ends = None
+        self._first = None
+        self._hillside = None
+        self._hillside_for = None
+        self.pick_ends.setChecked(False)
+        self.showing.emit(None)
+        self._tell()
+
+    def _in_force(self, at):
+        """
+        How many metres of a span's own stretch are still answering, as
+        `(in force, its own length)`, or None.
+
+        `covered_metres` with the list turned round, which is that function's
+        own note: a span is shadowed by the spans written *after* it, a fit by
+        the ones written before. Taken by index and not by row, because two
+        identical lines are a thing these files hold and `list.index` would
+        answer about the first of them.
+        """
+
+        row = self._in_file[at]
+
+        if row.ends is None:
+            return None
+
+        shadowed = covered_metres(
+            row.ends, [one.ends for one in self._in_file[at + 1:]]
+        )
+
+        if shadowed is None:
+            return None
+
+        held = row.ends[1] - row.ends[0]
+
+        return max(0.0, held - shadowed), held
+
+    def _ends_said(self, claim):
+        """
+        The two ends as metres, with `*` marked where the file wrote one.
+
+        The number is where the end resolves to and the star is what it was
+        written as, and both are needed: `*` resolves to the path's end *now*,
+        so a column of numbers alone cannot tell a claim that follows the trace
+        from one pinned to where the trace happens to stop today.
+        """
+
+        if claim.ends is None:
+            return "", ""
+
+        written = claim.line.split()[ENDS_AT]
+
+        return tuple(
+            f"{metres:.0f} m"
+            + (" *" if len(written) > n and written[n] == "*" else "")
+            for n, metres in enumerate(claim.ends)
+        )
+
+    def _write_row(self, row):
+        claim = self._in_file[row]
+        attrs = claim.attrs or {}
+        force = self._in_force(row)
+
+        if force is None:
+            said = ""
+        elif force[1] <= 0.0:
+            # A pair written the wrong way round: it parses, it sits in the file
+            # looking like a decision, and `covers` is false everywhere on it.
+            said = "over no ground"
+        elif force[0] >= force[1] - FULLY_M:
+            said = "all of it"
+        elif force[0] <= FULLY_M:
+            said = "none of it"
+        else:
+            said = f"{force[0]:.0f} of {force[1]:.0f} m"
+
+        near, far = self._ends_said(claim)
+
+        cells = (
+            near,
+            far,
+            claim.value or "",
+            said,
+            attrs.get("reason", ""),
+        )
+
+        for column, text in enumerate(cells):
+            item = QtWidgets.QTableWidgetItem(text)
+
+            if column == 0:
+                item.setToolTip(claim.line.strip())
+
+            if column == 2 and claim.value == LICENSING:
+                # The one value with a consequence beyond being read, so it is
+                # the one value the table marks. Not a judgement about the line:
+                # a tint on the word `exposed` says where the licence is.
+                item.setBackground(QtGui.QColor(EXPOSED_TINT))
+
+            self.table.setItem(row, column, item)
+
+    def _picked(self):
+        """A row read back as the stretch it claims, lit on the map."""
+
+        picked = self.table.selectionModel()
+        rows = picked.selectedRows() if picked is not None else []
+
+        if not rows or rows[0].row() >= len(self._in_file):
+            return
+
+        claim = self._in_file[rows[0].row()]
+
+        self.showing.emit(claim.ends)
+
+    # -- the stretch -------------------------------------------------------
+
+    def wanting_ends(self):
+        """Whether the next shift-click on the map belongs to this window."""
+
+        return self.pick_ends.isChecked()
+
+    def half_picked(self):
+        """Whether one end is in and the other is still being waited for."""
+
+        return self._first is not None
+
+    def _wanting(self, on):
+        if on:
+            # A fresh pair, because that is what the button says: pressing it
+            # with one end already taken and keeping that end would make the
+            # next click finish a stretch somebody had stopped picking.
+            self._first = None
+            self._ends = None
+            self.whole.setChecked(False)
+            self.showing.emit(None)
+
+        self.ends_wanted.emit(bool(on))
+        self._tell()
+
+    def _whole_changed(self, on):
+        if on:
+            self.pick_ends.setChecked(False)
+            self._first = None
+            self._ends = None
+
+        self._hillside = None
+        self._hillside_for = None
+        self.showing.emit(self._stretch_now())
+        self._tell()
+
+    def took_end(self, s):
+        """One end of the stretch, as a progressive worked out on the map."""
+
+        structure = self._structure()
+
+        if structure is None:
+            return
+
+        if self._first is None:
+            self._first = float(s)
+            self._tell()
+
+            return
+
+        # Ordered here and not left to the writer, which is the one thing a click
+        # can settle that reading the line cannot: `covers` is `s0 <= s <= s1`, so
+        # a pair the wrong way round parses and holds over nothing. Two clicks
+        # have no order to lose -- the first is wherever the hand started.
+        self._ends = tuple(sorted((self._first, float(s))))
+        self._first = None
+        self._hillside = None
+        self._hillside_for = None
+        self.pick_ends.setChecked(False)
+        self.showing.emit(self._ends)
+        self._tell()
+
+    def _stretch_now(self):
+        """The stretch the next press would claim, as `(s0, s1)`, or None."""
+
+        structure = self._structure()
+
+        if structure is None:
+            return None
+
+        if self.whole.isChecked():
+            return 0.0, module().path_length(structure.path)
+
+        return self._ends
+
+    def _placed_said(self):
+        """Where the next press would claim, in metres and in the file's words."""
+
+        structure = self._structure()
+
+        if structure is None:
+            return ""
+
+        if self.whole.isChecked():
+            return (
+                f"the whole of {structure.ident}, written `* *` -- the two ends "
+                f"of the path and not coordinates at them"
+            )
+
+        if self._first is not None:
+            return f"one end at {self._first:.0f} m; shift-click the other"
+
+        if self._ends is None:
+            return ""
+
+        s0, s1 = self._ends
+
+        return (
+            f"{s0:.0f} to {s1:.0f} m -- {s1 - s0:.0f} m of trace, anchored at "
+            f"both ends"
+        )
+
+    # -- the ground there --------------------------------------------------
+
+    def _read_hillside(self):
+        """
+        The plane of the ground beside the picked stretch, read once per stretch.
+
+        Cached against the stretch rather than recomputed on every keystroke in
+        the reason box: it is a raster read over the corridor's bounds, and the
+        box is typed in a word at a time.
+        """
+
+        stretch_at = self._stretch_now()
+        structure = self._structure()
+
+        if stretch_at is None or structure is None:
+            return None
+
+        for_now = (self.panel.index, stretch_at)
+
+        if for_now == self._hillside_for:
+            return self._hillside
+
+        self._hillside_for = for_now
+        self._hillside = None
+
+        if self.panel.dem is None or self.panel.dem_said:
+            return None
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtGui.QCursor(QtCore.Qt.CursorShape.WaitCursor)
+        )
+        try:
+            self._hillside = hillside_on(
+                stretch(structure.path, *stretch_at),
+                self.panel.dem,
+                convergence=self.panel.convergence,
+            )
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        return self._hillside
+
+    def _ground_said(self):
+        """The hillside in words, or why there is none to say anything about."""
+
+        if self._stretch_now() is None:
+            return ""
+
+        if self.panel.dem is None or self.panel.dem_said:
+            return (
+                "No DEM here, so nothing about the ground. The declaration does "
+                "not need one: this is evidence, not a condition."
+            )
+
+        got = self._read_hillside()
+
+        if got is None:
+            return (
+                "No DEM under this stretch, or not enough of one to fit a plane "
+                "to -- the corridor fell on nodata or off the raster."
+            )
+
+        return (
+            f"the ground dips {got.dip_dir:.0f}/{got.dip:.0f}"
+            + (
+                f" ({got.converg:+.2f} of convergence taken off)"
+                if got.north == "true" else " from grid north"
+            )
+            + f", fitted to {got.n} cells "
+            + " and ".join(
+                f"{offset:.0f}"
+                for offset in sorted({abs(one) for one in got.across})
+            )
+            + " m either side of the trace.\n"
+            f"It misses them by {got.rms:.1f} m, "
+            + self._residual_said(got)
+            + f", over {got.relief:.0f} m of relief."
+        )
+
+    @staticmethod
+    def _residual_said(got):
+        """
+        What the residual is large *against*, which is the only way to read it.
+
+        The ratio and not the two numbers side by side, because the division is
+        the sentence: over the 27 traces of `merid_faults` the whole-trace
+        corridor misses its own best plane by 7 to 210 times what the sampling
+        costs, so every `drape=` in that file is an angle to a plane the ground
+        does not hold. Which is a thing to see while picking a stretch, and the
+        stretch is the one variable that moves it.
+        """
+
+        floor = got.sampling_rms
+
+        if floor <= 0.05:
+            # A slope near flat, where the quotient is meaningless rather than
+            # large: the floor is what half a cell of plan error does to height,
+            # and on level ground it does nothing.
+            return (
+                f"against the {floor:.2f} m that reading cells at their centres "
+                f"costs on ground this flat"
+            )
+
+        ratio = got.rms / floor
+
+        # A decimal below ten and none above it. `423.8x` is a tenth of a
+        # multiple of a tenth of a metre, which is three digits of nothing, and
+        # `1x` is the one place the decimal carries the answer -- a residual at
+        # the floor is a hillside that is a plane.
+        return (
+            f"which is {ratio:.1f}x" if ratio < 10.0 else f"which is {ratio:.0f}x"
+        ) + (
+            f" the {floor:.1f} m that reading cells at their centres costs on "
+            f"a slope this steep"
+        )
+
+    def _angles_said(self):
+        """
+        The angle from the hillside to each plane the stretch already carries.
+
+        Named one at a time and not averaged, which is the lesson of S22 and S25:
+        two readings 30 m apart differ by 14 degrees, so a mean of the planes
+        along a stretch is a number no outcrop has, and an angle to that mean
+        would be an angle to nothing.
+        """
+
+        got = self._read_hillside()
+        stretch_at = self._stretch_now()
+        structure = self._structure()
+
+        if got is None or stretch_at is None or structure is None:
+            return ""
+
+        s0, s1 = stretch_at
+        told = []
+
+        for attitude in structure.attitudes:
+            if attitude.s is None or attitude.plane is None:
+                continue
+
+            if s0 <= attitude.s <= s1:
+                named = attitude.attrs.get("station") or "a reading"
+                told.append(
+                    f"{named} {attitude.plane} is "
+                    f"{between(got.plane, (attitude.plane.dip_dir, attitude.plane.dip)):.0f}"
+                    f"\N{DEGREE SIGN} off it"
+                )
+
+        for fit in structure.fits:
+            if fit.plane is None:
+                continue
+
+            at0 = 0.0 if fit.s0 is None else fit.s0
+            at1 = structure.length if fit.s1 is None else fit.s1
+
+            if at1 < s0 or at0 > s1:
+                continue
+
+            told.append(
+                f"the {fit.attrs.get('from', 'fit')} fit {fit.plane} is "
+                f"{between(got.plane, (fit.plane.dip_dir, fit.plane.dip)):.0f}"
+                f"\N{DEGREE SIGN} off it"
+            )
+
+        if not told:
+            return "Nothing is claimed over this stretch to compare it with."
+
+        return "; ".join(told) + "."
+
+    # -- the press ---------------------------------------------------------
+
+    def _tell(self):
+        """What is missing before a press can happen, and the press's state."""
+
+        stretch_at = self._stretch_now()
+        why = self.why.text().strip()
+        open_here = self.panel.index is not None
+
+        self.pick_ends.setEnabled(open_here)
+        self.whole.setEnabled(open_here)
+        self.declare_button.setEnabled(
+            open_here and stretch_at is not None and bool(why)
+        )
+        self.undo_button.setEnabled(self.panel.may_undo())
+        self.where.setText(self._placed_said())
+        self.ground.setText(self._ground_said())
+        self.angles.setText(self._angles_said())
+        self.step.setText(self._step_said(stretch_at, why, open_here))
+
+    def _step_said(self, stretch_at, why, open_here):
+        """One line about whichever half of the gesture is still missing."""
+
+        if not open_here:
+            return ""
+
+        if self._first is not None:
+            return "Shift-click the other end of the stretch."
+
+        if self.wanting_ends():
+            return "Shift-click the two ends of the stretch on the map."
+
+        if stretch_at is None:
+            return (
+                "Pick the stretch this says something about -- two ends on the "
+                "map, or the whole trace."
+            )
+
+        if not why:
+            return (
+                "Say what was seen. It goes in the line as reason=, and on this "
+                "axis it is the only evidence there will ever be: the source has "
+                "none."
+            )
+
+        value = self.value.currentText()
+
+        if value == LICENSING:
+            return (
+                "`Declare this stretch` writes it, and a plane fitted to the "
+                "facet becomes possible over that ground."
+            )
+
+        return "`Declare this stretch` writes it below the lines already there."
+
+    def declare(self):
+        """The picked stretch declared, as one `span` line in the block."""
+
+        stretch_at = self._stretch_now()
+        structure = self._structure()
+        why = self.why.text().strip()
+
+        if stretch_at is None or structure is None or not why:
+            return False
+
+        if self.whole.isChecked():
+            # `*`, and not the coordinates of the path's two ends: the token goes
+            # on meaning *the end of the path*, so the claim follows a trace that
+            # is redigitised instead of stopping where it used to stop.
+            start, end = None, None
+        else:
+            start, end = (
+                point_on(structure.path, stretch_at[0]),
+                point_on(structure.path, stretch_at[1]),
+            )
+
+        line = span_line(
+            EXPOSURE_AXIS,
+            self.value.currentText(),
+            start,
+            end,
+            {"src": "gsurf", "reason": why},
+        )
+        refused = self.panel.insert_claim(line)
+
+        if refused is not None:
+            self.said.emit(refused)
+
+            return False
+
+        self.said.emit(
+            f"declared {line.strip()} -- Undo takes it out, Save writes the file"
+        )
+
+        self.why.clear()
+        self.showing.emit(None)
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+    def undo_last(self):
+        """The block before the last press that wrote in it, put back."""
+
+        if not self.panel.undo_applied():
+            return False
+
+        self.said.emit("the block is back as it was before the last press")
+        self.wrote.emit()
+        self.retarget()
+
+        return True
+
+
 class FitFromDem(QtWidgets.QWidget):
     """
     Reading the topography along one trace: press, look at what came out, keep it.
@@ -5585,6 +6415,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_panel.showing.connect(self._show_fitting)
         self.readings_panel.said.connect(self.say)
         self.readings_panel.wrote.connect(self._readings_wrote)
+        self.readings_panel.point_wanted.connect(self._readings_want_point)
 
         self.readings_window = SatelliteWindow(
             "gSurf - measurements along this trace",
@@ -5593,6 +6424,24 @@ class EditorWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self._readings_placed = False
+
+        # The third of these, on the axis neither of the other two can touch. Its
+        # band goes to the same sink for the same reason, and it writes through
+        # the same `insert_claim`: what is different is only that what it claims
+        # is a stretch of ground rather than a plane.
+        self.exposure_panel = ExposureHere(self.panel)
+        self.exposure_panel.showing.connect(self._show_fitting)
+        self.exposure_panel.said.connect(self.say)
+        self.exposure_panel.wrote.connect(self._exposure_wrote)
+        self.exposure_panel.ends_wanted.connect(self._exposure_wants_ends)
+
+        self.exposure_window = SatelliteWindow(
+            "gSurf - exposure along this trace",
+            self.exposure_panel,
+            EXPOSURE_WINDOW_PX,
+            parent=self,
+        )
+        self._exposure_placed = False
 
         self.save_button = QtWidgets.QPushButton("Save")
         self.save_button.setToolTip(
@@ -5724,6 +6573,15 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_action.triggered.connect(self.open_readings)
         reading.addAction(self.readings_action)
 
+        # Never greyed either, and the argument is stronger here than for the
+        # readings: this one asserts a field observation, and the DEM in it is
+        # evidence beside the assertion rather than a condition on it. A session
+        # with no raster can still record that a contact crops out.
+        self.exposure_action = QtGui.QAction("&Exposure along this trace...", self)
+        self.exposure_action.setShortcut("Ctrl+E")
+        self.exposure_action.triggered.connect(self.open_exposure)
+        reading.addAction(self.exposure_action)
+
         # Greyed for the reason the button is greyed, and off the same answer
         # rather than a second copy of it: a menu entry that opens a window with
         # a refusal in it costs the gesture before it answers, and two places
@@ -5806,6 +6664,73 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.readings_window.show()
         self.readings_window.raise_()
         self.readings_window.activateWindow()
+
+    def open_exposure(self):
+        """
+        Brings up the exposure window on the selected trace.
+
+        Retargeted on every opening, like the readings window and unlike the fit
+        window: what it holds is the file's own spans, so reading them again is
+        free, and the picked stretch is the one thing worth keeping -- which
+        `retarget` drops, because a stretch picked before the window was last
+        closed is two progressives nobody is looking at any more.
+        """
+
+        self.exposure_panel.retarget()
+        self._place_exposure()
+        self.exposure_window.show()
+        self.exposure_window.raise_()
+        self.exposure_window.activateWindow()
+
+    def _exposure_wrote(self):
+        """A declared stretch reaches everything else that draws the block."""
+
+        # The band, the lanes and the row all read the model, and a span changes
+        # what the lanes draw on this axis -- which is the picture this window
+        # exists to put something into.
+        self.fit_panel.retarget()
+        self.readings_panel.retarget()
+        self._tell_next()
+
+    def _exposure_wants_ends(self, on):
+        """Arming one claimant on the shift-click disarms the other.
+
+        Two modes held at once would leave `_on_map_pressed` deciding which of
+        them a click belongs to by the order of its branches, which is the thing
+        that function's own comment refuses to do. So the exclusivity is here,
+        where it is a sentence: the last button pressed is the one that is armed.
+        """
+
+        if on:
+            self.readings_panel.pick_point.setChecked(False)
+
+    def _readings_want_point(self, on):
+        """The same rule the other way round. See `_exposure_wants_ends`."""
+
+        if on:
+            self.exposure_panel.pick_ends.setChecked(False)
+
+    def _place_exposure(self):
+        """Offset further in again, so the three do not land as one."""
+
+        if self._exposure_placed:
+            return
+
+        self._exposure_placed = True
+
+        available = self.screen().availableGeometry()
+        frame = self.frameGeometry()
+
+        self.exposure_window.move(
+            min(
+                frame.left() + FIT_OFFSET_PX[0] * 3,
+                available.right() - self.exposure_window.width(),
+            ),
+            min(
+                frame.top() + FIT_OFFSET_PX[1] * 3,
+                available.bottom() - self.exposure_window.height(),
+            ),
+        )
 
     def _readings_wrote(self):
         """A detachment reaches everything else that draws the block."""
@@ -6372,6 +7297,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         # a list lost to a click that changed nothing.
         self.fit_panel.retarget()
         self.readings_panel.retarget()
+
+        # And this one has more than a list to drop: its picked ends are
+        # progressives, which on the next trace are a different stretch. See
+        # `_forget_stretch`.
+        self.exposure_panel.retarget()
 
         # Said last, because every line of it is about this trace: which one is
         # open is the first thing the next step depends on.
@@ -7524,7 +8454,48 @@ class EditorWindow(QtWidgets.QMainWindow):
 
             return
 
+        # The third claimant, and the two cannot both be armed -- see
+        # `_exposure_wants_ends`, which is where that is enforced rather than
+        # here, so this branch's place in the order decides nothing.
+        if shifted and self.exposure_panel.wanting_ends():
+            self._end_for_exposure(x, y)
+
+            return
+
         self.pick(x, y, anchor=shifted)
+
+    def _end_for_exposure(self, x, y):
+        """A click sent to the exposure window as a progressive on this trace.
+
+        The progressive and not the point, which is the difference from
+        `_point_for_reading`: a reading is *at* a place and its distance off the
+        trace is part of what it says, where an end of a span is a place *along*
+        one and has no off-trace meaning at all -- `Span.resolve` projects it and
+        keeps nothing else. So the projection happens here and the anchor is
+        written from it at the press.
+        """
+
+        if self.index is None:
+            self.say("nothing selected to pick a stretch on")
+            return
+
+        structure = self.document.dataset.structures[self.index]
+
+        if len(structure.path) < 2:
+            self.say(f"{structure.ident} has no path to pick a stretch on")
+            return
+
+        s, off = place_on(structure.path, *self.in_file(x, y))
+        first = not self.exposure_panel.half_picked()
+
+        self.exposure_panel.took_end(s)
+
+        self.say(
+            f"{'one end' if first else 'the other end'} at {s:.0f} m along "
+            f"{structure.ident}"
+            + (f", {off:.0f} m from where you clicked" if off > SAME_OUTCROP_M else "")
+            + ("  -- shift-click the other" if first else "")
+        )
 
     def _point_for_reading(self, x, y):
         """A click sent to the measurements window as it landed, with its distance.

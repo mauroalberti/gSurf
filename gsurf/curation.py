@@ -1254,6 +1254,35 @@ def reading_line(x, y, dip_dir, dip, attrs=None, indent="  "):
     )
 
 
+def span_line(axis, value, start, end, attrs=None, indent="  "):
+    """
+    One `span` as the line a file holds, with `*` where an end is the path's own.
+
+    `reading_line`'s sibling, built out of `gstruct._a` and `gstruct._kw` for that
+    function's reason: two spellings of a quoted value are two spellings that
+    drift, and a `reason=` written by a curator is the attribute in these files
+    most likely to hold a space.
+
+    `None` for an end is the format's `*`, which `_a` already writes -- and the
+    difference between `* *` and two anchors at the path's two ends is not
+    cosmetic. `*` goes on reading as *the end of the path*, so a trace
+    redigitised past its old end keeps the span over the whole of it, where two
+    computed anchors would stop the claim where the trace used to stop.
+
+    Nothing is validated here. The vocabularies are `gstruct.CERTAINTY`,
+    `EXPOSURE` and `USE`, the parser checks none of them, and the place to hold a
+    value to one of them is the window that offers the choice -- a writer that
+    refused would refuse a file this format allows.
+    """
+
+    gstruct = module()
+
+    return (
+        f"{indent}span {axis} {gstruct._a(start)} {gstruct._a(end)} {value}"
+        f"{gstruct._kw(attrs or {})}"
+    )
+
+
 def detachment_note(row, why, today, indent="  "):
     """
     The comment lines that stand where a detached reading stood.
@@ -1321,6 +1350,16 @@ def covered_metres(ends, earlier):
     `earlier` holds intervals as the file wrote them, including None and
     including reversed pairs, both of which claim nothing and are dropped here:
     a line that holds over no ground cannot shadow one that does.
+
+    **The same arithmetic serves a `span`, with the list turned round**, and that
+    is worth saying here because the two rules are opposite and only one of them
+    is written in FORMAT.md. `attitude_at` takes the **first** fit covering a
+    progressive; `span_at` takes the **last** span covering one, documented with
+    its reason -- a local correction is written by adding a line over the general
+    one. So a fit is shadowed by what came before it and a span by what comes
+    after it, and a caller asking how much of a span is in force passes the spans
+    *below* it in the block. What this function knows is only how much of one
+    interval a set of others covers; which set that is, is the rule.
     """
 
     if ends is None:

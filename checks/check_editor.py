@@ -4723,6 +4723,272 @@ def main():
 
         fitting.fit_window.hide()
 
+        # -- the axis the source cannot fill ------------------------------
+
+        print("\n-- exposure, said along a stretch --\n")
+
+        from gsurf.hillside import between, hillside_on
+
+        # The arithmetic first, away from the window, on the one DEM whose answer
+        # is known in closed form: it *is* a plane at 30 degrees dipping due east,
+        # so the hillside beside any stretch of any trace on it has to be that
+        # plane and nothing else. In grid azimuth, which is how the raster was
+        # built -- the same reason the steering's own check sets its dial to 90
+        # plus the convergence.
+        vee = fitting.document.dataset.structures[rows["VEE"]]
+        limb = stretch(vee.path, 200.0, 900.0)
+        hill = hillside_on(limb, panel.dem)
+
+        check("the hillside beside a stretch of trace is the plane the DEM is",
+              hill is not None
+              and between(hill.plane, (RELIEF_DIP_DIR, RELIEF_DIP)) < 0.05,
+              "nothing read" if hill is None else
+              f"{hill.dip_dir:.3f}/{hill.dip:.3f} against "
+              f"{RELIEF_DIP_DIR:.0f}/{RELIEF_DIP:.0f}, "
+              f"{between(hill.plane, (RELIEF_DIP_DIR, RELIEF_DIP)):.3f} deg apart")
+
+        # And the residual is not zero and must not be read as waviness. A cell is
+        # read at its centre, so a sample is up to half a cell off in plan, which
+        # on a slope is half a cell of height: over an exactly planar DEM that
+        # alone is 0.8 m at 5 m and 30 degrees. `sampling_rms` is the number `rms`
+        # is small *against*, and without it a planar hillside reads as three
+        # quarters of a metre of relief that is not in the ground.
+        check("its residual is the sampling and not the ground",
+              hill is not None
+              and 0.3 < hill.rms < hill.sampling_rms
+              and hill.relief > 100.0,
+              "nothing read" if hill is None else
+              f"rms {hill.rms:.2f} m against {hill.sampling_rms:.2f} m of "
+              f"sampling, over {hill.relief:.0f} m of relief")
+
+        # Convergence, for the reason every computed plane in this program carries
+        # it: the fit is on projected coordinates and so dips from grid north,
+        # and the file it is read beside holds compass readings.
+        turned = hillside_on(limb, panel.dem, convergence=fitting.session.convergence)
+
+        check("and it is turned to true north, by the convergence it writes down",
+              turned is not None
+              and turned.north == "true"
+              and abs(turned.dip_dir - (hill.dip_dir + turned.converg)) < 1e-6
+              and abs(turned.converg) > 0.1,
+              "nothing read" if turned is None else
+              f"{hill.dip_dir:.3f} grid, {turned.dip_dir:.3f} true, "
+              f"converg {turned.converg:+.3f}")
+
+        check("and nothing at all where the corridor has no DEM under it",
+              hillside_on([(X0 + 90000.0, Y0), (X0 + 91000.0, Y0)], panel.dem)
+              is None
+              and hillside_on(limb, None) is None)
+
+        # -- and the window that writes it ---------------------------------
+
+        # Opened on EAST, which is the trace nothing in this check has ever
+        # written a line to: the window's empty state is a state, and VEE by now
+        # carries four fits off three different producers.
+        fitting.select(rows["EAST"])
+        fitting.open_exposure()
+        QtWidgets.QApplication.processEvents()
+
+        exposure_ui = fitting.exposure_panel
+
+        check("a trace with nothing on the axis opens with nothing on it",
+              exposure_ui.table.rowCount() == 0
+              and not exposure_ui.declare_button.isEnabled()
+              and "Pick the stretch" in exposure_ui.step.text(),
+              exposure_ui.step.text()[:60])
+
+        # `* *`, which is what the source's own line says, and the one claim here
+        # that is about a whole fault rather than a stretch of one.
+        exposure_ui.whole.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        check("the whole trace is still not enough: the reason is the evidence",
+              not exposure_ui.declare_button.isEnabled()
+              and "Say what was seen" in exposure_ui.step.text(),
+              exposure_ui.step.text()[:60])
+
+        # The evidence, in the window rather than out of `hillside_on`: the
+        # window is the thing a curator reads, and a plane computed right and
+        # printed wrong is the same mistake as a plane computed wrong.
+        check("and the hillside is printed where the stretch is picked",
+              f"/{RELIEF_DIP:.0f}" in exposure_ui.ground.text()
+              and "convergence taken off" in exposure_ui.ground.text()
+              and "of relief" in exposure_ui.ground.text()
+              # The residual against the floor and not beside it: the division is
+              # the sentence, and over the real traces of `merid_faults` it runs
+              # to 210x, which is the number that says the corridor is no plane.
+              and "x the" in exposure_ui.ground.text(),
+              exposure_ui.ground.text().replace("\n", " ")[-96:])
+
+        # EAST carries no plane of any kind, so there is nothing to be off by, and
+        # that is said rather than left as an empty line.
+        check("with nothing claimed along it to compare it with",
+              "Nothing is claimed over this stretch" in exposure_ui.angles.text(),
+              exposure_ui.angles.text()[:60])
+
+        # And the declaring happens on VEE, which is the trace the stretches
+        # below are picked along.
+        fitting.select(rows["VEE"])
+        exposure_ui.whole.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        exposure_ui.why.setText("bedrock dip slope, walked from the saddle")
+        exposure_ui.value.setCurrentText("exposed")
+        QtWidgets.QApplication.processEvents()
+
+        check("and `exposed` says what it unlocks, which is the point of the axis",
+              exposure_ui.declare_button.isEnabled()
+              and "facet" in exposure_ui.step.text(),
+              exposure_ui.step.text()[:72])
+
+        before_exposure = fitting.document.text_of(rows["VEE"])
+        wrote_whole = exposure_ui.declare()
+        QtWidgets.QApplication.processEvents()
+
+        written_lines = changed_lines(
+            before_exposure, fitting.document.text_of(rows["VEE"])
+        )
+
+        check("one press writes one span, over the path's own two ends",
+              wrote_whole
+              and len(written_lines) == 1
+              and written_lines[0].startswith("+  span exposure * * exposed")
+              and "reason=" in written_lines[0],
+              "; ".join(line.strip() for line in written_lines)[:92])
+
+        check("and the table reads it back, marking the ends it did not pin",
+              exposure_ui.table.rowCount() == 1
+              and exposure_ui.table.item(0, 0).text().endswith("*")
+              and exposure_ui.table.item(0, 1).text().endswith("*")
+              and exposure_ui.table.item(0, 3).text() == "all of it",
+              " | ".join(
+                  exposure_ui.table.item(0, column).text()
+                  for column in range(exposure_ui.table.columnCount())
+              )[:92])
+
+        # Two clicks, the second before the first along the trace. `covers` is
+        # `s0 <= s <= s1`, so a pair left as it arrived would parse, apply, and
+        # hold over no ground at all -- which is the one kind of wrong a stretch
+        # can be and still look like a decision.
+        exposure_ui.pick_ends.setChecked(True)
+        exposure_ui.took_end(900.0)
+        exposure_ui.took_end(300.0)
+        QtWidgets.QApplication.processEvents()
+
+        check("two clicks the wrong way round make a stretch the right way round",
+              exposure_ui._stretch_now() == (300.0, 900.0)
+              and not exposure_ui.pick_ends.isChecked()
+              and "300 to 900 m" in exposure_ui.where.text(),
+              exposure_ui.where.text()[:72])
+
+        exposure_ui.why.setText("scree over the contact below the saddle")
+        exposure_ui.value.setCurrentText("covered")
+        QtWidgets.QApplication.processEvents()
+
+        wrote_part = exposure_ui.declare()
+        QtWidgets.QApplication.processEvents()
+
+        # The whole argument of the window, as the file sees it: the general line
+        # is untouched and has stopped answering over 600 m, because a later line
+        # covers them. `span_at` is the rule and this is it holding.
+        vee_now = fitting.document.dataset.structures[rows["VEE"]]
+        at_middle = vee_now.span_at("exposure", 600.0)
+        at_far = vee_now.span_at("exposure", vee_now.length - 10.0)
+
+        check("a correction is a line added, and the general one keeps saying it",
+              wrote_part
+              and len(vee_now.spans) == 2
+              and at_middle is not None and at_middle.value == "covered"
+              and at_far is not None and at_far.value == "exposed",
+              f"{len(vee_now.spans)} span(s); at 600 m "
+              f"{None if at_middle is None else at_middle.value}, at the far end "
+              f"{None if at_far is None else at_far.value}")
+
+        check("and the table says how much of the shadowed one is left",
+              exposure_ui.table.rowCount() == 2
+              and exposure_ui.table.item(1, 3).text() == "all of it"
+              and " of " in exposure_ui.table.item(0, 3).text()
+              and exposure_ui.table.item(0, 3).text() != "all of it",
+              f"the general one: {exposure_ui.table.item(0, 3).text()}; "
+              f"the correction: {exposure_ui.table.item(1, 3).text()}")
+
+        undone = exposure_ui.undo_last()
+        QtWidgets.QApplication.processEvents()
+
+        check("and Undo takes the press back, not the line before it",
+              undone
+              and len(fitting.document.dataset.structures[rows["VEE"]].spans) == 1
+              and exposure_ui.table.rowCount() == 1,
+              f"{exposure_ui.table.rowCount()} row(s) left")
+
+        # The angle, on the one trace of the fixture that already carries a plane:
+        # TAKEN holds `fit plane * * 100/40 from=table`, and the hillside under it
+        # is the DEM's own 90/30. The number is a closed form and is checked as
+        # one -- what the window must not do is average two planes into a
+        # comparison, which is the lesson of two readings 30 m apart differing by
+        # 14 degrees.
+        fitting.select(rows["TAKEN"])
+        exposure_ui.whole.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        apart = between(
+            (RELIEF_DIP_DIR + fitting.session.convergence.at(*vee.path[0]), RELIEF_DIP),
+            (100.0, 40.0),
+        )
+
+        check("a plane the stretch already carries is named, with its angle to it",
+              "table fit" in exposure_ui.angles.text()
+              and f"{apart:.0f}\N{DEGREE SIGN} off it" in exposure_ui.angles.text(),
+              exposure_ui.angles.text()[:92])
+
+        # And the angle decides nothing, which is said on screen beside it. The
+        # button is enabled by a stretch and a sentence and by neither of those
+        # numbers; FORMAT.md's own rule is that the distinction between an
+        # exhumed dip slope and a trace drawn along a scarp is not statistical.
+        caveats = [
+            widget.text()
+            for widget in exposure_ui.findChildren(QtWidgets.QLabel)
+            if "break of slope" in widget.text()
+        ]
+
+        check("and the window says the angle cannot settle what the axis records",
+              len(caveats) == 1
+              and "cannot tell them apart" in caveats[0],
+              (caveats[0] if caveats else "nothing said")[-72:])
+
+        # One armed mode at a time. Two claimants on the shift-click would leave
+        # `_on_map_pressed` deciding which of them a click belongs to by the order
+        # of its branches, which is what that function's comment refuses to do.
+        exposure_ui.whole.setChecked(False)
+        exposure_ui.pick_ends.setChecked(True)
+        fitting.readings_panel.pick_point.setChecked(True)
+        QtWidgets.QApplication.processEvents()
+
+        check("arming the other window's click disarms this one",
+              not exposure_ui.pick_ends.isChecked()
+              and fitting.readings_panel.wanting_point())
+
+        fitting.readings_panel.pick_point.setChecked(False)
+        exposure_ui.pick_ends.setChecked(True)
+        exposure_ui.took_end(100.0)
+        QtWidgets.QApplication.processEvents()
+
+        half = exposure_ui.half_picked()
+
+        fitting.select(rows["EAST"])
+        QtWidgets.QApplication.processEvents()
+
+        # A progressive is a measure along *one* trace. Kept across a selection it
+        # would be a stretch of ground nobody picked, and silently, the numbers
+        # still reading as metres.
+        check("and a change of trace drops a half-picked stretch rather than moving it",
+              half
+              and not exposure_ui.half_picked()
+              and exposure_ui._stretch_now() is None
+              and not exposure_ui.declare_button.isEnabled())
+
+        fitting.exposure_window.hide()
+
         fitting.close()
 
         # -- what it will not open ----------------------------------------

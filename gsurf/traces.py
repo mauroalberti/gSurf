@@ -558,8 +558,15 @@ def _resample(coords, step):
     )
 
 
-def _elevations(window, xs, ys):
-    """Nearest-cell elevations out of an already-read window."""
+def elevations(window, xs, ys):
+    """
+    Nearest-cell elevations out of an already-read window.
+
+    Public because `hillside` reads a corridor beside a trace and has to read it
+    the same way the trace itself is read: the drape is an angle between two
+    planes sampled off one DEM, and two nearest-cell rules -- one here, one
+    there -- would put a systematic half-cell of relief into the comparison.
+    """
 
     origin_x, pixel_w, _, origin_y, _, pixel_h = window.geotransform
 
@@ -625,7 +632,7 @@ def trace_points(lines, dem, step=10.0, margin=50.0):
             continue
 
         xy, s = resampled
-        z = _elevations(window, xy[:, 0], xy[:, 1])
+        z = elevations(window, xy[:, 0], xy[:, 1])
 
         # The progressive advances over the whole part, including the stretches
         # that fell on nodata: it measures the trace, not the samples kept off
@@ -653,7 +660,7 @@ def draped_length(path, dem, step=None, margin=50.0):
     and the step it was walked at, and it does not converge: measured on the 393
     faults of `merid_faults` against the 5 m DTM, the total comes to 634 km at a
     50 m step, 654 km at 5 m, and 685 km at 2.5 m. The last of those is not finer
-    relief, it is the same cells counted twice -- `_elevations` reads the nearest
+    relief, it is the same cells counted twice -- `elevations` reads the nearest
     cell, so below the cell size every sample pair straddling a cell boundary
     adds a staircase riser that is an artefact of the grid. Which is why the step
     defaults to the DEM's own cell and the caller is expected to say so: a
