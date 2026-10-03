@@ -8560,9 +8560,13 @@ class EditorWindow(QtWidgets.QMainWindow):
         # nobody. They are the reason an entry is grey, they are set on the
         # entry, and Qt's default is to drop them on the floor.
         #
-        # Worth checking on a *disabled* entry when this is touched, because
-        # that is the whole case: a grey door with no reason beside it is the
-        # thing being fixed, and some styles do not hover a disabled item.
+        # Check this on a *disabled* entry when it is touched, because that is
+        # the whole case -- a grey door with no reason beside it is the thing
+        # being fixed -- and some styles do not hover a disabled item at all.
+        # Checked by hand on X11 under the desktop default: the grey `Fits...`
+        # does show its reason. A check cannot say that much, since offscreen
+        # has no style to answer for, so the one next to this asserts only that
+        # the flag is set and that each refusal is on its own entry.
         trace.setToolTipsVisible(True)
 
         self.fit_action = QtGui.QAction("&Fits...", self)
