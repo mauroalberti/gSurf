@@ -42,13 +42,12 @@ FROM_DEM = "trace-dem"
 # precision anchors are written to anyway.
 AT_THE_END = 0.01
 
-# How many decimals a fitted plane is written to, where it is written as a line
-# rather than through `dumps`. Not a constraint -- `dumps` writes whole degrees
-# and the parser reads floats either way -- so it is a choice, and the choice is
-# that a plane computed over a swept window is a computed number: rounding it as
-# it is written throws away the only thing separating one window's answer from
-# the next one's, and the diagnostics beside it already say how well determined
-# it is. The value does not also have to pretend.
+# How many decimals a fitted plane is written to. It is the format's own rule
+# since 03.10.2026 (`gstruct._deg`) and no longer a choice made here: a plane
+# computed over a swept window is a computed number, and rounding it as it is
+# written throws away the only thing separating one window's answer from the
+# next one's. It stays named here because the check rounds to it to prove the
+# line reads back as the fit that was written.
 PLANE_DECIMALS = 1
 
 
@@ -458,15 +457,24 @@ def fits_along(structure, dem, gate, sweep=None, gstruct=None, convergence=None)
     )
 
 
-def as_line(fit, indent="  ", decimals=PLANE_DECIMALS, gstruct=None):
+def as_line(fit, indent="  ", gstruct=None):
     """
     One `fit` as the line a file holds, for a caller that writes lines and not files.
 
     `dumps` is the writer everywhere else and cannot be the writer here: the
-    trace editor splices lines into a file it otherwise leaves untouched, because
-    the format's own writer deletes the comments -- ten of them on
-    `curation.gstruct`, which are the argument for why five thrusts are
-    `exposed`. See `curation.Document`.
+    trace editor splices one line into a file it otherwise leaves untouched,
+    while `dumps` rewrites the whole of it -- blank lines, attitudes back in
+    sorted order, a `kind unknown` dropped. Those are all content-neutral, and
+    a diff full of them is a diff that hides the line that matters. See
+    `curation.Document`.
+
+    Until 03.10.2026 two heavier reasons stood here: the format's writer deleted
+    every comment, and it printed whole degrees. Both are fixed in the format
+    itself, which is where they belonged -- a plane written here and a plane
+    written by `dumps` are now the same string, and `str(fit.plane)` is how this
+    line gets it rather than a second spelling of the same number. A compass
+    reading is still written to whole degrees, deliberately, and that lives in
+    `curation.with_plane` where the reading does.
 
     So the line is built here, out of the format's own spellings of an anchor and
     of an attribute rather than out of new ones. `_q` quotes a value with a space
@@ -486,6 +494,6 @@ def as_line(fit, indent="  ", decimals=PLANE_DECIMALS, gstruct=None):
 
     return (
         f"{indent}fit plane {gstruct._a(fit.start)} {gstruct._a(fit.end)} "
-        f"{fit.plane.dip_dir:.{decimals}f}/{fit.plane.dip:.{decimals}f}"
+        f"{fit.plane}"
         f"{gstruct._kw(fit.attrs)}"
     )

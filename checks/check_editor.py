@@ -2517,7 +2517,7 @@ def main():
 
         # -- the real file, and the reason any of this is done this way ----
 
-        print("\n-- the reasoning that would have been lost --\n")
+        print("\n-- the reasoning, and who keeps it now --\n")
 
         real = AOI / "curation.gstruct"
 
@@ -2530,10 +2530,18 @@ def main():
             kept = copy.read_text(encoding="utf-8")
             rebuilt = gstruct.dumps(gstruct.loads(kept))
 
-            check("the format's own writer has nowhere to keep a comment",
-                  len(comment_lines(kept)) == 10 and not comment_lines(rebuilt),
+            # This used to read the other way: the writer had nowhere to keep a
+            # comment, and ten of them went out of the file on any round trip.
+            # Fixed in the format on 03.10.2026, so the assertion inverts -- and
+            # it is worth keeping from this side, because it is the editor that
+            # pays if it regresses.
+            check("the format's own writer keeps every comment, and this file whole",
+                  len(comment_lines(kept)) == 10
+                  and comment_lines(rebuilt) == comment_lines(kept)
+                  and rebuilt == kept,
                   f"{len(comment_lines(kept))} lines in, "
-                  f"{len(comment_lines(rebuilt))} out")
+                  f"{len(comment_lines(rebuilt))} out, "
+                  + ("identical" if rebuilt == kept else "rest of the file changed"))
 
             curation = Document(copy)
             curation.replace(
@@ -2843,15 +2851,22 @@ def main():
                                    else tuple(round(v, 2) for v in fit.start)),
               f"{reread.plane} with {len(reread.attrs)} attribute(s)")
 
-        # And why the line is built in `fits` rather than taken from `dumps`: the
-        # format's own writer prints whole degrees, and a plane computed over a
-        # swept window is a computed number.
-        rounded = gstruct.Plane(140.5, 31.2)
+        # The decimals used to be the reason this line was built here at all:
+        # `dumps` printed whole degrees and swallowed the 0.6 degrees of
+        # convergence asserted two checks up. Since 03.10.2026 the format writes
+        # them itself, so what has to hold now is the opposite -- that the two
+        # writers spell one plane one way, and that `.0` does not come back on a
+        # compass reading, which is an integer and stays written as one.
+        computed = gstruct.Plane(140.5, 31.2)
 
-        check("which `dumps` could not have done, printing whole degrees",
-              str(rounded) == "140/31"
-              and "140.5/31.2" in as_line(gstruct.Fit(plane=rounded)),
-              f"`{rounded}` against `{as_line(gstruct.Fit(plane=rounded)).strip()}`")
+        check("the format and this line spell a computed plane the same way",
+              str(computed) == "140.5/31.2"
+              and f" {computed}" in as_line(gstruct.Fit(plane=computed)),
+              f"`{computed}` in `{as_line(gstruct.Fit(plane=computed)).strip()}`")
+
+        check("and a whole-degree reading keeps its spelling",
+              str(gstruct.Plane(140.0, 31.0)) == "140/31",
+              str(gstruct.Plane(140.0, 31.0)))
 
         check("and Apply takes it, which is the only way it reaches the model",
               panel.apply_block()

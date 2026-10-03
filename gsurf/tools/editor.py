@@ -2338,8 +2338,9 @@ class EditorPanel(QtWidgets.QWidget):
 
         Comments survive this and survive the Save behind it, both for the same
         reason -- the box holds the block as text, and `Document` replaces the
-        lines of one structure rather than dumping the file. `dumps` would eat
-        them, and nothing here calls it.
+        lines of one structure rather than dumping the file. `dumps` carries
+        them too since 03.10.2026, so what splicing buys now is the rest of the
+        file's layout rather than the comments themselves.
         """
 
         return self._rewrite_line(

@@ -483,16 +483,22 @@ class Document:
     -- it replaces the lines of the one structure that was edited and leaves
     every other byte alone.
 
-    **That is not fastidiousness, it is what `dumps` costs.** Run
-    `curation.gstruct` through load and dump and the ten lines of comment in it
-    are gone: the block saying *why* those five thrusts are `exposed` --
-    that they were walked, that the facets grown from the DTM agree within three
-    to nine degrees -- is gone, because comments are not in the model and a
-    writer can only write what it has. A tool whose Save deletes the geologist's
-    reasoning is not an editor. Splicing one block also means a plane typed as
-    `140.5/31` stays `140.5/31`, where a round trip would round it to `140/31`:
-    `Plane.__str__` writes whole degrees, and text that is never re-serialised
-    cannot lose anything at all.
+    **That is not fastidiousness, it is what `dumps` costs.** Until 03.10.2026 it
+    cost the ten lines of comment in `curation.gstruct` -- the block saying *why*
+    those five thrusts are `exposed`, that they were walked, that the facets
+    grown from the DTM agree within three to nine degrees -- and it cost a plane
+    typed as `140.5/31`, which came back `140/31`. A tool whose Save deletes the
+    geologist's reasoning is not an editor. Both of those are now fixed in the
+    format rather than worked around here: comments ride on the record they sit
+    above, and `Plane.__str__` writes a decimal.
+
+    What `dumps` still costs is every other byte, because it is the format's
+    canonical writer and not a transcriber. It sorts attitudes by progressive,
+    drops a `kind unknown`, puts the geometry last whatever the file did, and
+    decides its own blank lines. None of that changes a datum and all of it
+    changes the file, so a Save that went through it would answer a one-line
+    edit with a diff nobody can read -- and text that is never re-serialised
+    still cannot lose anything at all, which is the cheapest guarantee there is.
 
     The model is parsed beside the text and not from it, because the text is
     what the file says and the model is what it means. Editing goes through
