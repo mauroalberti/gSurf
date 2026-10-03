@@ -549,11 +549,14 @@ MAX_GAP_RANGE = (0.0, 20000.0)
 # how a steered plane ended up written over a compass reading.
 FIT_TEMPLATE = "  fit plane * * 000/00 from="
 
-TEMPLATES = (
-    ("+ span", '  span use * * rejected reason=""'),
-    ("+ attitude", "  attitude * plane 000/00 station= src=field"),
-    ("+ fit", FIT_TEMPLATE),
-)
+# A `span` for somebody to finish, and the last of the three templates the panel
+# used to carry as buttons. The other two went where the work went: a plane off
+# the topography is the fit window's, a compass reading is `ReadingsHere`'s, and
+# both of those write a finished line instead of an abbreviation to fill in. This
+# one has nowhere to go, `use` being the one claim in the format with no window of
+# its own, so it stays a line somebody writes -- off the menu now rather than off
+# a button, which is the only place left that is about the open trace.
+SPAN_TEMPLATE = '  span use * * rejected reason=""'
 
 PANEL_WIDTH_PX = 520
 
@@ -594,6 +597,12 @@ SETTINGS_NAME = "editor"
 # read; the floor is four, which is enough to see that sorting did something.
 TABLE_OPENING_PX = 240
 TABLE_FLOOR_PX = 140
+
+# And the least box worth having: about six lines of the fixed font, which is a
+# heading, a claim and its path's first vertices -- enough to see what kind of
+# block is open. It is a floor and not a size; what the box opens at is the outer
+# splitter's business.
+TEXT_FLOOR_PX = 120
 
 # Above this fraction of the trace, a bar has room for its own word in it.
 LABEL_FRACTION = 0.14
@@ -1261,227 +1270,6 @@ class StructureTable(QtWidgets.QTableWidget):
         self.setItem(row, self.HOLDS_COLUMN, item)
 
 
-class ClaimTable(QtWidgets.QTableWidget):
-    """
-    The open structure's own lines, read as the claims they make.
-
-    Beside the box for now and reading only, which is the first step of taking
-    the box away. The argument for taking it away is not that free text is
-    inelegant: it is that two wrong lines came out of one afternoon on one file
-    and neither could be seen by reading it back. `fit plane
-    @583458.91,4439774.76 @582408.83,4441315.77` is a pair the wrong way round,
-    and the way to see that in a text box is to hold two eastings in your head
-    and know which way the trace was digitised. Here it is `2689 m` above `791
-    m`, in red, in the order the format reads them -- the same fact, in the
-    quantity the fact is about.
-
-    **Never sorted**, and that is a decision rather than an omission Qt would
-    have filled in: `attitude_at` takes the first fit that covers a metre, so
-    the order of these rows is part of what the file says. A header click that
-    reordered them would be a header click that changed the meaning of the file
-    on screen without changing the file.
-
-    Only `ROW_WORDS` become rows. A block's `path`, its vertices, its heading,
-    its blank lines and its comments are not claims and are not shown -- but
-    they are counted and said, because a table that quietly shows four of
-    twenty-six lines is a table that invites somebody to believe the other
-    twenty-two are gone.
-    """
-
-    COLUMNS = ("what", "from", "to", "value", "from where", "the rest")
-
-    # The line the row stands for, in the block, on the first cell. Not the row
-    # number, for `StructureTable`'s reason turned around: there the rows move
-    # and here the lines do -- a row added or removed renumbers everything below
-    # it, and a splice addresses a line.
-    AT_ROLE = QtCore.Qt.ItemDataRole.UserRole
-
-    # The row asked for, as a line index in the block.
-    chosen = QtCore.pyqtSignal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(0, len(self.COLUMNS), parent)
-
-        self._filling = False
-
-        self.setHorizontalHeaderLabels(self.COLUMNS)
-        self.verticalHeader().setVisible(False)
-        self.setAlternatingRowColors(True)
-        self.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.setSortingEnabled(False)
-
-        # A header and two rows. Small because the box is still underneath and
-        # the panel has to fit a laptop screen with both of them on it -- the
-        # room this is short of is room the splitter gives it back on a drag,
-        # and room it inherits outright when the box goes.
-        self.setMinimumHeight(60)
-        self.setToolTip(
-            "What this structure claims, one row per line of the file, in the "
-            "order the file makes them -- which is part of what it says, so "
-            "these do not sort. Picking a row puts the cursor on its line."
-        )
-
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.Interactive
-        )
-        header.setStretchLastSection(True)
-
-        self.itemSelectionChanged.connect(self._picked)
-
-    def fill(self, rows, others=0):
-        """
-        Lay the rows out, keeping the line that was picked picked.
-
-        `others` is how many more lines the block holds that are not claims,
-        and it goes in a last row of its own rather than in a label beside the
-        table. Where a statement sits is part of what it says: at the foot of
-        the list it qualifies the list, and it qualifies it at the moment
-        somebody has finished reading it and is about to conclude that this is
-        everything.
-        """
-
-        held = self.at_now()
-
-        self._filling = True
-
-        try:
-            self.clearSpans()
-            self.setRowCount(len(rows) + (1 if others > 0 else 0))
-
-            for row, claim in enumerate(rows):
-                self._write(row, claim)
-
-            if others > 0:
-                self._write_tail(len(rows), others)
-
-            self.resizeColumnsToContents()
-        finally:
-            self._filling = False
-
-        if held is not None:
-            self.show_at(held)
-
-    def _write_tail(self, row, others):
-        """The last row: what the block holds that is not a claim."""
-
-        item = QtWidgets.QTableWidgetItem(
-            f"{others} more lines -- the trace, its vertices, the heading"
-        )
-        item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
-        item.setForeground(QtGui.QColor("#6a6a6a"))
-        item.setToolTip(
-            "Not claims, so not rows: they have no place along the trace and "
-            "no value at it. They are still in the block and Save writes them "
-            "back exactly as they are."
-        )
-
-        self.setItem(row, 0, item)
-        self.setSpan(row, 0, 1, len(self.COLUMNS))
-
-    def at_now(self):
-        """The block line the picked row stands for, or None."""
-
-        picked = self.selectedItems()
-
-        if not picked:
-            return None
-
-        return self.item(picked[0].row(), 0).data(self.AT_ROLE)
-
-    def show_at(self, at):
-        """Pick the row standing for a line, silently. True if there was one."""
-
-        for row in range(self.rowCount()):
-            if self.item(row, 0).data(self.AT_ROLE) != at:
-                continue
-
-            with QtCore.QSignalBlocker(self):
-                self.selectRow(row)
-
-            return True
-
-        return False
-
-    def _picked(self):
-        if self._filling:
-            return
-
-        at = self.at_now()
-
-        if at is not None:
-            self.chosen.emit(at)
-
-    def _write(self, row, claim):
-        """One row from one `curation.Row`."""
-
-        backwards = claim.ends is not None and claim.ends[0] > claim.ends[1]
-
-        what = claim.word if claim.sort in (None, "plane") else (
-            f"{claim.word} {claim.sort}"
-        )
-
-        if claim.ends is not None:
-            marks = claim.line.split()[ENDS_AT]
-            ends = [
-                "start" if mark == "*" and end <= 0.0 else
-                "end" if mark == "*" else f"{end:.0f} m"
-                for mark, end in zip(marks, claim.ends)
-            ]
-        elif claim.place is not None:
-            ends = [f"{claim.place:.0f} m", ""]
-        else:
-            ends = ["", ""]
-
-        value = (
-            f"{claim.plane[0]:g}/{claim.plane[1]:g}" if claim.plane is not None
-            else (claim.value or "")
-        )
-
-        # `from` and `src` are what a row is asked about first -- measured or
-        # computed, and by whom -- so they get a column and everything else
-        # shares one. Nothing is dropped: what is not named here is in `the
-        # rest`, and what is in neither is not in the line.
-        named = ("from", "src", "station", "reason")
-        whence = " ".join(
-            f"{key}={claim.attrs[key]}" for key in named if claim.attrs.get(key)
-        )
-        rest = " ".join(
-            f"{key}={value}" for key, value in claim.attrs.items()
-            if key not in named
-        )
-
-        if claim.note:
-            rest = f"{rest}  # {claim.note}".strip()
-
-        for column, text in enumerate(
-            (what, ends[0], ends[1], value, whence, rest)
-        ):
-            item = QtWidgets.QTableWidgetItem(text)
-            item.setToolTip(claim.line.strip())
-
-            if column == 0:
-                item.setData(self.AT_ROLE, claim.at)
-
-            if backwards and column in (1, 2):
-                item.setForeground(QtGui.QColor("#b2182b"))
-                item.setToolTip(
-                    "These two are the wrong way round, so this line covers no "
-                    "part of the trace: the format reads the pair as written, "
-                    "and `covers` is `from <= s <= to`."
-                )
-
-            self.setItem(row, column, item)
-
-
 class ProvenanceView(QtWidgets.QWidget):
     """
     One structure along its own trace: what holds, what says so, and what it is.
@@ -1763,12 +1551,6 @@ class EditorPanel(QtWidgets.QWidget):
     # the stretch and not this.
     holding = QtCore.pyqtSignal(object)
 
-    # Somebody asked to read the topography. A signal and not a call, because
-    # what answers it is a window, and this panel has never known that it is in
-    # one: it is handed a document and a DEM, and the arrangement of frames
-    # around it is the window's business. See `EditorWindow.open_fitting`.
-    fit_asked = QtCore.pyqtSignal()
-
     def __init__(self, document, dem=None, crs=None, parent=None):
         super().__init__(parent)
 
@@ -1878,9 +1660,6 @@ class EditorPanel(QtWidgets.QWidget):
 
         self.view = ProvenanceView()
 
-        self.claims = ClaimTable()
-        self.claims.chosen.connect(self._claim_picked)
-
         self.text = QtWidgets.QPlainTextEdit()
         self.text.setFont(QtGui.QFontDatabase.systemFont(
             QtGui.QFontDatabase.SystemFont.FixedFont
@@ -1888,13 +1667,11 @@ class EditorPanel(QtWidgets.QWidget):
         self.text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         self.text.setTabStopDistance(28)
 
-        # It had a floor of 120 while it was the only thing here. It has none
-        # now that the table shares the column with it: the panel has to fit a
-        # laptop screen, a floor is only about how far a splitter can be
-        # squeezed, and between the two of them the one to protect from being
-        # squeezed is the table. What opens at a useful size is set below, in
-        # sizes and not in floors.
-        self.text.setMinimumHeight(0)
+        # Its floor back, the claims table having gone out of the column it was
+        # dropped for: with nothing else in here to protect from being squeezed,
+        # the only thing a zero floor can still do is let the outer splitter
+        # shut the box to a line.
+        self.text.setMinimumHeight(TEXT_FLOOR_PX)
 
         # Both, because a stretch changes under either gesture and neither
         # implies the other: typing an anchor moves the text without moving the
@@ -1904,17 +1681,44 @@ class EditorPanel(QtWidgets.QWidget):
             moved.connect(self._covering_changed)
             moved.connect(self._holding_changed)
 
-        # The table is a reading of the box and has to be a reading of it as it
-        # stands, half-written lines included -- so it is laid again on every
-        # change rather than on Apply. It costs a `rows_of` over a block, which
-        # is the twenty-six lines of the largest structure in the files here.
-        self.text.textChanged.connect(self._show_claims)
-        self.text.cursorPositionChanged.connect(self._follow_caret)
+        # A reading of the box as it stands, half-written lines included -- so it
+        # is taken again on every change rather than on Apply. It costs a
+        # `rows_of` over a block, which is the twenty-six lines of the largest
+        # structure in the files here, and it is what the claims table cost too.
+        self.text.textChanged.connect(self._show_backwards)
 
         self.problem = QtWidgets.QLabel()
         self.problem.setWordWrap(True)
         self.problem.setStyleSheet("color: #b2182b; font-size: 11px;")
         self.problem.setVisible(False)
+
+        # The one thing the claims table carried that nothing else does, kept as
+        # a sentence now that the table has gone. A pair of ends written the
+        # wrong way round parses, applies, saves, and holds over no ground at
+        # all -- `covers` is `from <= s <= to` -- and the box cannot show it:
+        # seeing it there means holding two eastings in your head and knowing
+        # which way the trace was digitised. That is the pair of wrong lines the
+        # table was built for, out of one afternoon on one file.
+        #
+        # Both AOI curations hold none today, which is the state this is for
+        # rather than an argument against it: they hold none because the table
+        # found the ones they had. What is in neither file is a check that
+        # anybody *would* notice the next one, which is why this is a sentence
+        # the panel says and not a colour two cells carry.
+        #
+        # The fit window flags its own in red, and an `attitude` carries a point
+        # rather than an interval and cannot be reversed at all. What is left is
+        # `span` -- the claim with no window of its own, written by hand into
+        # this box, and so the one this label is really for.
+        #
+        # Its own label and not `self.problem`, which belongs to the parser: a
+        # refusal stops the block going in and this does not, so one line
+        # between them would have each wiping the other's news at the moment
+        # both are true.
+        self.backwards = QtWidgets.QLabel()
+        self.backwards.setWordWrap(True)
+        self.backwards.setStyleSheet("color: #b2182b; font-size: 11px;")
+        self.backwards.setVisible(False)
 
         self.apply_button = QtWidgets.QPushButton("Apply")
 
@@ -1932,48 +1736,17 @@ class EditorPanel(QtWidgets.QWidget):
         self.revert_button.setToolTip("Put back the block as the document has it.")
         self.revert_button.clicked.connect(self._redraw)
 
+        # Two buttons left of the six that were here, and both of them are about
+        # the box rather than about the file: Apply is how the box is committed
+        # and Revert is how it is abandoned, so neither has anywhere else to go
+        # while there is a box. The four that went were three templates and a
+        # door, and what they had in common is that they were all about the open
+        # trace -- which is now one menu, where the other five such doors already
+        # were. A panel of buttons duplicating a menu is two places to keep a
+        # refusal in step, and the fit button was one of them: it worked out
+        # "there is no DEM" for itself, beside a menu entry working it out
+        # again.
         buttons = QtWidgets.QHBoxLayout()
-
-        for label, template in TEMPLATES:
-            adder = QtWidgets.QPushButton(label)
-            adder.setToolTip(
-                f"Write `{template.strip()}` above the path, with the first "
-                f"anchor selected: shift-click the map to fill it in, and the "
-                f"next one is selected in turn."
-            )
-            adder.clicked.connect(lambda _, line=template: self.add_line(line))
-            buttons.addWidget(adder)
-
-        # The fourth button, which is not a fourth template: the three above write
-        # a line for somebody to finish and this one does not write at all -- it
-        # opens the window where the fits are, all of them, however they were
-        # made. The ellipsis is the whole of how a button says that: three of
-        # these four press and one of them asks.
-        self.fit_button = QtWidgets.QPushButton("fits along this trace...")
-        self.fit_button.clicked.connect(self.fit_asked.emit)
-
-        if self.dem is None:
-            self.fit_button.setEnabled(False)
-            self.fit_button.setToolTip(
-                "No DEM in this session, and a plane read off the topography "
-                "needs one. The slot is optional because the traces draw without "
-                "it; this is the one thing here that does not."
-            )
-        elif self.dem_said:
-            self.fit_button.setEnabled(False)
-            self.fit_button.setToolTip(self.dem_said)
-        else:
-            self.fit_button.setToolTip(
-                "Open the window that reads the topography along this trace -- "
-                "the import's own producer, on one trace at a time. It sweeps a "
-                "window and works out the plane over every stretch that turns "
-                "enough to determine one; a stretch too straight to carry a "
-                "plane gets nothing, which is an answer. Nothing is written "
-                "until the ones you want are ticked and kept."
-            )
-
-        buttons.addWidget(self.fit_button)
-
         buttons.addStretch(1)
         buttons.addWidget(self.apply_button)
         buttons.addWidget(self.revert_button)
@@ -1999,27 +1772,20 @@ class EditorPanel(QtWidgets.QWidget):
         working = QtWidgets.QWidget()
         working_layout = QtWidgets.QVBoxLayout(working)
         working_layout.setContentsMargins(0, 0, 0, 0)
-        # The table above the box, and both of them in a splitter of their own:
-        # while the two are on screen together the one being trusted changes
-        # from one gesture to the next, and a fixed division would be a guess
-        # about which. The box goes when the table can do everything it does --
-        # until then the table is the picture and the box is still the pen.
-        writing = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        writing.addWidget(self.claims)
-        writing.addWidget(self.text)
 
-        # The table cannot be dragged shut and the box can, which is the one
-        # asymmetry worth having while both are here: a table with no way back
-        # is the trap this panel already avoids once, and the box is the thing
-        # being replaced. It is also what keeps the panel inside a laptop
-        # screen -- a pane that can collapse asks the layout for nothing.
-        writing.setCollapsible(0, False)
-        writing.setCollapsible(1, True)
-        writing.setSizes([TABLE_OPENING_PX, TABLE_OPENING_PX])
-
+        # The box on its own, where it used to share a splitter with a table
+        # reading it back. That table was the first step of taking the box away
+        # and it stopped halfway: it could show that a line was wrong and never
+        # let anybody write one, so what it ended up being was a second copy of
+        # the block costing a `rows_of` per keystroke. What took the rest of the
+        # step is the five windows -- they write the lines, so the box is the pen
+        # for `span` and for repairs, and that wants height rather than a
+        # neighbour. The one fact the table alone could see is now
+        # `self.backwards`.
         working_layout.addLayout(gap)
         working_layout.addWidget(self.view, stretch=3)
-        working_layout.addWidget(writing, stretch=3)
+        working_layout.addWidget(self.text, stretch=3)
+        working_layout.addWidget(self.backwards)
         working_layout.addWidget(self.problem)
         working_layout.addLayout(buttons)
 
@@ -2254,9 +2020,9 @@ class EditorPanel(QtWidgets.QWidget):
 
         # Again here and not only on `textChanged`, because the structure can
         # change under text that does not: two traces with the same lines on
-        # them read against different paths are different claims, and the
-        # metres in the table are measured along the path.
-        self._show_claims()
+        # them read against different paths are different claims, and which end
+        # is the far one is measured along the path.
+        self._show_backwards()
         self._redraw_view()
 
     def _redraw_view(self):
@@ -2968,42 +2734,49 @@ class EditorPanel(QtWidgets.QWidget):
             f"{s1 - s0:.0f} m of {whole:.0f}"
         )
 
-    def _show_claims(self):
-        """Lays the open block's claims out, and says what is not among them."""
+    def _show_backwards(self):
+        """
+        Names the block's lines that hold over no ground, if it has any.
+
+        `claim_said` makes the same finding one line at a time, and the
+        difference is the whole reason this exists: that one answers about the
+        line the caret is on, so a reversed pair three lines further down is a
+        sentence nobody is ever shown. This asks the question of the block.
+
+        Line numbers and not the text, because what the reader does next is look:
+        the box is right above this label and the numbers are how a line is found
+        in it. `Row.at` counts blocks from zero and a reader counts from one.
+        """
 
         if self.index is None:
-            self.claims.fill([])
+            self.backwards.setVisible(False)
+
             return
 
-        text = self.text.toPlainText()
         path = self.document.dataset.structures[self.index].path
-        rows = rows_of(text, path)
+        held = [
+            row.at + 1
+            for row in rows_of(self.text.toPlainText(), path)
+            if row.ends is not None and row.ends[0] > row.ends[1]
+        ]
 
-        # Lines with something on them, because a blank line is not a thing
-        # anybody needs reassuring about.
-        others = sum(1 for line in text.splitlines() if line.strip()) - len(rows)
+        if not held:
+            self.backwards.setVisible(False)
 
-        self.claims.fill(rows, others)
-        self._follow_caret()
-
-    def _follow_caret(self):
-        """Picks the row standing for the caret's line, if there is one."""
-
-        if not self.claims.show_at(self.text.textCursor().blockNumber()):
-            self.claims.clearSelection()
-
-    def _claim_picked(self, at):
-        """Puts the caret on the line a picked row stands for."""
-
-        block = self.text.document().findBlockByNumber(at)
-
-        if not block.isValid():
             return
 
-        cursor = self.text.textCursor()
-        cursor.setPosition(block.position())
-        self.text.setTextCursor(cursor)
-        self.text.setFocus()
+        which = ", ".join(str(line) for line in held)
+
+        self.backwards.setText(
+            f"line {which} has its two ends the wrong way round, so it covers "
+            f"no part of the trace: the format reads the pair as written, and "
+            f"`covers` is `from <= s <= to`."
+            if len(held) == 1 else
+            f"lines {which} have their ends the wrong way round, so they cover "
+            f"no part of the trace: the format reads each pair as written, and "
+            f"`covers` is `from <= s <= to`."
+        )
+        self.backwards.setVisible(True)
 
     def _covering_changed(self):
         """
@@ -7495,10 +7268,13 @@ class FitFromDem(QtWidgets.QWidget):
         self.table.setHorizontalHeaderLabels(FIT_COLUMNS)
         self.table.verticalHeader().setVisible(False)
 
-        # Never sorted, for `ClaimTable`'s reason turned into this window's: the
-        # rows come out in order along the trace, which is the order somebody
-        # walking the fault would meet them in, and a click on `plane` would
-        # shuffle a fault into a ranking of dip directions.
+        # Never sorted, and for a reason rather than an omission Qt would have
+        # filled in: the rows come out in order along the trace, which is the
+        # order somebody walking the fault would meet them in, and a click on
+        # `plane` would shuffle a fault into a ranking of dip directions. The
+        # file order matters twice over -- `attitude_at` takes the first fit that
+        # covers a metre, so a header click that reordered these would change
+        # what the file on screen says without changing the file.
         self.table.setSortingEnabled(False)
         self.table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
@@ -7818,9 +7594,12 @@ class FitFromDem(QtWidgets.QWidget):
                 cell.setForeground(QtGui.QColor("#6a6a6a"))
                 cell.setToolTip(f"{claim.line.strip()}\n\n{inert}")
 
-            # `ClaimTable`'s colour for the same mistake, on the same two cells:
-            # the ends are where it is, and red is what the AOI's one reversed
-            # pair already looks like in the panel.
+            # On the two cells the mistake is in, which is where the ends are.
+            # The panel says the same thing in words -- `_show_backwards`, which
+            # is what is left of the claims table -- and it says it for the
+            # claims no window watches; this is the fits' own copy, in the
+            # window that lists them. Neither AOI file has one to show today,
+            # the table having found the ones they had.
             if backwards and column in (0, 1):
                 cell.setForeground(QtGui.QColor("#b2182b"))
 
@@ -8538,7 +8317,6 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.panel.said.connect(self.say)
         self.panel.covering.connect(self._show_claimed)
         self.panel.holding.connect(self._show_held)
-        self.panel.fit_asked.connect(self.open_fitting)
 
         # A fourth window, and unlike the other three it is not in the group.
         # The group's satellites come up with the map and are remembered where
@@ -8756,25 +8534,50 @@ class EditorWindow(QtWidgets.QMainWindow):
         return self.panel.dem_said
 
     def _build_menu(self):
-        """The way back to the panel and the net, once they have been closed."""
+        """Everything that can be done to the open trace, and the way back to a
+        window that has been closed.
 
-        reading = self.menuBar().addMenu("&Fit")
+        **The first menu is named for its subject and not for its first entry.**
+        It was `Fit` while the fit window was the only thing in it; four more
+        doors moved in, the label did not move, and five of the six things this
+        tool can do to a trace spent that time filed under the name of the
+        sixth. The one who could not find them was the person who put them
+        there.
 
-        self.fit_action = QtGui.QAction("&Fits along this trace...", self)
+        Singular, because every entry acts on the selected block and on no
+        other -- the fit sweep included, which reads one trace at a time.
+        `Traces` would promise something over the file, and nothing here does
+        that.
+
+        The entries lost `along this trace` with the rename: four of the six
+        were saying it each, under a menu that now says it once.
+        """
+
+        trace = self.menuBar().addMenu("&Trace")
+
+        # Without this, `QMenu` shows none of the tooltips set below -- which is
+        # how the two refusals at the foot of this method came to be written for
+        # nobody. They are the reason an entry is grey, they are set on the
+        # entry, and Qt's default is to drop them on the floor.
+        #
+        # Worth checking on a *disabled* entry when this is touched, because
+        # that is the whole case: a grey door with no reason beside it is the
+        # thing being fixed, and some styles do not hover a disabled item.
+        trace.setToolTipsVisible(True)
+
+        self.fit_action = QtGui.QAction("&Fits...", self)
         self.fit_action.setShortcut("Ctrl+D")
         self.fit_action.triggered.connect(self.open_fitting)
-        reading.addAction(self.fit_action)
+        trace.addAction(self.fit_action)
 
         # In the same menu and never greyed, which is the one difference from the
         # entry above it: this window needs no DEM, only the block. A file opened
         # without any raster at all can still be asked what it measures and told
         # that a measurement is not of this fault.
-        self.readings_action = QtGui.QAction(
-            "&Measurements along this trace...", self
-        )
+        self.readings_action = QtGui.QAction("&Measurements...", self)
         self.readings_action.setShortcut("Ctrl+M")
         self.readings_action.triggered.connect(self.open_readings)
-        reading.addAction(self.readings_action)
+        trace.addAction(self.readings_action)
 
         # Beside it and never greyed either, for the same reason: what it needs
         # is the block. It is a separate entry rather than a button inside that
@@ -8783,27 +8586,50 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.amend_action = QtGui.QAction("Amend a measu&rement...", self)
         self.amend_action.setShortcut("Ctrl+R")
         self.amend_action.triggered.connect(self.open_amend)
-        reading.addAction(self.amend_action)
+        trace.addAction(self.amend_action)
 
         # Never greyed either, and the argument is stronger here than for the
         # readings: this one asserts a field observation, and the DEM in it is
         # evidence beside the assertion rather than a condition on it. A session
         # with no raster can still record that a contact crops out.
-        self.exposure_action = QtGui.QAction("&Exposure along this trace...", self)
+        self.exposure_action = QtGui.QAction("&Exposure...", self)
         self.exposure_action.setShortcut("Ctrl+E")
         self.exposure_action.triggered.connect(self.open_exposure)
-        reading.addAction(self.exposure_action)
+        trace.addAction(self.exposure_action)
 
         # Greyed with the fit window and off the same answer, for that entry's
         # reason: a facet is a region of topography, so unlike the two above it
         # this one cannot be done at all without a DEM these traces may be read
         # against.
         self.facet_action = QtGui.QAction(
-            "The surface where it crops out...", self
+            "The surface where it crops &out...", self
         )
         self.facet_action.setShortcut("Ctrl+T")
         self.facet_action.triggered.connect(self.open_facet)
-        reading.addAction(self.facet_action)
+        trace.addAction(self.facet_action)
+
+        # Under a separator, and with no ellipsis, because it is the one entry
+        # here that does not ask: the five above open a window and this one
+        # writes a line straight into the box. That is Qt's own convention for
+        # the difference, and it is the distinction the panel used to make with
+        # three `+` buttons beside one ending in dots.
+        #
+        # It is in this menu at all because a `span` is a claim about the open
+        # trace like the other five, and `use` is the one claim in the format
+        # with no window to make it in -- so this is the last abbreviation left
+        # for somebody to finish by hand.
+        trace.addSeparator()
+
+        self.span_action = QtGui.QAction("&Span", self)
+        self.span_action.setShortcut("Ctrl+U")
+        self.span_action.setToolTip(
+            f"Write `{SPAN_TEMPLATE.strip()}` above the path, with the first "
+            f"end selected: shift-click the map to fill it in, and the next one "
+            f"is selected in turn. `use` is what decides -- `certainty` and "
+            f"`exposure` describe the contact."
+        )
+        self.span_action.triggered.connect(self._add_span)
+        trace.addAction(self.span_action)
 
         facet_refused = self.facet_panel.refusal()
 
@@ -8811,15 +8637,29 @@ class EditorWindow(QtWidgets.QMainWindow):
             self.facet_action.setEnabled(False)
             self.facet_action.setToolTip(facet_refused)
 
-        # Greyed for the reason the button is greyed, and off the same answer
-        # rather than a second copy of it: a menu entry that opens a window with
-        # a refusal in it costs the gesture before it answers, and two places
-        # deciding separately whether there is a DEM is two places to disagree.
+        # Greyed off the window's own answer rather than a second copy of it: a
+        # menu entry that opens a window with a refusal in it costs the gesture
+        # before it answers, and two places deciding separately whether there is
+        # a DEM is two places to disagree. There used to be a second place -- the
+        # panel's own fit button, working it out for itself.
         refused = self.fit_panel.refusal()
 
         if refused:
             self.fit_action.setEnabled(False)
             self.fit_action.setToolTip(refused)
+
+        # Every door to the open trace, kept as a list because they are handed
+        # round the windows in `_build_shortcuts`: a `QAction` on this window
+        # reaches only this window, and the box these aim through is in another
+        # one.
+        self.trace_actions = (
+            self.fit_action,
+            self.readings_action,
+            self.amend_action,
+            self.exposure_action,
+            self.facet_action,
+            self.span_action,
+        )
 
         menu = self.menuBar().addMenu("&Windows")
 
@@ -9199,7 +9039,18 @@ class EditorWindow(QtWidgets.QMainWindow):
         two different windows for no reason anybody chose. What keeps that window
         out of the group is where it is *shown* -- it must not come up at
         start-up -- which has nothing to do with what a key does in it.
+
+        **And the `Trace` menu's six**, which had the same failure and kept it
+        longer, because nothing about them looked like a shortcut: they are menu
+        entries, the menu bar is the map window's, and a `QAction` living there
+        is a `WindowShortcut` on that one window. `SatelliteWindow` sets
+        `Qt.WindowType.Window`, so the panel is a window and not a pane --
+        meaning Ctrl+M did nothing from the panel, which is the window holding
+        the box and the caret that all six of those doors aim through. The keys
+        worked from the one window where there was nothing to aim with.
         """
+
+        mine = []
 
         for label, shortcut, slot in (
             ("Save", "Ctrl+S", self.save),
@@ -9210,20 +9061,22 @@ class EditorWindow(QtWidgets.QMainWindow):
             action.triggered.connect(slot)
 
             self.addAction(action)
+            mine.append(action)
 
-            # Every window this tool owns, and the list is one place on purpose:
-            # a window added here and forgotten there is a Ctrl+S that works
-            # from four windows out of six, which fails silently and only
-            # sometimes -- the same failure the net was argued into this list
-            # for.
-            for satellite in (
-                *self.group.satellites.values(),
-                self.fit_window,
-                self.readings_window,
-                self.amend_window,
-                self.exposure_window,
-                self.facet_window,
-            ):
+        # Every window this tool owns, and the list is one place on purpose: a
+        # window added here and forgotten there is a Ctrl+S that works from four
+        # windows out of six, which fails silently and only sometimes -- the same
+        # failure the net was argued into this list for, and the one the menu's
+        # entries were quietly in until they were handed round too.
+        for satellite in (
+            *self.group.satellites.values(),
+            self.fit_window,
+            self.readings_window,
+            self.amend_window,
+            self.exposure_window,
+            self.facet_window,
+        ):
+            for action in (*mine, *self.trace_actions):
                 satellite.addAction(action)
 
     def _panel_title(self):
@@ -9856,6 +9709,27 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.steering.set_writable(self.panel.has_plane_slot())
         self.steering.tell_next(self._next_step())
 
+    def _add_span(self):
+        """A `use` for somebody to finish, asked for from the menu.
+
+        `_start_fit`'s sibling, and what the panel's `+ span` button used to do.
+        The words it says are the button's tooltip turned into news, because a
+        menu entry has nowhere to put a tooltip at the moment it is triggered:
+        the line is written in the other window, and from the map that is the
+        only way anybody learns the press landed.
+        """
+
+        if self.panel.index is None:
+            self.say("nothing selected to put a span on")
+
+            return
+
+        self.panel.add_line(SPAN_TEMPLATE)
+        self.say(
+            "a new `span` above the path, with its first end armed -- "
+            "shift-click the map for each end, then say why in `reason=`"
+        )
+
     def _start_fit(self):
         """A `fit` for the steered plane to go in, asked for from its own window."""
 
@@ -10028,7 +9902,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         # adding claims to a trace, and the state it opens in on a file with fits
         # in it is the caret sitting on one of them, finished and saved.
         return (
-            "nothing on this line -- `+ fit` in the box starts another, or "
+            "nothing on this line -- `+ fit` here starts another, or "
             "ctrl-click the trace to steer a plane somewhere else"
         )
 

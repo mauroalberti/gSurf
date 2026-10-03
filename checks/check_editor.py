@@ -489,7 +489,7 @@ def main():
               document.text_of(0) == was and not document.dirty)
 
         # The header a block is read under is not a gate, and `_header` used to
-        # say it was. The `+ span` button writes a `use` axis, which is gstruct
+        # say it was. The `Span` entry writes a `use` axis, which is gstruct
         # 0.2, and both curations in the AOI declare 0.1 -- nothing stops it,
         # because `loads` refuses a file ahead of the library and nothing else.
         aged = Document(written(
@@ -850,19 +850,60 @@ def main():
                 if not action.shortcut().isEmpty()
             }
 
-        check("Save and Apply answer from any of the three windows",
-              shortcuts_of(window) == shortcuts_of(panel_window)
-              == shortcuts_of(window.net_window) == {"Ctrl+S", "Ctrl+Return"},
+        # Eight, and this check used to pin them at two. That is worth naming
+        # rather than quietly widening: written to prove that Save and Apply
+        # reach every window, `== {"Ctrl+S", "Ctrl+Return"}` also froze as
+        # correct the fact that nothing else did. The `Trace` menu's six are
+        # `QAction`s on the map window's menu bar, so each was a
+        # `WindowShortcut` on that one window -- and `SatelliteWindow` sets
+        # `Qt.WindowType.Window`, which makes the panel a window and not a pane.
+        # Ctrl+M therefore did nothing from the panel: the window holding the
+        # box and the caret all six of those doors aim through.
+        everywhere = {
+            # written in `_build_shortcuts`
+            "Ctrl+S", "Ctrl+Return",
+            # and the doors on the `Trace` menu
+            "Ctrl+D", "Ctrl+M", "Ctrl+R", "Ctrl+E", "Ctrl+T", "Ctrl+U",
+        }
+
+        check("every key answers from either satellite",
+              shortcuts_of(panel_window)
+              == shortcuts_of(window.net_window) == everywhere,
               " and ".join(sorted(shortcuts_of(window.net_window))))
 
-        # The fourth too, and it had been left out: `_build_shortcuts` iterated
-        # the group, and the fit window is deliberately not in the group so that
-        # it does not come up at start-up. Harmless while it was a list to tick
-        # and shut. Not harmless once the steering moved in, because then keeping
-        # a plane and writing the file were in two windows for no reason anybody
-        # chose -- which is the complaint that found it.
+        # The map window's own list holds two of the eight, and that is right:
+        # the other six are on its menu bar, which is in it, so they already
+        # reach it. Adding them here as well would register each twice on one
+        # window -- Qt's ambiguous overload, which fires neither.
+        on_the_menu = {
+            action.shortcut().toString()
+            for action in window.menuBar().actions()[0].menu().actions()
+            if not action.shortcut().isEmpty()
+        }
+
+        check("the map window reaches the other six through its menu, not twice",
+              shortcuts_of(window) == {"Ctrl+S", "Ctrl+Return"}
+              and on_the_menu == everywhere - shortcuts_of(window),
+              " and ".join(sorted(on_the_menu)))
+
+        # The invariant behind that set, so the next door put on the menu and
+        # forgotten in `_build_shortcuts` fails here instead of passing: it
+        # would be the same failure as above, in its next shape.
+        asked = {action.shortcut().toString() for action in window.trace_actions}
+
+        check("and every door on the `Trace` menu is one of them",
+              len(asked) == len(window.trace_actions)
+              and asked <= shortcuts_of(panel_window),
+              f"{len(asked)} keys for {len(window.trace_actions)} entries")
+
+        # The fourth window too, and it had been left out: `_build_shortcuts`
+        # iterated the group, and the fit window is deliberately not in the group
+        # so that it does not come up at start-up. Harmless while it was a list to
+        # tick and shut. Not harmless once the steering moved in, because then
+        # keeping a plane and writing the file were in two windows for no reason
+        # anybody chose -- which is the complaint that found it.
         check("and from the fit window, which is not in the group",
-              shortcuts_of(window.fit_window) == {"Ctrl+S", "Ctrl+Return"}
+              shortcuts_of(window.fit_window) == everywhere
               and window.fit_window not in window.group.satellites.values(),
               " and ".join(sorted(shortcuts_of(window.fit_window))) or "none")
 
@@ -1744,107 +1785,98 @@ def main():
                   "belongs to the thrust", "01.10.2026",
               ))
 
-        # -- the same block, as a table ------------------------------------
+        # -- the lines that hold over no ground ----------------------------
+        #
+        # What is left of the claims table, which stood here and read the block
+        # back as rows. It went because it had stopped halfway: it could show
+        # that a line was wrong and never let anybody write one, so between the
+        # five windows that now write the lines and the box that still edits
+        # them it was a second copy of the block costing a `rows_of` per
+        # keystroke. One fact in it was not a copy of anything, and this is it.
+        #
+        # A pair the wrong way round is not a parse error and never will be --
+        # the format reads it, `covers` is `from <= s <= to`, and it simply
+        # covers nothing. Reading it in the box means holding two eastings in
+        # your head and knowing which way the trace was digitised, so it has to
+        # be said.
 
-        print("\n-- the same block, as a table --\n")
+        print("\n-- the lines that hold over no ground --\n")
 
         window.select(0)
-        claim_table = window.panel.claims
 
-        def cells(row):
-            return [
-                claim_table.item(row, column).text() if claim_table.item(row, column) else ""
-                for column in range(claim_table.columnCount())
-            ]
+        check("a block whose ends are all in order says nothing about them",
+              not window.panel.backwards.isVisible())
 
-        check("the table has a row per claim, and one more for what is not one",
-              claim_table.rowCount() == len(claims) + 1,
-              f"{claim_table.rowCount()} rows for {len(claims)} claims")
-
-        check("the last one counts the lines it does not show, and says why",
-              "14 more lines" in cells(len(claims))[0]
-              and "vertices" in cells(len(claims))[0],
-              cells(len(claims))[0])
-
-        check("and it cannot be picked, because it does not stand for a line",
-              not (claim_table.item(len(claims), 0).flags()
-                   & QtCore.Qt.ItemFlag.ItemIsSelectable))
-
-        check("a `*` end is shown as an end of the trace and not as `0 m`",
-              cells(0)[1:3] == ["start", "end"], str(cells(0)[1:3]))
-
-        check("a picked pair is shown in metres along it",
-              cells(1)[1:3] == ["200 m", "400 m"], str(cells(1)[1:3]))
-
-        check("the span's word and the fit's plane sit in the same column",
-              cells(0)[3] == "certain" and cells(3)[3] == "100/40",
-              f"{cells(0)[3]!r} and {cells(3)[3]!r}")
-
-        check("what a row came from is beside it, and the rest of it after that",
-              "station=S1" in cells(2)[4] and "src=field" in cells(2)[4],
-              cells(2)[4])
-
-        # The two directions of the one mapping, which is what makes the claim_table
-        # and the box the same thing seen twice while they are both on screen.
-        claim_table.selectRow(2)
-        QtWidgets.QApplication.processEvents()
-
-        check("picking a row puts the caret on the line it stands for",
-              window.panel.text.textCursor().blockNumber() == claims[2].at
-              and "station=S1" in window.panel.line_now(),
-              window.panel.line_now().strip()[:40])
-
-        caret_onto("fit plane * * 100/40")
-        QtWidgets.QApplication.processEvents()
-
-        check("and moving the caret picks the row standing for its line",
-              claim_table.at_now() == claims[3].at, str(claim_table.at_now()))
-
-        caret_onto("  path 11")
-        QtWidgets.QApplication.processEvents()
-
-        check("a line that claims nothing picks nothing, rather than the nearest",
-              claim_table.at_now() is None, str(claim_table.at_now()))
-
-        # And the thing the claim_table exists for. A pair the wrong way round is not
-        # a parse error and never will be -- the format reads it, `covers` is
-        # `from <= s <= to`, and it simply covers nothing. So it has to be
-        # *visible*, and what makes it visible is the two metres in the order
-        # the format reads them.
         window.select(1)
         window.panel.add_written(
             ["  fit plane @602400.00,4420000.00 @602100.00,4420000.00 55/25 from="]
         )
         QtWidgets.QApplication.processEvents()
 
-        beta_table = window.panel.claims
-        backwards = next(
-            row for row in range(beta_table.rowCount())
-            if beta_table.item(row, 3) and beta_table.item(row, 3).text() == "55/25"
+        said = window.panel.backwards.text()
+
+        check("a pair the wrong way round is named, the box being unable to show it",
+              window.panel.backwards.isVisible() and "wrong way round" in said,
+              said)
+
+        # The line number and not the text, because what the reader does next is
+        # look: the box is right above the label. `Row.at` counts from zero and
+        # a reader counts from one, which is a correction worth a check of its
+        # own -- it is the whole content of the sentence.
+        added_at = next(
+            index for index, line in enumerate(
+                window.panel.text.toPlainText().splitlines()
+            )
+            if "55/25" in line
         )
 
-        check("a pair the wrong way round reads as the two metres it does not cover",
-              [beta_table.item(backwards, c).text() for c in (1, 2)] == ["400 m", "100 m"],
-              str([beta_table.item(backwards, c).text() for c in (1, 2)]))
+        check("and named by the line it is, counted the way a reader counts",
+              f"line {added_at + 1} " in said,
+              f"the label says {said.split(' has')[0]!r}, the box has it at "
+              f"line {added_at + 1}")
 
-        check("and both metres are marked, with what it costs written on them",
-              all(beta_table.item(backwards, c).foreground().color().name() == "#b2182b"
-                  for c in (1, 2))
-              and "covers no part" in beta_table.item(backwards, 1).toolTip(),
-              beta_table.item(backwards, 1).toolTip()[:50])
+        check("with what it costs, which is the reason it is not a parse error",
+              "covers no part of the trace" in said
+              and "`covers` is `from <= s <= to`" in said)
 
-        # Beta's own fit, `* *`, is the control: the mark has to be about the
-        # order of the pair and not about being a fit, or it says nothing.
-        in_order = next(
-            row for row in range(beta_table.rowCount())
-            if beta_table.item(row, 3) and beta_table.item(row, 3).text() == "12/88"
+        # The control, and the reason the check above is not about being a fit:
+        # beta carries its own `* *` fit, in order, and the block said nothing
+        # until the reversed one arrived.
+        window.panel._redraw()
+        QtWidgets.QApplication.processEvents()
+
+        check("put back, the block goes quiet again",
+              not window.panel.backwards.isVisible(),
+              window.panel.backwards.text())
+
+        # And the one the caret already answered, which is why this label exists
+        # rather than being left to `claim_said`: that one is asked about the
+        # line the caret is on, so a reversed pair three lines down is a sentence
+        # nobody is shown.
+        window.panel.add_written(
+            ["  span use @602400.00,4420000.00 @602100.00,4420000.00 rejected"]
         )
+        window.panel._park_cursor()
+        QtWidgets.QApplication.processEvents()
 
-        check("while the fit above it, in order, carries no mark at all",
-              beta_table.item(in_order, 1).foreground().color().name()
-              != beta_table.item(backwards, 1).foreground().color().name()
-              and not beta_table.item(in_order, 1).toolTip().startswith("These two"),
-              beta_table.item(in_order, 1).foreground().color().name())
+        check("a span is watched too, and it is the claim no window writes",
+              window.panel.backwards.isVisible()
+              and "wrong way round" in window.panel.backwards.text(),
+              window.panel.backwards.text())
+
+        # `add_written` parks the caret on the line it just wrote, so the caret
+        # has to be taken off it for this to be the question it claims to be.
+        # Block 0 is the `structure` heading, which claims nothing.
+        heading = window.panel.text.textCursor()
+        heading.setPosition(0)
+        window.panel.text.setTextCursor(heading)
+        QtWidgets.QApplication.processEvents()
+
+        check("and it is found with the caret nowhere near it",
+              window.panel.backwards.isVisible()
+              and window.panel.claim_said() is None,
+              f"the caret is on {window.panel.line_now().strip()[:30]!r}, "
+              f"and `claim_said` has {window.panel.claim_said()!r}")
 
         window.panel._redraw()
         window.select(0)
@@ -2531,12 +2563,19 @@ def main():
 
         # The session this check has been driving all along has no DEM, the slot
         # being optional here, and that is the first of the three answers the
-        # button can give before it is pressed.
-        check("with no DEM the button is off, and its reason is the DEM",
+        # door can give before it is opened.
+        #
+        # The menu entry and not a button: the panel had one of those, working
+        # the refusal out for itself beside an entry working it out again, and
+        # two places deciding whether there is a DEM are two places to disagree.
+        # What is checked now is the entry's tooltip, which is also the thing
+        # `setToolTipsVisible` had been dropping on the floor -- a grey door with
+        # its reason unreadable.
+        check("with no DEM the entry is off, and its reason is the DEM",
               window.panel.dem is None
-              and not window.panel.fit_button.isEnabled()
-              and "DEM" in window.panel.fit_button.toolTip(),
-              window.panel.fit_button.toolTip()[:58])
+              and not window.fit_action.isEnabled()
+              and "DEM" in window.fit_action.toolTip(),
+              window.fit_action.toolTip()[:58])
 
         relief = plane_dem(tmp)
         elsewhere = plane_dem(tmp, "utm32.tif", crs="EPSG:25832")
@@ -2556,7 +2595,7 @@ def main():
 
         check("a DEM in another projection turns it off too, naming both",
               crossed is not None
-              and not crossed.panel.fit_button.isEnabled()
+              and not crossed.fit_action.isEnabled()
               and "25832" in (crossed.panel.dem_said or "")
               and "25833" in (crossed.panel.dem_said or ""),
               (crossed.panel.dem_said or "nothing said")[:58])
@@ -2573,7 +2612,7 @@ def main():
         panel = fitting.panel
 
         check("and a DEM these traces can be read against turns it on",
-              panel.fit_button.isEnabled() and panel.dem_said is None)
+              fitting.fit_action.isEnabled() and panel.dem_said is None)
 
         rows = {
             structure.ident: n
@@ -4008,23 +4047,77 @@ def main():
             action.text() for action in fitting.menuBar().actions()
         ]
 
-        check("and there is a menu for it, before the windows one",
-              menus[:2] == ["&Fit", "&Windows"]
+        # Named for its subject, not for its first entry. It was `&Fit` while
+        # the fit window was the only thing on it; five more doors moved in and
+        # the label stayed, so five of the six things this tool does to a trace
+        # spent that time filed under the name of the sixth. Singular, because
+        # every one of them acts on the selected block and on no other.
+        check("and there is a menu named for the trace, before the windows one",
+              menus[:2] == ["&Trace", "&Windows"]
               and fitting.fit_action.shortcut().toString() == "Ctrl+D",
               f"{', '.join(menus)} -- {fitting.fit_action.shortcut().toString()}")
+
+        entries = [
+            action.text()
+            for action in fitting.menuBar().actions()[0].menu().actions()
+            if not action.isSeparator()
+        ]
+
+        check("and its entries no longer each repeat what the menu now says once",
+              not any("along this trace" in entry for entry in entries),
+              ", ".join(entries))
+
+        # Without this the tooltips below it are set and never shown, which is
+        # how the refusal on a grey entry came to be written for nobody.
+        check("and the menu shows what its entries have to say for themselves",
+              fitting.menuBar().actions()[0].menu().toolTipsVisible())
+
+        # The one entry that does not ask, and the distinction Qt's ellipsis is
+        # for: the five above open a window and this writes a line into the box,
+        # which is what the panel's `+ span` button did. `use` is here because it
+        # is the one claim in the format with no window to make it in.
+        plain = [entry for entry in entries if not entry.endswith("...")]
+
+        check("and exactly one entry presses rather than asks, which is `Span`",
+              plain == ["&Span"], str(plain))
+
+        before_span = fitting.panel.text.toPlainText()
+        fitting.span_action.trigger()
+        QtWidgets.QApplication.processEvents()
+
+        added = [
+            line for line in fitting.panel.text.toPlainText().splitlines()
+            if line not in before_span.splitlines()
+        ]
+
+        check("pressing it writes the template the button used to write",
+              added == [tool.SPAN_TEMPLATE], str(added))
+
+        check("with the first end armed, so a shift-click on the map fills it",
+              fitting.panel.text.textCursor().selectedText() == "*",
+              repr(fitting.panel.text.textCursor().selectedText()))
+
+        # And from the panel, which is the window the box is in: a `QAction` on
+        # the map window's menu bar reaches the map window, and that was the
+        # whole of the failure `_build_shortcuts` now covers.
+        check("and it is reachable from the window the box is actually in",
+              fitting.span_action in fitting.panel_window.actions())
+
+        fitting.panel._redraw()
+        QtWidgets.QApplication.processEvents()
 
         fitting.select(rows["VEE"])
         QtWidgets.QApplication.processEvents()
 
         before_window = fitting.panel.text.toPlainText()
-        fitting.panel.fit_button.click()
+        fitting.fit_action.trigger()
         QtWidgets.QApplication.processEvents()
 
-        check("the button opens it instead of writing, which is what `...` says",
+        check("the entry opens it instead of writing, which is what `...` says",
               fitting.fit_window.isVisible()
               and fitting.panel.text.toPlainText() == before_window
-              and fitting.panel.fit_button.text().endswith("..."),
-              fitting.panel.fit_button.text())
+              and fitting.fit_action.text().endswith("..."),
+              fitting.fit_action.text())
 
         check("and it says which trace it is about, and how long that trace is",
               "VEE" in fit_ui.about.text() and " m" in fit_ui.about.text(),

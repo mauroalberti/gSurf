@@ -672,7 +672,7 @@ class Document:
         Neither of them gates what is in the block. `_version` refuses a file
         *ahead* of the library and nothing else, and a file that has already
         loaded cannot be ahead of it; no line is read differently for the
-        version written over it. So the `span use` the `+ span` button writes --
+        version written over it. So the `span use` the `Span` entry writes --
         which is 0.2 -- goes into a file that says `gstruct 0.1` without a word,
         and that is how either curation in the AOI can be edited at all, since
         both of them declare 0.1. The upgrade is quiet in the direction nobody
