@@ -875,9 +875,15 @@ def main():
         # the other six are on its menu bar, which is in it, so they already
         # reach it. Adding them here as well would register each twice on one
         # window -- Qt's ambiguous overload, which fires neither.
+        # By name and not by position: `&File` sits in front of it since the
+        # GeoPackage export, and indexing `[0]` here would have gathered the
+        # shortcuts of a menu that has none and called the set empty.
+        trace_menu = next(action.menu() for action in window.menuBar().actions()
+                          if action.text() == "&Trace")
+
         on_the_menu = {
             action.shortcut().toString()
-            for action in window.menuBar().actions()[0].menu().actions()
+            for action in trace_menu.actions()
             if not action.shortcut().isEmpty()
         }
 
@@ -4067,14 +4073,21 @@ def main():
         # the label stayed, so five of the six things this tool does to a trace
         # spent that time filed under the name of the sixth. Singular, because
         # every one of them acts on the selected block and on no other.
+        # Relative order and naming, not position: `&File` moved in front of
+        # these two when the GeoPackage export arrived, which is where every
+        # other application puts it. The claim here was never that `&Trace` is
+        # the first menu -- it is that it is named for its subject and comes
+        # before the windows one.
         check("and there is a menu named for the trace, before the windows one",
-              menus[:2] == ["&Trace", "&Windows"]
+              "&Trace" in menus and "&Windows" in menus
+              and menus.index("&Trace") < menus.index("&Windows")
               and fitting.fit_action.shortcut().toString() == "Ctrl+D",
               f"{', '.join(menus)} -- {fitting.fit_action.shortcut().toString()}")
 
         entries = [
             action.text()
-            for action in fitting.menuBar().actions()[0].menu().actions()
+            for action in fitting.menuBar().actions()[menus.index("&Trace")]
+            .menu().actions()
             if not action.isSeparator()
         ]
 
@@ -4084,8 +4097,70 @@ def main():
 
         # Without this the tooltips below it are set and never shown, which is
         # how the refusal on a grey entry came to be written for nobody.
+        # The trace menu by name. Asked of `actions()[0]` this passed off the
+        # `&File` menu that moved in front of it -- which also sets the flag, so
+        # the check would have gone on passing with the flag dropped from the
+        # menu it is actually about.
         check("and the menu shows what its entries have to say for themselves",
-              fitting.menuBar().actions()[0].menu().toolTipsVisible())
+              fitting.menuBar().actions()[menus.index("&Trace")]
+              .menu().toolTipsVisible())
+
+        # -- the way out to QGIS ------------------------------------------
+
+        # The export is checked in full in `check_exports.py`, against the real
+        # corpus and against five edits made the way QGIS makes them. What is
+        # checked here is the only part of it that belongs to this window: that
+        # the entry is on the file menu rather than the trace one, and that the
+        # text it exports is the text on screen.
+        file_entries = [
+            action.text()
+            for action in fitting.menuBar().actions()[menus.index("&File")]
+            .menu().actions()
+            if not action.isSeparator()
+        ]
+
+        check("the export is on the file menu, not on the trace one",
+              file_entries == ["&Export to GeoPackage..."]
+              and not any("Export" in entry for entry in entries),
+              ", ".join(file_entries))
+
+        exported = Path(tempfile.mkdtemp()) / "from_the_editor.gpkg"
+
+        # The dialog answered, rather than put on the screen: offscreen Qt would
+        # sit on a modal for ever, and the question is not what is being checked.
+        asked = []
+        original = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getSaveFileName = (
+            lambda *args, **kwargs: (asked.append(args) or (str(exported), ""))
+        )
+        try:
+            exported_ok = fitting.export_geopackage()
+        finally:
+            QtWidgets.QFileDialog.getSaveFileName = original
+
+        check("it writes a GeoPackage and says so", exported_ok and exported.exists(),
+              f"{exported.stat().st_size} bytes" if exported.exists() else "nothing")
+
+        # The claim in the handler's docstring, and the one that matters: an
+        # export made while the window holds unsaved splices must carry those,
+        # not the bytes still on disk.
+        from gsurf import exports
+
+        rebuilt, _ = exports.from_geopackage(str(exported))
+        carried, _ = exports.source_of(str(exported))
+
+        check("what it exported is the text on screen, not the file on disk",
+              carried == fitting.document.text(),
+              "the document's own text" if carried == fitting.document.text()
+              else f"{len(carried or '')} chars vs {len(fitting.document.text())}")
+
+        check("and that text round-trips back out of the GeoPackage",
+              tool.module().dumps(rebuilt)
+              == tool.module().dumps(tool.module().loads(fitting.document.text())))
+
+        check("the suggested name is the document's, with the other suffix",
+              asked and str(fitting.document.path.with_suffix(".gpkg")) in asked[0],
+              str(fitting.document.path.with_suffix(".gpkg").name))
 
         # The one entry that does not ask, and the distinction Qt's ellipsis is
         # for: the five above open a window and this writes a line into the box,

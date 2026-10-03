@@ -8554,6 +8554,25 @@ class EditorWindow(QtWidgets.QMainWindow):
         were saying it each, under a menu that now says it once.
         """
 
+        # Its own menu, and first, which is where every other application puts
+        # it: `&Trace` promises in its own first paragraph that every entry acts
+        # on the selected block and on no other, and this one acts on the file.
+        # A `File` menu holding one entry is less of a lie than a `Trace` menu
+        # holding something that is not about a trace -- and Save is where it has
+        # always been, on the panel, because moving it here would be a second
+        # place for it.
+        outward = self.menuBar().addMenu("&File")
+        outward.setToolTipsVisible(True)
+
+        self.export_action = QtGui.QAction("&Export to GeoPackage...", self)
+        self.export_action.setToolTip(
+            "Write the whole file out as QGIS layers, editable there and "
+            "readable back as gstruct. Exports what is on screen, unsaved "
+            "splices included -- not what is on disk."
+        )
+        self.export_action.triggered.connect(self.export_geopackage)
+        outward.addAction(self.export_action)
+
         trace = self.menuBar().addMenu("&Trace")
 
         # Without this, `QMenu` shows none of the tooltips set below -- which is
@@ -11010,6 +11029,77 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
 
         return self._write(name) if name else False
+
+    def export_geopackage(self):
+        """
+        The whole file out to QGIS layers, and readable back as gstruct.
+
+        **What goes is the text on screen, not the file on disk.** The document
+        is the thing being worked on, and an export that quietly wrote
+        yesterday's file while the window showed today's splices would be the
+        worst of the two possible errors -- so `document.text()` is both what is
+        exported and what travels in the GeoPackage as provenance, which also
+        makes the two agree by construction instead of by luck.
+
+        The dataset is re-parsed from that text rather than taken from
+        `document.dataset`: the two should be the same object's view of the same
+        bytes, and re-reading costs a fifth of a second on the largest file here
+        while removing the question.
+        """
+
+        suggested = self.document.path.with_suffix(".gpkg")
+
+        # Over the panel, for `save_as`'s reason: this is about the file, and
+        # the file is what that window is.
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.panel_window,
+            "Export to GeoPackage",
+            str(suggested),
+            "GeoPackage (*.gpkg)",
+        )
+
+        if not name:
+            return False
+
+        text = self.document.text()
+
+        try:
+            from gsurf import exports
+
+            report = exports.to_geopackage(
+                module().loads(text),
+                name,
+                source_text=text,
+                source_path=str(self.document.path),
+            )
+        except ImportError as err:
+            # geopandas and pyogrio are a layer this tool does not otherwise
+            # need, and the README calls them optional: a session that opened a
+            # file and edited it must not find that out through a traceback.
+            QtWidgets.QMessageBox.warning(
+                self.panel_window,
+                "Not exported",
+                f"The GeoPackage export needs geopandas and pyogrio, which are "
+                f"not installed here.\n\n{err}",
+            )
+            return False
+        except (OSError, ValueError) as err:
+            QtWidgets.QMessageBox.critical(self.panel_window, "Not exported", str(err))
+            return False
+
+        counted = ", ".join(
+            f"{report.counts[layer]} {layer[3:]}"
+            for layer in exports.LAYERS
+            if report.counts.get(layer)
+        )
+
+        self.say(
+            f"exported to {name} -- {counted}"
+            + (" (from the text on screen, which is unsaved)"
+               if self.document.dirty else "")
+        )
+
+        return True
 
     def _write(self, target):
         try:

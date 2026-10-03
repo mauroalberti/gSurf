@@ -42,6 +42,7 @@ CHECKS = (
     ("check_recent.py", "the answers, kept from one run to the next"),
     ("check_sections.py", "sections: one profile dragged, the bundle on release"),
     ("check_section_files.py", "a section saved to a file, and opened somewhere else"),
+    ("check_exports.py", "a .gstruct out to a GeoPackage, edited as QGIS would, and back"),
 )
 
 

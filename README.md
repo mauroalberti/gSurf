@@ -90,6 +90,15 @@ rather than copying it:
   agreed in one file. A dataset arrives as records, a curation lays over records
   already open, records go back out as a curation of the differences, and a file
   is held as the text it is for the editor to splice.
+- `gsurf/exports.py` — the way out of it into a GeoPackage that QGIS can edit
+  and that reads back as the same `.gstruct`. The complete projection and not a
+  flattening: every record of the model is a row, including the spans,
+  lineations and planeless records the consumption export has no column for, so
+  a dataset rebuilds from the layers alone rather than being patched onto the
+  file it came from. The anchors are what is stored and `s` is re-derived, which
+  is what makes the trace geometry editable there; `from_geopackage` is in the
+  same module because "lossless" is otherwise a claim about columns that nobody
+  has checked. No Qt in it either.
 - `gsurf/imports.py` — the way into that format from a mapped layer, which is
   the direction neither script in the gstruct repository runs: `export_gsurf.py`
   goes out to a GeoPackage, and `export_geology.py` comes in from one survey's
@@ -158,7 +167,15 @@ answer to a file and reads it back to find it still on the trace it came off,
 to 10⁻¹⁰ m. `check_section_files.py` saves a section, reopens it, and asks for
 the bundle back line for line — then writes the same one out in three other
 projections to find the two ends landing within nanometres and the middle of the
-line moving by the 2 m the geometry says it must. `check_interaction.py`
+line moving by the 2 m the geometry says it must. `check_exports.py` has the
+outside it asserts against handed to it: the real files in the AOI, exported to
+a GeoPackage and read back, with the two texts compared byte for byte rather
+than by record counts — which agree happily while a plane loses half a degree.
+Its other half is five edits made the way QGIS makes them, including the one
+that is silent and changes an answer: a span digitised by hand leaves
+`open_start` NULL, and NULL read as a boolean is true, so the naive reading
+throws away the geometry just drawn and spreads the value along the whole trace.
+`check_interaction.py`
 in particular was written to run against either side of a refactor, which is
 how the map was lifted out of the intersection tool without changing it — the
 same clicks, the same window offsets, the same point counts, digit for digit.
@@ -567,15 +584,22 @@ The traces slot takes a `.gstruct` directly too, which is the same reader coming
 in through the other door: one record per plane the file carries, the structure
 `kind` as the category, a fit's own interval as its span, and a trace carrying
 no plane offered to `Fit from the traces` like any other. What that buys is the
-anchor. A GeoPackage has nowhere to put `@x,y`, so an export flattens it to a
-progressive — and a progressive is a reading off a ruler that the projection and
-the digitising both move. Read here, it is re-derived against the geometry in
+anchor. `export_gsurf.py` in the gstruct repository flattens it to a progressive
+— it is an export for drawing a section, and a progressive is a reading off a
+ruler that the projection and the digitising both move. (`gsurf/exports.py`,
+which came later, keeps the anchor as a point geometry and re-derives the
+progressive on the way back; this paragraph is about the flattened one.) Read here, it is re-derived against the geometry in
 hand: `check_gstruct.py` opens one file in two projections and once more with
 its trace redrawn, and the measurement stays on the same ground each time while
 the progressive moves 1.35 m between UTM zones. `gsurf/curation.py` is the only
-module that imports gstruct, which is on no index and so cannot be declared in
-`pyproject.toml`; install it from its own repository, or the two buttons say so
-plainly instead of raising.
+module that reaches gstruct at run time, which is on no index and so cannot be
+declared in `pyproject.toml`; install it from its own repository, or the two
+buttons say so plainly instead of raising. `gsurf/exports.py` needs the library
+as much as anything here and still goes through `curation.module()` rather than
+importing it — that gate also refuses a library older than 0.2, and the export
+carries `use` spans, which a 0.1 library would hand back without having acted
+on. Its own `import gstruct` is under `TYPE_CHECKING`, so it is annotations and
+not a second door.
 
 **`Fit from the traces` reads the attitudes off the map instead of the
 columns.** A contact crossing relief is a plane already: where the line goes in
@@ -1974,6 +1998,33 @@ that is handled; a file declaring no CRS at all is read as the session's and
 says so in the status bar, rather than being refused — though if that session is
 itself in degrees, the refusal above applies and names the session as where the
 projection came from, since that is a different thing to go and fix.
+
+**`File — Export to GeoPackage...`, and the way back.** The whole file out as six
+QGIS layers — traces, attitudes, lineations, fits, spans, observations — plus two
+plain tables holding the header needed to rebuild and the source text as
+provenance. It is in a `File` menu of its own and not in `Trace`, which promises
+that everything on it acts on the selected block; and what it exports is the
+text on screen, unsaved splices included, rather than the bytes on disk, which
+is also what travels as provenance so the two agree by construction.
+
+The point of it is that `gsurf.exports.from_geopackage` reads it back as the
+same `.gstruct`. Edit the layers in QGIS — retype a dip, drag an anchor, reshape
+a trace, digitise a span, delete a row — and only what was edited comes back
+changed: `montealpi_01.gstruct` taken out, edited in QGIS and read back comes
+to 5037 lines against 5036, of which 5035 are identical byte for byte, comments
+and all — one line rewritten where the dip and the anchor were, one added where
+the span was digitised, and nothing else moved. The trace geometry is editable because the anchors are
+what is stored and the progressive is re-derived, so moving a vertex re-projects
+the records anchored to it, which is the right answer rather than a loss.
+
+Two things to know before using it as a round trip. A comment naming a vertex
+does not survive a reshape of the path it names — it is dropped rather than slid
+onto a neighbouring vertex, and the report says which structure paid. And a
+reading amended in QGIS is amended without the care `Ctrl+R` takes: nothing out
+there knows that a `raw=` is the measurement as the survey wrote it, so a plane
+retyped in the attribute table will sit beside a `raw=` that now contradicts it.
+There is no importer on the launcher yet — the reader is a module function and
+`check_exports.py` is what exercises it.
 
 ### Usage — import, lines to .gstruct
 
