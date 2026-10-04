@@ -36,7 +36,9 @@ the ends `open_start`/`open_end` say are anchored.
 the geologist's reasoning and the only place it is written down, so they travel:
 `comment` is the inline one, `lead_json` the lines above a record. They are
 carried, not edited -- QGIS has no reason to maintain them, and nothing here
-pretends it will. Two things are weaker than that:
+pretends it will. What `comment` *is* edited for is being typed into, which the
+format spells `#`-first and a geologist does not: `_tail` adds the marker, and
+says what it cost not to. Two things are weaker than that:
 
   - **Per-vertex comments.** Those are keyed by vertex index, and editing a
     geometry destroys vertex identity -- inserting a vertex before a commented
@@ -550,7 +552,7 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             kind=_text(row["kind"]) or "unknown",
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])),
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         )
         st.path = [] if row["geometry"] is None else [
             (round(x, 2), round(y, 2)) for x, y in row["geometry"].coords]
@@ -575,7 +577,7 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             plane=_plane_of(row["dip_dir"], row["dip"]),
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])) or [],
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         ))
 
     for _, row in frames[LINEATIONS].iterrows():
@@ -588,7 +590,7 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             trend=_number(row["trend"]), plunge=_number(row["plunge"]),
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])) or [],
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         ))
 
     for _, row in frames[FITS].iterrows():
@@ -603,7 +605,7 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             start=head, end=tail,
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])) or [],
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         ))
 
     for _, row in frames[SPANS].iterrows():
@@ -618,7 +620,7 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             start=head, end=tail,
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])) or [],
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         ))
 
     for _, row in frames[OBSERVATIONS].iterrows():
@@ -628,10 +630,22 @@ def from_geopackage(path: str) -> Tuple[gs.Dataset, Report]:
             plane=_plane_of(row["dip_dir"], row["dip"]),
             attrs=_attrs_of(_text(row["attrs"])),
             lead=_lead_of(_text(row["lead_json"])),
-            tail=_text(row["comment"]) or "",
+            tail=_tail(row["comment"]),
         ))
 
-    report.counts = {name: len(frames[name]) for name in LAYERS}
+    # What was *rebuilt*, not what was read. The two differ by exactly the rows
+    # the loop above could not place, and counting the frames instead reported
+    # the loss away: rename one trace in QGIS and its records are orphaned, yet
+    # the frames still hold them, so the line said "21 attitudes" of a dataset
+    # that had 20. The notes named the loss while the number denied it.
+    report.counts = {
+        TRACES: len(ds.structures),
+        ATTITUDES: sum(len(st.attitudes) for st in ds.structures),
+        LINEATIONS: sum(len(st.lineations) for st in ds.structures),
+        FITS: sum(len(st.fits) for st in ds.structures),
+        SPANS: sum(len(st.spans) for st in ds.structures),
+        OBSERVATIONS: len(ds.observations),
+    }
     report.crs = ds.crs
     return ds.resolve(), report
 
@@ -718,6 +732,53 @@ def _flag(value) -> bool:
     except (ImportError, TypeError, ValueError):
         pass
     return bool(int(value)) if str(value).strip() not in ("", "nan") else False
+
+
+def _tail(value) -> str:
+    """The inline comment, as a column called `comment` invites somebody to type it.
+
+    The format defines a tail as the comment *from its `#` onwards*, and
+    `gstruct._emit` appends it to the line with nothing in between -- so a
+    sentence typed into this column without one comes back welded to the record:
+    `plane 275/68typed in QGIS`. That file is then written, reported as imported
+    and remembered in the `traces` slot, and refused next session with
+    `could not convert string to float: '68typed'` -- a failure one step removed
+    from the column that caused it, naming neither.
+
+    Nothing in the corpus caught this: every `#` in it is a whole line above a
+    record (`lead`), so the tails round-tripping here were only ever the ones
+    `dumps` had written, `#` included. `_flag`'s reasoning applies unchanged --
+    read what was typed the way it was meant, not the way it was stored -- and
+    so does its lesson about the quiet case being the dangerous one: see the
+    newline below, which asks for no `#` at all and still loses a line.
+    """
+    got = _text(value)
+
+    if got is None:
+        return ""
+
+    marked = got.lstrip().startswith("#")
+
+    # A text cell in QGIS takes newlines and a tail is one line by construction,
+    # so a two-line comment does not arrive as a long comment: the second line
+    # lands in the file as a line of its own, and `seconda riga` came back as
+    # `structure X seconda=riga` -- prose read as an attribute, no error, no
+    # note. Collapsed rather than refused, because the words are the geologist's
+    # and a space keeps all of them. Guarded by the newline rather than done
+    # always, which is what keeps the branch below byte-exact: a tail that came
+    # out of a file cannot reach this, the parser having split on lines first.
+    if "\n" in got or "\r" in got:
+        joined = " ".join(got.split())
+
+        return f"  {joined}" if marked else f"  # {joined}"
+
+    # Marked already, including the `  # ` that `dumps` writes: left exactly as
+    # it is, or a round trip would start reindenting its own output.
+    if marked:
+        return got
+
+    # Two spaces, which is what the format's own writer puts before a tail.
+    return f"  # {got.strip()}"
 
 
 def _number(value) -> Optional[float]:

@@ -186,6 +186,17 @@ def check_fixture(tmp):
     check("the fixture round-trips to the canonical text", after == canonical,
           "" if after == canonical else first_difference(canonical, after))
 
+    # Canonical against canonical cannot see a text that neither side can read:
+    # until 04.10.2026 `gstruct.dumps` wrote the planeless attitude below as
+    # `plane None`, which its own parser refuses, and the assertion above passed
+    # all along -- both texts were malformed identically. What an import promises
+    # is not that two writers agree, it is that the file opens next session.
+    try:
+        reopened, refused = gs.loads(after), ""
+    except ValueError as err:
+        reopened, refused = None, f"{type(err).__name__}: {err}"
+    check("and what it wrote is a text that opens", reopened is not None, refused)
+
     one = back.structures[0]
     check("the lineation kept its trend and plunge",
           one.lineations and one.lineations[0].trend == 45.5
@@ -342,6 +353,145 @@ def check_vertex_comments(tmp):
           str(report.reshaped))
 
 
+# --------------------------------------------- what a hand in the table writes
+
+def check_typed_in(tmp):
+    """The two columns that punish being filled in the obvious way.
+
+    Both of these were found by driving the real handlers on `montealpi_01`
+    rather than by reading: the corpus could not have caught either, because it
+    carries no inline comment at all -- every `#` in it is a whole line above a
+    record -- and it has no reason to rename anything.
+    """
+
+    print("\n-- the columns a hand typing into them could break --")
+
+    import pandas as pd
+    import geopandas as gpd
+    import pyogrio
+    from shapely.geometry import Point
+
+    ds = gs.loads(FIXTURE)
+    gpkg = str(Path(tmp) / "typed.gpkg")
+    exports.to_geopackage(ds, gpkg, source_text=FIXTURE)
+
+    # Two blank `comment` cells filled in the obvious way, and the difference
+    # between them is the whole severity of this: a tail is appended to the end
+    # of the line, so what it welds itself to depends on what the record ends
+    # with. The added attitude carries no attributes, so its line ends in a
+    # number -- the case found on `montealpi_01`; the lineation keeps
+    # `sense=normal`, so there the weld lands inside an attribute value instead.
+    frame = pyogrio.read_dataframe(gpkg, layer=exports.ATTITUDES)
+    marked = frame.loc[0, "comment"]          # `  # in coda alla riga`, untouched
+
+    # A measurement added in QGIS, with a comment typed beside it.
+    added = frame.iloc[[0]].copy()
+    added["seq"], added["attrs"], added["lead_json"] = 9, None, None
+    added["comment"] = "misurato col compasso"
+    added["geometry"] = [Point(115.00, 215.00)]
+    frame = gpd.GeoDataFrame(pd.concat([frame, added], ignore_index=True),
+                             crs=frame.crs)
+    pyogrio.write_dataframe(frame, gpkg, layer=exports.ATTITUDES,
+                            driver="GPKG", append=False)
+
+    frame = pyogrio.read_dataframe(gpkg, layer=exports.LINEATIONS)
+    frame.loc[0, "comment"] = "anche questo"
+    pyogrio.write_dataframe(frame, gpkg, layer=exports.LINEATIONS,
+                            driver="GPKG", append=False)
+
+    back, report = exports.from_geopackage(gpkg)
+    rebuilt = gs.dumps(back)
+    typed = next((line for line in rebuilt.splitlines() if "compasso" in line), "")
+
+    # The loud half, and the assertion that matters is not how the line looks:
+    # it is that the file opens. Welded to the record -- `plane 231.4/60.0misurato
+    # col compasso` -- it was written, reported as imported and remembered in the
+    # `traces` slot, then refused a session later with
+    # `could not convert string to float: '60.0misurato'`.
+    opened = None
+    try:
+        gs.loads(rebuilt)
+    except Exception as err:
+        opened = f"{type(err).__name__}: {err}"
+
+    check("a comment typed where the line ends in a number still opens",
+          opened is None, opened or "")
+    check("and it is a comment rather than welded to the number",
+          "# misurato col compasso" in typed and "60.0misurato" not in typed,
+          typed or "not found")
+
+    # The quiet half, and the worse of the two: this line parses either way, so
+    # before the fix the attribute silently swallowed the sentence --
+    # `sense=normalanche questo` -- and the comment stopped being a comment with
+    # nothing anywhere saying so. Asserted on the line and not on `back`, which
+    # is the dataset *before* `dumps` and so cannot show a weld at all: written
+    # that way first, this check read `sense` as "normal" from the old reader too.
+    lineated = next((line for line in rebuilt.splitlines()
+                     if "anche questo" in line), "")
+    check("where the line ends in an attribute, the value is not eaten",
+          "sense=normal  # anche questo" in lineated, lineated or "not found")
+
+    check("a comment that already had its `#` is untouched, spacing included",
+          any(at.tail == marked
+              for st in back.structures for at in st.attitudes if at.tail),
+          repr(marked))
+
+    # The quietest of the three, and it needs no `#` to go wrong. A text cell in
+    # QGIS takes newlines; a tail is one line. Left as typed, the second line
+    # arrives in the file as a line of its own and is read as something else
+    # entirely -- `seconda riga` came back as `structure X seconda=riga`, an
+    # attribute invented out of prose, with nothing raised anywhere.
+    frame = pyogrio.read_dataframe(gpkg, layer=exports.ATTITUDES)
+    frame.loc[0, "comment"] = "due righe\nseconda riga"
+    pyogrio.write_dataframe(frame, gpkg, layer=exports.ATTITUDES,
+                            driver="GPKG", append=False)
+
+    twice, _ = exports.from_geopackage(gpkg)
+    text = gs.dumps(twice)
+
+    # Guarded, or a regression in any of the cases above arrives here as a
+    # traceback that takes the rest of the section with it instead of a failure.
+    try:
+        settled = gs.dumps(gs.loads(text))
+    except Exception as err:
+        settled = f"{type(err).__name__}: {err}"
+
+    check("a comment typed over two lines stays one comment",
+          "# due righe seconda riga" in text
+          and not any(line.strip() == "seconda riga" for line in text.splitlines()),
+          next((line for line in text.splitlines() if "righe" in line), "not found"))
+    # Re-reading its own output is the assertion that catches an invented
+    # attribute: the stray line only becomes `seconda=riga` on the way back in.
+    check("and the text it writes means the same thing when read again",
+          settled == text and "seconda=riga" not in settled,
+          next((line for line in settled.splitlines()
+                if "structure" in line), "not found"))
+
+    # And the rename, which is the one edit the join key cannot survive.
+    exports.to_geopackage(gs.loads(FIXTURE), gpkg, source_text=FIXTURE)
+    frame = pyogrio.read_dataframe(gpkg, layer=exports.TRACES)
+    frame.loc[0, "ident"] = "RENAMED"
+    pyogrio.write_dataframe(frame, gpkg, layer=exports.TRACES,
+                            driver="GPKG", append=False)
+
+    rows = {name: len(pyogrio.read_dataframe(gpkg, layer=name))
+            for name in exports.LAYERS}
+    back, report = exports.from_geopackage(gpkg)
+    kept = sum(len(st.attitudes) for st in back.structures)
+
+    check("renaming a trace orphans its records, and that is said",
+          any("unknown structure" in note for note in report.notes),
+          f"{len(report.notes)} note(s)")
+    # The precondition, so this cannot pass by the two numbers both being wrong.
+    check("the layer still holds the rows, so counting them would miss the loss",
+          rows[exports.ATTITUDES] > kept,
+          f"{rows[exports.ATTITUDES]} row(s) in the layer, {kept} rebuilt")
+    check("so the count reports what was rebuilt, not what was read",
+          report.counts[exports.ATTITUDES] == kept
+          and report.counts[exports.TRACES] == len(back.structures),
+          f"{report.counts[exports.ATTITUDES]} reported, {kept} rebuilt")
+
+
 # ------------------------------------------------------- what qgSurf asks for
 
 def check_consumable(tmp):
@@ -404,6 +554,7 @@ def main():
         check_fixture(tmp)
         check_edits(tmp)
         check_vertex_comments(tmp)
+        check_typed_in(tmp)
         check_consumable(tmp)
 
     print()

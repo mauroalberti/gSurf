@@ -4203,6 +4203,23 @@ def main():
               and "and 3 more" in crowded,
               crowded)
 
+        # The notes were the one list left uncapped, and they are the easiest of
+        # the three to make long: `from_geopackage` writes one per *record* it
+        # could not place, not one per structure, so renaming a single trace in
+        # the attribute table already produces four of them. Renaming a few makes
+        # the line unreadable, which is the failure `most` exists to prevent.
+        noted = tool.EditorWindow._import_said(
+            exports.Report(counts={"gs_traces": 393},
+                           notes=[f"fit on unknown structure 'L{n:04d}'"
+                                  for n in range(20)]),
+            Path("elsewhere.gstruct"),
+        )
+
+        check("and the notes are capped the same way, being one per record",
+              "L0005" in noted and "L0006" not in noted
+              and "and 14 more" in noted,
+              noted)
+
         back = Path(tempfile.mkdtemp()) / "read_back.gstruct"
 
         was_open = fitting.document.path

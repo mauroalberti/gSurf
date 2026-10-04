@@ -2017,12 +2017,32 @@ the span was digitised, and nothing else moved. The trace geometry is editable b
 what is stored and the progressive is re-derived, so moving a vertex re-projects
 the records anchored to it, which is the right answer rather than a loss.
 
-Two things to know before using it as a round trip. A comment naming a vertex
+Three things to know before using it as a round trip. A comment naming a vertex
 does not survive a reshape of the path it names — it is dropped rather than slid
-onto a neighbouring vertex, and the report says which structure paid. And a
+onto a neighbouring vertex, and the report says which structure paid. A
 reading amended in QGIS is amended without the care `Ctrl+R` takes: nothing out
 there knows that a `raw=` is the measurement as the survey wrote it, so a plane
 retyped in the attribute table will sit beside a `raw=` that now contradicts it.
+And **`ident` is the join key**: rename a trace in `gs_traces` and the attitudes,
+fits and spans keyed to it are orphaned rather than renamed with it. They are
+dropped and each one is named in the status line, and the counts there report
+what was rebuilt rather than what was read, so the loss shows up in the number
+too — but renaming is the one edit the layers cannot carry, and relabelling is
+what `label` is for.
+
+The `comment` column is the inline comment of the line, and you may type into it
+in plain prose: a sentence without a leading `#` gets one on the way back in.
+That is a fix and not a nicety — the format defines a tail as the comment from
+its `#` onwards and appends it to the line with nothing in between, so before
+this the sentence welded itself to whatever the record ended with. Where that was
+a number the rebuilt file would not open at all, a session later and naming no
+column; where it was an attribute the value quietly swallowed the sentence
+instead. A comment typed over two lines is collapsed into one for the same
+reason, a tail being one line by construction: left as typed, its second line
+arrived in the file as a line of its own and was read back as an attribute
+invented out of prose. A comment that already carries its `#` is passed through
+untouched, spacing included, so a file that came out of here goes back in byte
+for byte.
 
 **`File — Import from GeoPackage...`.** Beside the export, and it writes a file
 rather than replacing what is on screen. Three reasons, and none of them is

@@ -11335,11 +11335,14 @@ class EditorWindow(QtWidgets.QMainWindow):
         """
         One line: what was rebuilt, where it went, and what it cost.
 
-        The two lists are named and not merely counted, because which structures
-        they are is the whole of their use -- and cut off at `most` for the
-        reason `_where_it_turns` cuts its own off: a QGIS session that redrew
-        half of `montealpi_01` would otherwise put 393 identifiers through a
-        one-line status bar.
+        The three lists are named and not merely counted, because which
+        structures they are is the whole of their use -- and all three are cut
+        off at `most` for the reason `_where_it_turns` cuts its own off: a QGIS
+        session that redrew half of `montealpi_01` would otherwise put 393
+        identifiers through a one-line status bar. The notes were the one list
+        left uncapped, and they are the easiest of the three to make long: they
+        run one per record rather than one per structure, so renaming a single
+        trace in the attribute table already writes four of them.
         """
 
         counted = ", ".join(
@@ -11348,11 +11351,11 @@ class EditorWindow(QtWidgets.QMainWindow):
             if count
         )
 
-        def naming(idents):
-            said = ", ".join(idents[:most])
+        def naming(items, joined=", "):
+            said = joined.join(items[:most])
 
-            return said + (f", and {len(idents) - most} more"
-                           if len(idents) > most else "")
+            return said + (f", and {len(items) - most} more"
+                           if len(items) > most else "")
 
         said = f"{counted} to {target.name}"
 
@@ -11369,7 +11372,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             said += f"; vertex comments dropped on {naming(report.revertexed)}"
 
         if report.notes:
-            said += f"; {'; '.join(report.notes)}"
+            said += f"; {naming(report.notes, '; ')}"
 
         return said
 
