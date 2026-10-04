@@ -364,6 +364,7 @@ def main():
         with_plane,
         with_values,
     )
+    from gsurf import recent as recent_module
     from gsurf.planes import GAP_FADE_CELLS, gaps_on
     from gsurf.session import Session
     from gsurf.tools import editor as tool
@@ -4119,9 +4120,11 @@ def main():
             if not action.isSeparator()
         ]
 
-        check("the export is on the file menu, not on the trace one",
-              file_entries == ["&Export to GeoPackage..."]
-              and not any("Export" in entry for entry in entries),
+        check("the way out and the way back are both on the file menu, in that "
+              "order, and neither is on the trace one",
+              file_entries == ["&Export to GeoPackage...",
+                               "&Import from GeoPackage..."]
+              and not any("port" in entry for entry in entries),
               ", ".join(file_entries))
 
         exported = Path(tempfile.mkdtemp()) / "from_the_editor.gpkg"
@@ -4161,6 +4164,178 @@ def main():
         check("the suggested name is the document's, with the other suffix",
               asked and str(fitting.document.path.with_suffix(".gpkg")) in asked[0],
               str(fitting.document.path.with_suffix(".gpkg").name))
+
+        # -- and the way back from it --------------------------------------
+
+        # The rebuild is `check_exports.py`'s, against the real corpus and byte
+        # for byte. What belongs to this window is the rest of it: that the file
+        # goes beside the GeoPackage instead of over the document, that the
+        # window is left on the file it opened, that the open file cannot be
+        # overwritten without the question, and that the file written is then
+        # the one the launcher offers.
+        print("\n-- the way back from QGIS --\n")
+
+        check("identical texts are said to be identical rather than counted",
+              "identical" in tool.lines_apart("a\nb\n", "a\nb\n"),
+              tool.lines_apart("a\nb\n", "a\nb\n"))
+
+        # Both halves counted, which is what makes it a distance: one retyped
+        # line is a removal and an addition. The number is the whole reason the
+        # question is worth asking -- three lines of real editing has to be
+        # distinguishable from the 172 lines `dumps` rewrites in `merid_faults`
+        # when nothing at all was done in QGIS.
+        check("and one retyped line counts as the two changes it is",
+              "2 line(s)" in tool.lines_apart("a\nb\nc\n", "a\nB\nc\n"),
+              tool.lines_apart("a\nb\nc\n", "a\nB\nc\n"))
+
+        # The reshaped traces are named because which ones they are is the use of
+        # the list -- and cut off, because a session that redrew half of
+        # `montealpi_01` would otherwise put 393 identifiers through a one-line
+        # status bar.
+        crowded = tool.EditorWindow._import_said(
+            exports.Report(counts={"gs_traces": 393},
+                           reshaped=[f"L{n:04d}" for n in range(9)]),
+            Path("elsewhere.gstruct"),
+        )
+
+        check("and a long list of reshaped traces is named up to a point, then counted",
+              "L0005" in crowded and "L0006" not in crowded
+              and "and 3 more" in crowded,
+              crowded)
+
+        back = Path(tempfile.mkdtemp()) / "read_back.gstruct"
+
+        was_open = fitting.document.path
+        was_text = fitting.document.text()
+        was_on_disk = was_open.read_bytes()
+
+        # A scratch store, because `default_settings` is None off-screen on
+        # purpose -- so `Recent.load()` would remember into nothing and the
+        # other half of this handler would be unobservable.
+        scratch = QtCore.QSettings(
+            str(Path(tempfile.mkdtemp()) / "recent.ini"),
+            QtCore.QSettings.Format.IniFormat,
+        )
+        store = recent_module.Recent(scratch)
+
+        opened, saved = [], []
+        was_load = recent_module.Recent.load
+        # Named for what they are and not taken from `original` above, which the
+        # export's own stubbing left holding the save dialog: one name for the
+        # file's first text and for a Qt static method is how a restore puts the
+        # wrong thing back.
+        was_open_dialog = QtWidgets.QFileDialog.getOpenFileName
+        was_save_dialog = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getOpenFileName = (
+            lambda *args, **kwargs: (opened.append(args) or (str(exported), ""))
+        )
+        QtWidgets.QFileDialog.getSaveFileName = (
+            lambda *args, **kwargs: (saved.append(args) or (str(back), ""))
+        )
+        recent_module.Recent.load = staticmethod(lambda: store)
+        try:
+            imported_ok = fitting.import_geopackage()
+        finally:
+            QtWidgets.QFileDialog.getOpenFileName = was_open_dialog
+            QtWidgets.QFileDialog.getSaveFileName = was_save_dialog
+            recent_module.Recent.load = was_load
+
+        check("it writes the rebuilt .gstruct and says so",
+              imported_ok and back.exists(),
+              f"{back.stat().st_size} bytes" if back.exists() else "nothing")
+
+        check("and what it wrote is the canonical text of what was on screen",
+              back.read_text(encoding="utf8")
+              == tool.module().dumps(tool.module().loads(was_text)))
+
+        # The whole of why this writes a file instead of swapping one in: the
+        # document splices per block and never re-serialises, so a window that
+        # took `dumps` output would answer a two-span edit with a file re-sorted
+        # throughout. Nothing here is allowed to move.
+        check("the window is left on the file it opened, text and path both",
+              fitting.document.path == was_open
+              and fitting.document.text() == was_text
+              and was_open.read_bytes() == was_on_disk,
+              f"{fitting.document.path.name}, "
+              f"{'same text' if fitting.document.text() == was_text else 'CHANGED'}")
+
+        check("the name it suggests is beside the GeoPackage, not the open file",
+              saved and str(Path(str(exported)).with_suffix(".gstruct")) in saved[0]
+              and str(was_open) not in saved[0],
+              str(Path(str(exported)).with_suffix(".gstruct").name))
+
+        # The other half of `import_lines`' argument: the file is new, so it is
+        # in no history and the next dialog would offer everything except the
+        # thing just made.
+        remembered = store.entries("traces")
+
+        check("and the file written is what the launcher then offers",
+              remembered
+              and remembered[0].get("path") == str(back)
+              and remembered[0].get("layer") == "structures"
+              and remembered[0].get("role") == "lines",
+              str(remembered[0]) if remembered else "nothing remembered")
+
+        # -- over the open file, which is the case the question is for -----
+
+        # `getSaveFileName` has confirmed the overwrite already; Qt does that on
+        # its own. The second question is the one Qt cannot ask: how far apart
+        # the two texts are, and that this window's Save is now pointing the
+        # wrong way.
+        asked_over = []
+        QtWidgets.QFileDialog.getOpenFileName = (
+            lambda *args, **kwargs: (str(exported), "")
+        )
+        QtWidgets.QFileDialog.getSaveFileName = (
+            lambda *args, **kwargs: (str(was_open), "")
+        )
+        was_question = QtWidgets.QMessageBox.question
+        QtWidgets.QMessageBox.question = staticmethod(
+            lambda *args, **rest: (asked_over.append(args[2] if len(args) > 2 else "")
+                                   or QtWidgets.QMessageBox.StandardButton.Cancel)
+        )
+        recent_module.Recent.load = staticmethod(lambda: store)
+        try:
+            refused_ok = fitting.import_geopackage()
+        finally:
+            QtWidgets.QFileDialog.getOpenFileName = was_open_dialog
+            QtWidgets.QFileDialog.getSaveFileName = was_save_dialog
+            QtWidgets.QMessageBox.question = was_question
+            recent_module.Recent.load = was_load
+
+        check("writing over the open file asks before it does",
+              len(asked_over) == 1, f"asked {len(asked_over)} time(s)")
+
+        # The precondition that gives the next check its teeth, asserted rather
+        # than assumed: here the rebuilt text matches the window exactly and the
+        # file on disk by nothing, because the session above edited and did not
+        # save. So the two candidate baselines give opposite answers, and a
+        # question measured against the wrong one is visible in one word.
+        rebuilt_text = back.read_text(encoding="utf8")
+        apart_on_disk = changed_lines(was_open.read_text(encoding="utf-8"),
+                                      rebuilt_text)
+
+        check("the fixture can tell the two baselines apart at all",
+              rebuilt_text == fitting.document.text() and apart_on_disk,
+              f"identical to the window, {len(apart_on_disk)} line(s) off the file")
+
+        # Measured against the file, which is what an overwrite destroys. Written
+        # against `document.text()` first, and this is the check that caught it:
+        # it said "identical to it, line for line" of a document whose file was
+        # 76 bytes different -- true of the window, and the reassuring half of a
+        # sentence about a file.
+        check("and the question measures the file it is about to overwrite",
+              asked_over and f"{len(apart_on_disk)} line(s)" in asked_over[0],
+              (asked_over[0].splitlines()[2] if asked_over else "nothing"))
+
+        check("and says where this window's Save now points",
+              asked_over and "Save from here" in asked_over[0]
+              and "not what is being overwritten either" in asked_over[0],
+              (asked_over[0].replace("\n\n", " | ") if asked_over else "nothing"))
+
+        check("and cancelling leaves the file on disk untouched",
+              not refused_ok and was_open.read_bytes() == was_on_disk,
+              f"{len(was_open.read_bytes())} bytes, as before")
 
         # The one entry that does not ask, and the distinction Qt's ellipsis is
         # for: the five above open a window and this writes a line into the box,

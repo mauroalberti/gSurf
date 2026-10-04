@@ -147,8 +147,9 @@ class Launcher(QtWidgets.QMainWindow):
         returns a path: the file is new, so it is in no history and no project,
         and the next dialog would offer everything except the thing just made.
         It goes in as a spec and not a bare path because that is the shape the
-        `traces` slot restores from -- with no columns named, the format saying
-        what everything is being the reason a `.gstruct` needs none.
+        `traces` slot restores from -- `gstruct_spec` is that shape, and it is
+        shared with the editor's GeoPackage import, which has the same new file
+        to hand over for the same reason.
 
         The DEM slot goes down with it, and not so that anything is read off it
         here: a layer in degrees names no datum, and what the rest of this work
@@ -158,20 +159,14 @@ class Launcher(QtWidgets.QMainWindow):
         """
 
         from .imports import run
+        from .sources import gstruct_spec
 
         written = run(self, alongside=self.chosen.get("dem"))
 
         if written is None:
             return None
 
-        spec = dict(
-            path=written,
-            role="lines",
-            layer="structures",
-            dip_dir_field=None,
-            dip_field=None,
-            is_rhr_strike=False,
-        )
+        spec = gstruct_spec(written)
 
         self.chosen["traces"] = spec
         self.recent.remember(dict(traces=spec))

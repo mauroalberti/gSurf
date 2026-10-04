@@ -246,9 +246,11 @@ at every metre. `curation.answering` is the quantity in between.
 
 from __future__ import annotations
 
+import difflib
 import textwrap
 import time
 from collections import Counter
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -8113,6 +8115,36 @@ class FitFromDem(QtWidgets.QWidget):
         self.window().close()
 
 
+def lines_apart(before, after):
+    """
+    How far two texts are apart, in lines, as a sentence for a dialog.
+
+    Measured rather than asserted because the number is the whole point of
+    asking. A GeoPackage that came out of this file and had nothing done to it
+    does not come back identical: it comes back differing by the lines `dumps`
+    would have rewritten anyway -- 172 of them in `merid_faults`, the ones
+    carrying `kind unknown` -- so "it differs" on its own cannot tell a session
+    that edited two spans from a session that edited nothing. Three lines and
+    172 lines are the same word and two different facts.
+    """
+
+    old, new = before.splitlines(), after.splitlines()
+
+    if old == new:
+        return "The rebuilt text is identical to it, line for line."
+
+    # Added and removed both counted, which is what makes this a distance and
+    # not a net change: a line retyped in QGIS is one of each, and a count that
+    # cancelled them would call it nothing.
+    changed = sum(
+        1
+        for line in difflib.unified_diff(old, new, n=0)
+        if line[:1] in "+-" and line[:3] not in ("+++", "---")
+    )
+
+    return f"The rebuilt text differs from it in {changed} line(s), of {len(old)}."
+
+
 class EditorWindow(QtWidgets.QMainWindow):
     """The map with the file's traces on it, and the file beside them."""
 
@@ -8572,6 +8604,18 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
         self.export_action.triggered.connect(self.export_geopackage)
         outward.addAction(self.export_action)
+
+        # The way back, under the way out. It writes a file rather than
+        # replacing what is on screen, and `import_geopackage` says why at
+        # length -- the tooltip says the part somebody needs before pressing it.
+        self.import_action = QtGui.QAction("&Import from GeoPackage...", self)
+        self.import_action.setToolTip(
+            "Read a GeoPackage edited in QGIS back as a .gstruct. It writes a "
+            "file and leaves this window on the one it opened -- the new file "
+            "is the one the launcher then offers."
+        )
+        self.import_action.triggered.connect(self.import_geopackage)
+        outward.addAction(self.import_action)
 
         trace = self.menuBar().addMenu("&Trace")
 
@@ -11100,6 +11144,234 @@ class EditorWindow(QtWidgets.QMainWindow):
         )
 
         return True
+
+    def import_geopackage(self):
+        """
+        A GeoPackage edited in QGIS, back as a `.gstruct` on disk.
+
+        **It writes a file and leaves this window on the one it opened**, which
+        is three refusals rather than a shortcut taken.
+
+        `Document` never rewrites the whole file -- it splices the block that was
+        edited and leaves every other byte alone, and that is the cheapest
+        guarantee in this tool. The text rebuilt here comes out of `dumps`, which
+        is the format's canonical writer and not a transcriber: swapping it in
+        would answer an edit made to two spans with a file that has also been
+        re-sorted, re-spaced and stripped of its `kind unknown` throughout. And
+        there is nowhere else to put it either, because the launcher keeps one
+        tool at a time on one session, on purpose -- see its `open_tool`.
+
+        So the answer is a file, and the file is remembered where the next dialog
+        looks. `import_lines` does exactly this for exactly this reason, and
+        `gstruct_spec` is the shape the two share. The round trip finishes
+        through the launcher: close this window, and the file just written is
+        what the `traces` slot offers.
+
+        Over the open document there is a second question, and it is not "are you
+        sure" -- Qt's own dialog has already asked that. What nobody can see is
+        how far the rebuilt text is from the bytes about to be replaced, and that
+        this window's Save is now pointing the wrong way. Both are said, and
+        `lines_apart` is why the first of them is a number.
+        """
+
+        gpkg, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self.panel_window,
+            "Import from GeoPackage",
+            str(self.document.path.with_suffix(".gpkg")),
+            "GeoPackage (*.gpkg)",
+        )
+
+        if not gpkg:
+            return False
+
+        try:
+            # Restored before any dialog, which is what the nesting is for: a
+            # refusal shown under a wait cursor is a window that looks hung.
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+
+            try:
+                from gsurf import exports
+
+                dataset, report = exports.from_geopackage(gpkg)
+                rebuilt = module().dumps(dataset)
+            finally:
+                QtWidgets.QApplication.restoreOverrideCursor()
+        except ImportError as err:
+            # The export says the same thing on the way out, for the same
+            # reason: the README calls these two optional, and a session that
+            # has been editing for an hour must not learn it from a traceback.
+            QtWidgets.QMessageBox.warning(
+                self.panel_window,
+                "Not imported",
+                f"Reading a GeoPackage needs geopandas and pyogrio, which are "
+                f"not installed here.\n\n{err}",
+            )
+            return False
+        except Exception as err:
+            # Broad, unlike the export's, and the asymmetry is the file: that one
+            # writes where it was told, this one reads whatever was picked. A
+            # GeoPackage from another tool, a schema from a later version, a
+            # truncated download -- `from_geopackage` names all three, and the
+            # type is shown because the message alone rarely says which it was.
+            QtWidgets.QMessageBox.critical(
+                self.panel_window,
+                "Not imported",
+                f"{Path(gpkg).name}\n\n{type(err).__name__}: {err}",
+            )
+            return False
+
+        if not dataset.structures and not dataset.observations:
+            QtWidgets.QMessageBox.warning(
+                self.panel_window,
+                "Nothing to import",
+                f"{Path(gpkg).name}\n\nThe layers hold no structure and no "
+                f"observation. This reads the `gs_` layers an export writes, so "
+                f"a GeoPackage of something else arrives here empty rather than "
+                f"wrong.",
+            )
+            return False
+
+        # Beside the GeoPackage and not beside the open file: this is named after
+        # what it was rebuilt from. Where the .gpkg sits next to the .gstruct it
+        # came out of -- which is what the export suggests -- that makes it the
+        # open document, and the question below is about exactly that case.
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.panel_window,
+            "Write the rebuilt .gstruct as",
+            str(Path(gpkg).with_suffix(SUFFIX)),
+            f"gstruct (*{SUFFIX})",
+        )
+
+        if not name:
+            return False
+
+        target = Path(name)
+
+        if target == self.document.path and not self._may_overwrite_open(rebuilt):
+            return False
+
+        try:
+            # `newline=""` for `Document.save`'s reason: text mode would turn
+            # every "\n" into `os.linesep`, which is what quietly rewrites a
+            # whole file as CRLF on Windows.
+            with target.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(rebuilt)
+        except OSError as err:
+            QtWidgets.QMessageBox.critical(self.panel_window, "Not written", str(err))
+            return False
+
+        # Only with a structure in it, because the slot is what the editor opens
+        # from and `build` refuses a file with none: an entry offered that the
+        # next run cannot open is worse than no entry. A file of observations
+        # alone is written and said -- it is what the GeoPackage held -- and not
+        # proposed as something to edit traces in.
+        if dataset.structures:
+            from gsurf.recent import Recent
+            from gsurf.sources import gstruct_spec
+
+            Recent.load().remember(dict(traces=gstruct_spec(target)))
+
+        self.say(
+            f"imported from {Path(gpkg).name} -- "
+            f"{self._import_said(report, target)}"
+        )
+
+        return True
+
+    def _may_overwrite_open(self, rebuilt):
+        """
+        Whether to write over the file this window has open. Asks, once.
+
+        **The distance is measured against the bytes on disk, which are what is
+        about to go** -- not against the text on screen, which is not at risk and
+        is not what an overwrite destroys. Written the other way round first, and
+        a check caught it saying "identical to it, line for line" over a document
+        whose file differed by 76 bytes: true of the window, and the reassuring
+        half of a sentence about a file.
+
+        Where the two are not the same thing, that is said as well, because then
+        neither text on offer is the one being replaced.
+        """
+
+        try:
+            on_disk = self.document.path.read_text(encoding="utf-8")
+        except OSError:
+            # Gone or unreadable since it was opened. There is nothing to be
+            # apart from, and nothing to lose by writing either -- the rest of
+            # the question still stands, so it is asked without the number.
+            on_disk = None
+
+        said = [f"{self.document.path.name} is the file open in this window."]
+
+        if on_disk is not None:
+            said.append(lines_apart(on_disk, rebuilt))
+
+        if self.document.dirty:
+            said.append(
+                "The text on screen has not been written, so it is not what is "
+                "being overwritten either: the measurement above is against the "
+                "file."
+            )
+
+        said.append(
+            "This window keeps the text it has: it will not show the import, "
+            "and a Save from here would put the old text straight back over it. "
+            "Close the window to work on the imported file -- it is the one the "
+            "launcher will offer."
+        )
+
+        answer = QtWidgets.QMessageBox.question(
+            self.panel_window,
+            "Overwrite the open file",
+            "\n\n".join(said) + "\n\nWrite it?",
+            QtWidgets.QMessageBox.StandardButton.Save
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+
+        return answer == QtWidgets.QMessageBox.StandardButton.Save
+
+    @staticmethod
+    def _import_said(report, target, most=6):
+        """
+        One line: what was rebuilt, where it went, and what it cost.
+
+        The two lists are named and not merely counted, because which structures
+        they are is the whole of their use -- and cut off at `most` for the
+        reason `_where_it_turns` cuts its own off: a QGIS session that redrew
+        half of `montealpi_01` would otherwise put 393 identifiers through a
+        one-line status bar.
+        """
+
+        counted = ", ".join(
+            f"{count} {layer[3:]}"
+            for layer, count in report.counts.items()
+            if count
+        )
+
+        def naming(idents):
+            said = ", ".join(idents[:most])
+
+            return said + (f", and {len(idents) - most} more"
+                           if len(idents) > most else "")
+
+        said = f"{counted} to {target.name}"
+
+        # Not a loss -- it is what exporting to QGIS is for -- and still owed,
+        # because every record anchored to one of these has been re-projected
+        # onto the geometry that came back.
+        if report.reshaped:
+            said += f"; reshaped in QGIS: {naming(report.reshaped)}"
+
+        # The one knowing loss, and it is per-structure: a comment keyed to "the
+        # third vertex" of a path that no longer has that vertex is dropped
+        # rather than slid onto its neighbour.
+        if report.revertexed:
+            said += f"; vertex comments dropped on {naming(report.revertexed)}"
+
+        if report.notes:
+            said += f"; {'; '.join(report.notes)}"
+
+        return said
 
     def _write(self, target):
         try:

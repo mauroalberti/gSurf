@@ -2023,8 +2023,23 @@ onto a neighbouring vertex, and the report says which structure paid. And a
 reading amended in QGIS is amended without the care `Ctrl+R` takes: nothing out
 there knows that a `raw=` is the measurement as the survey wrote it, so a plane
 retyped in the attribute table will sit beside a `raw=` that now contradicts it.
-There is no importer on the launcher yet — the reader is a module function and
-`check_exports.py` is what exercises it.
+
+**`File — Import from GeoPackage...`.** Beside the export, and it writes a file
+rather than replacing what is on screen. Three reasons, and none of them is
+caution: the document splices the block that was edited and never re-serialises
+the rest, which is the cheapest guarantee here; the rebuilt text comes out of
+`dumps`, which is canonical, so swapping it in would answer an edit made to two
+spans with a file re-sorted and re-spaced throughout — on `merid_faults.gstruct`
+a GeoPackage nobody touched comes back differing in 172 lines, the `kind unknown`
+ones; and the launcher keeps one tool at a time on one session, so there is no
+second window to open it in either.
+
+So the answer is a file, suggested beside the GeoPackage it was rebuilt from, and
+remembered where the next dialog looks — close the editor and the file just
+written is what the `traces` slot offers. Asked to write over the file this window
+has open, it says how many lines apart the two are before it does, and that this
+window keeps its own text: it will not show the import, and a Save from here would
+put the old text straight back over it.
 
 ### Usage — import, lines to .gstruct
 

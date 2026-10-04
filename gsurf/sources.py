@@ -81,6 +81,32 @@ def vectors_of(chosen):
     return [chosen[role] for role in VectorSource.ROLES if chosen.get(role)]
 
 
+def gstruct_spec(path):
+    """
+    The `traces` slot filled by a `.gstruct` that has just been written.
+
+    A spec and not a bare path, because a spec is the shape the slot restores
+    from -- and every field in it is decided by the suffix rather than chosen:
+    `candidate_layers` answers one layer called `structures` for the `lines`
+    role, and the format saying what each record is, is the reason a `.gstruct`
+    names no columns.
+
+    Here rather than in each of the two places that have a new file to hand to
+    the launcher -- `Launcher.import_lines` and the editor's GeoPackage import
+    -- because this is the module the slot's vocabulary belongs to, and two
+    copies of it would be two things to keep in step with `TracePicker`.
+    """
+
+    return dict(
+        path=str(path),
+        role="lines",
+        layer="structures",
+        dip_dir_field=None,
+        dip_field=None,
+        is_rhr_strike=False,
+    )
+
+
 # The slots that are a tool's own data: they say where we are without being
 # drawn as backdrop, because the tool draws them itself and two symbols on one
 # feature is worse than none.
